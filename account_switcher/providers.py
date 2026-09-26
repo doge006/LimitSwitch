@@ -9,6 +9,8 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -359,6 +361,7 @@ class Codex:
     TOKEN_URL = "https://auth.openai.com/oauth/token"
     CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
     ROLES = {18000: ("five_hour", "5-hour"), 604800: ("weekly", "Weekly"), 2592000: ("monthly", "30-day")}
+    CLI = "codex"  # for managing Codex's background server after a switch; None turns that off
 
     def __init__(self, codex_home=None, home=None):
         home = Path(home) if home else Path.home()
@@ -499,6 +502,37 @@ class Codex:
 
     def login_command(self, directory):
         return ["codex", "login"], {"CODEX_HOME": str(directory)}
+
+    def _daemon(self, action, timeout):
+        codex = shutil.which(self.CLI) if self.CLI else None
+        if not codex:
+            return None
+        return subprocess.run([codex, "app-server", "daemon", action], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL,
+                              env=dict(os.environ, CODEX_HOME=str(self.codex_home)),
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+    def after_switch(self):
+        """Current Codex CLIs run a shared background server that new sessions attach to. It reads
+        the login once and keeps it in memory, so a switched auth.json goes unnoticed until it
+        restarts. Restart it, only when one is running: Codex saves its open threads on the way
+        down, restores them (continuing an interrupted turn) and open sessions reconnect.
+        Returns a short note for the log, or None when there was nothing to do."""
+        try:
+            probe = self._daemon("version", 30)
+            info = json.loads(probe.stdout) if probe is not None and probe.returncode == 0 else {}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        if not isinstance(info, dict) or not info.get("appServerVersion"):
+            return None  # not running (or a Codex without one): new sessions read auth.json directly
+        try:
+            done = self._daemon("restart", 180)
+        except (OSError, subprocess.SubprocessError) as error:
+            return f"Couldn't restart Codex's background server ({error}); restart Codex to use the new account"
+        if done.returncode != 0:
+            detail = " ".join(((done.stderr or "") + (done.stdout or "")).split())[-160:]
+            return f"Couldn't restart Codex's background server ({detail}); restart Codex to use the new account"
+        return "Restarted Codex's background server so sessions use the new account"
 
     def isolated(self, directory):
         return Codex(codex_home=directory)

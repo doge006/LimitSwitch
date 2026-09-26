@@ -46,6 +46,7 @@ class LiveAccounts:
         self.vault = vault or Vault()
         self.providers = providers or {name: cls() for name, cls in PROVIDERS.items()}
         self.lock = threading.RLock()
+        self.restart_lock = threading.Lock()
         meta = self.vault.load_meta()
         self.meta = {"accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True)}
         self.active = {}
@@ -284,6 +285,18 @@ class LiveAccounts:
         who = target.get("email") or target["identity"]
         self.notify("log", f"{name.title()} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
         self.notify("accounts", None)
+        if hasattr(provider, "after_switch"):
+            threading.Thread(target=self._after_switch, args=(provider,), daemon=True).start()
+
+    def _after_switch(self, provider):
+        """Let the provider's own background process pick up the new login (off the caller's thread)."""
+        with self.restart_lock:  # back-to-back switches restart one at a time, the last one winning
+            try:
+                note = provider.after_switch()
+            except Exception as error:  # never let this break switching
+                note = f"Couldn't refresh {provider.name.title()}'s background process: {error}"
+        if note:
+            self.notify("log", note)
 
     def auto_swap(self):
         """If an account in use has hit a limit, move to the one with the most headroom."""
