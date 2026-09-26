@@ -7,7 +7,9 @@ A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage
 One installer for both; it detects the OS. Run it again at any time to update.
 
 - **Windows:** double-click `Install.cmd` (or `Update.cmd`, which does the same).
-- **macOS:** double-click `Install.command` in Finder (or run `./Install.command` in Terminal). If macOS says it can't verify it, right-click it, choose Open, then Open.
+- **macOS:** in Terminal, run `bash Install.command` in this folder (or `bash Update.command`).
+  - Double-clicking works only if the folder came from `git clone`. A downloaded ZIP is flagged by macOS, and it refuses to open the script ("can't verify it's free of malware"). To double-click anyway, clear the flag once with `xattr -dr com.apple.quarantine <folder>`, or use **System Settings → Privacy & Security → Open Anyway**.
+  - The **Account Switcher** app the installer creates opens without that warning, because it's made on your Mac.
 
 Each run:
 1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
