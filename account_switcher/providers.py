@@ -11,12 +11,14 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import sys
 import time
 import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from . import tls
 from .vault import atomic_write
 
 TIMEOUT = 15
@@ -42,7 +44,7 @@ def _http(method, url, headers, body=None):
     data = json.dumps(body).encode() if body is not None else None
     request = Request(url, data=data, method=method, headers=dict(headers, **({"Content-Type": "application/json"} if data else {})))
     try:
-        with urlopen(request, timeout=TIMEOUT) as response:
+        with urlopen(request, timeout=TIMEOUT, context=tls.context()) as response:
             return response.status, json.loads(response.read() or b"null")
     except HTTPError as error:
         retry = error.headers.get("Retry-After") if error.headers else None
@@ -51,7 +53,11 @@ def _http(method, url, headers, body=None):
         if error.code in (401, 403):
             raise ProviderError("Login expired", relogin=True)
         raise ProviderError(f"Usage API error {error.code}")
-    except (URLError, TimeoutError, OSError):
+    except URLError as error:
+        if isinstance(error.reason, ssl.SSLCertVerificationError):
+            raise ProviderError("Couldn't verify the usage API's certificate (run Update to repair)")
+        raise ProviderError("Offline or usage API unreachable")
+    except (TimeoutError, OSError):
         raise ProviderError("Offline or usage API unreachable")
     except ValueError:
         raise ProviderError("Unexpected usage API response")

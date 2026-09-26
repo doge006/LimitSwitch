@@ -136,8 +136,37 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         threading.Thread(target=self.watch, daemon=True).start()
         if self.open_now:
             self.showFullView_(None)
+        AppHelper.callLater(4, self.check_status_item)
+
+    @objc.python_method
+    def check_status_item(self):
+        """macOS gives a status item it won't show a height of 0 (it's hidden: not allowed in
+        the menu bar, or no room). Then the app would be invisible, so say so and open the window."""
         if os.environ.get("ACCOUNT_SWITCHER_DEBUG"):
-            AppHelper.callLater(3, self.describe_status_item)
+            self.describe_status_item()
+        window = self.item.button().window() if self.item.button() is not None else None
+        if window is None or window.frame().size.height > 0:
+            return
+        self.describe_status_item()
+        self.showFullView_(None)
+        from AppKit import NSAlert, NSUserDefaults
+        defaults = NSUserDefaults.standardUserDefaults()
+        if defaults.boolForKey_("HiddenIconAlertSuppressed"):
+            return
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("macOS is hiding Account Switcher's menu bar icon")
+        alert.setInformativeText_("Turn on Account Switcher under System Settings › Menu Bar › Allow in the Menu Bar. "
+                                  "If it's already on, the menu bar may be full: quit another menu bar app, or hold ⌘ "
+                                  "and drag icons out to make room. Everything also works from this window.")
+        alert.addButtonWithTitle_("Open Menu Bar Settings")
+        alert.addButtonWithTitle_("OK")
+        alert.setShowsSuppressionButton_(True)
+        NSApp.activateIgnoringOtherApps_(True)
+        choice = alert.runModal()
+        if alert.suppressionButton().state():
+            defaults.setBool_forKey_(True, "HiddenIconAlertSuppressed")
+        if choice == 1000:  # NSAlertFirstButtonReturn
+            subprocess.Popen(["/usr/bin/open", "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension"])
 
     @objc.python_method
     def describe_status_item(self):

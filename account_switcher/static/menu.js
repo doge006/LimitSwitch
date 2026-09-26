@@ -5,7 +5,7 @@ const token = new URLSearchParams(location.hash.slice(1)).get('token');
 const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.app;
 const $ = id => document.getElementById(id);
 const PROVIDERS = [['claude', 'Claude'], ['codex', 'Codex']];
-let state = null, pending = null;
+let state = null, pending = null, armed = null, armedTimer = null;
 
 const remaining = used => Math.max(0, Math.min(100, 100 - used));
 const level = left => left > 30 ? 'good' : left > 10 ? 'warn' : 'bad';
@@ -44,10 +44,24 @@ function row(account) {
   else if (account.active) head.append(el('span', 'state in-use', '✓ In use'));
   else if (!account.eligible) head.append(el('span', 'state limit', 'Limit reached'));
   else {
-    const b = el('button', 'switch-btn', 'Switch');
+    // Two clicks: the first asks for confirmation, so a stray click never switches.
+    const confirming = armed === account.id;
+    const b = el('button', 'switch-btn' + (confirming ? ' confirm' : ''), confirming ? 'Confirm' : 'Switch');
     b.type = 'button';
     b.disabled = !!pending || state.busy;
-    b.addEventListener('click', () => { pending = account.id; render(); act('swap', { id: account.id }); });
+    b.addEventListener('click', () => {
+      clearTimeout(armedTimer);
+      if (!confirming) {
+        armed = account.id;
+        armedTimer = setTimeout(() => { armed = null; render(); }, 4000);
+        render();
+        return;
+      }
+      armed = null;
+      pending = account.id;
+      render();
+      act('swap', { id: account.id });
+    });
     head.append(b);
   }
   r.append(head);

@@ -209,7 +209,7 @@ def dim_row(layout, marks):
         layout.texts[i] = (x, y, value, size, bold, fade(fill, DIM), anchor)
 
 
-def build(state, hover=None, pending=None, pinned=False, fx=None):
+def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
     """Lay out the flyout. Returns (layout, panel_height). Coordinates exclude MARGIN.
 
     fx holds in-between animation values (see targets()); missing keys use resting values.
@@ -230,6 +230,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
     L.text(W - 16 - 13 + 2 * h("full"), 26, "›", 16, TEXT, anchor="rm")
     L.hit(pill_x, 13, pill_w, 28, "full")
     icon_button(L, pill_x - 34, 13, 28, "popin" if pinned else "popout", "pin", h("pin"), active=pinned)
+    if pinned:  # a popped-out panel stays open: hide it without quitting
+        icon_button(L, pill_x - 66, 13, 28, "minimize", "hide", h("hide"))
     y = 54
 
     accounts_all = state["accounts"]
@@ -262,7 +264,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
             marks = (len(L.shapes), len(L.texts), len(L.images))
             switchable = account["eligible"] and not account["active"] and not busy and not pending
             act = fx.get(("active", account["id"]), 0.0)
-            hov = h(key) if switchable else 0.0
+            confirming = switchable and armed == account["id"]
+            hov = max(h(key), 1.0 if confirming else 0.0) if switchable else 0.0
             if act > 0 or hov > 0:
                 L.rect(8, top, W - 16, ROW_H, 6, (255, 255, 255, round(ACTIVE[3] * act + HOVER[3] * hov)))
             if act > 0.01:  # green marker grows from the centre as the account becomes active
@@ -278,6 +281,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
                 status, color = "In use", fade(GOOD, max(act, 0.35))
             elif not account["eligible"]:
                 status, color = "Limit", BAD
+            elif confirming:
+                status, color = "Click again", GOOD
             elif switchable and hov > 0:
                 status, color = "Switch", fade(TEXT, hov)
             else:
@@ -429,6 +434,8 @@ def paint(layout, width, height, scale):
                 d.line((cx, cy - r * .55, cx, cy, cx + r * .45, cy + r * .3), fill=fill, width=line, joint="curve")
             elif kind == "check":
                 d.line((cx - r, cy, cx - r * .3, cy + r * .7, cx + r, cy - r * .7), fill=fill, width=line, joint="curve")
+            elif kind == "minimize":
+                d.line((cx - r * .75, cy + r * .45, cx + r * .75, cy + r * .45), fill=fill, width=line)
             elif kind in ("popout", "popin"):
                 # A window with an arrow leaving it (pop out) or entering it (pop in).
                 d.rounded_rectangle((cx - r, cy - r * .6, cx + r * .6, cy + r), P(1.5), outline=fill, width=line)
@@ -459,8 +466,8 @@ def paint(layout, width, height, scale):
     return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
 
-def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None):
-    layout, height = build(state, hover, pending, pinned, fx)
+def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None):
+    layout, height = build(state, hover, pending, pinned, fx, armed)
     return paint(layout, WIDTH, height, scale)
 
 

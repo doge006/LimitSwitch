@@ -90,6 +90,16 @@ class FlyoutRenderTests(unittest.TestCase):
         layout, _ = fr.build(state)
         self.assertIn("Sign in again", [t[2] for t in layout.texts])
 
+    def test_switch_needs_a_confirming_click(self):
+        layout, _ = fr.build(self.state, armed="claude-b")
+        self.assertIn("Click again", [t[2] for t in layout.texts])
+        self.assertIn("swap:claude-b", [a for _, a in layout.hits])  # the second click lands on the same row
+
+    def test_popped_out_panel_can_be_hidden(self):
+        self.assertNotIn("hide", [a for _, a in fr.build(self.state)[0].hits])
+        self.assertIn("hide", [a for _, a in fr.build(self.state, pinned=True)[0].hits])
+        fr.render(self.state, pinned=True)  # draws the minimize icon
+
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])
         _, actions = self.actions(state)
