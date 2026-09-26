@@ -311,11 +311,12 @@ function updateCards() {
     view.hint.classList.toggle('warn', !!problem);
     const relogin = state.mode === 'live' && /sign in|expired|missing/i.test(problem || '');
     if (relogin) {  // one click back in, with the app's own sign-in (it leaves other logins alone)
-      const again = node('button', 'link-button', 'Sign in again');
+      const again = node('button', 'link-button', 'Login expired · Sign in again');
       again.type = 'button';
       again.disabled = (state.signingIn || []).includes(account.provider);
-      again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider }); });
-      view.hint.replaceChildren(node('span', '', 'Login expired · '), again);
+      again.title = `Opens the sign-in: sign in as ${displayName(account)}`;
+      again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider, id: account.id }); });
+      view.hint.replaceChildren(again);  // the whole text is the button
     } else {
       view.hint.textContent = problem
         || (account.active ? 'All sessions use this account' : !account.eligible ? 'Waiting for reset' : '');

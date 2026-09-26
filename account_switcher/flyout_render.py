@@ -299,7 +299,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
             if note:
                 L.text(right, cy, note, 11, WARN, anchor="rm")
                 if note == "Sign in again":  # clickable: the app's own sign-in, other logins untouched
-                    L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "add:" + provider)
+                    L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
                 right -= text_w(note, 11) + 12
             elif sub_text:
                 L.text(right, cy, sub_text, 11, sub_color, anchor="rm")

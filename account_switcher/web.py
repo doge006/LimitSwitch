@@ -142,7 +142,8 @@ class Controller:
                     if not self.live:
                         self.notify("log", f"Next {account.provider} request selected: {account.alias}")
                 elif action == "add":
-                    self.gateway.manager.add(body["provider"])
+                    expect = body.get("id") if isinstance(body.get("id"), str) else None
+                    self.gateway.manager.add(body["provider"], expect=expect)  # expect: the account to sign back in
                 elif action == "remove":
                     self.gateway.manager.remove(body["id"])
                 elif action == "reset" and self.live:

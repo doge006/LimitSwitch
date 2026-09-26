@@ -44,8 +44,16 @@ function row(account) {
   head.append(el('span', 'email', account.name));
   if (account.plan) head.append(el('span', `plan ${account.provider}`, account.plan));
   const windows = account.windows.slice(0, 3);
+  const relogin = /sign in|expired|missing/i.test(account.status || '');
   if (pending === account.id) head.append(el('span', 'state', 'Switching…'));
   else if (confirming) head.append(el('span', 'state confirm', 'Click again'));
+  else if (relogin) {  // the text itself is the button: the app's own sign-in, other logins untouched
+    const again = el('button', 'state relogin', 'Login expired · Sign in again');
+    again.type = 'button';
+    again.title = `Opens the sign-in: sign in as ${account.name}`;
+    again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider, id: account.id }); });
+    head.append(again);
+  }
   else if (account.active) head.append(el('span', 'state in-use', 'In use'));
   else if (!account.eligible) head.append(el('span', 'state limit', 'Limit'));
   else if (account.status && windows.length) head.append(el('span', 'state note', account.status));
@@ -84,13 +92,7 @@ function row(account) {
     }
     r.append(bars);
   } else {
-    r.append(el('div', 'loading', account.status || 'Usage not loaded yet'));
-  }
-  if (/sign in|expired|missing/i.test(account.status || '')) {  // one click back in (the app's own sign-in)
-    const again = el('button', 'relogin', 'Sign in again');
-    again.type = 'button';
-    again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider }); });
-    r.append(again);
+    r.append(el('div', 'loading', relogin ? 'Usage paused until you sign in again' : account.status || 'Usage not loaded yet'));
   }
   return r;
 }
