@@ -99,12 +99,24 @@ class CodexServerWatch:
                 pass
             self.stopped.wait(self.EVERY)
 
+    @property
+    def pid_file(self):
+        return self.home / "app-server-daemon" / "server.pid"
+
+    def marker(self):
+        """Something identifying the running server, or None. Only existence and lstat are
+        used: on Windows the socket is a special file that a normal stat cannot open."""
+        stamps = []
+        for path in (self.socket, self.pid_file):
+            try:
+                stamps.append(os.lstat(path).st_mtime)
+            except OSError:
+                continue
+        return tuple(stamps) or None
+
     def running(self):
-        try:
-            stamp = self.socket.stat().st_mtime
-        except OSError:
-            return False
-        return stamp != self.tried_at  # a socket we already stopped (and that stayed) is stale
+        marker = self.marker()
+        return marker is not None and marker != self.tried_at  # a server we already stopped is gone
 
     def last_activity(self):
         """Newest write to a session log in the last two day folders (sessions/YYYY/MM/DD)."""
@@ -124,10 +136,10 @@ class CodexServerWatch:
                 continue
         return newest
 
-    def check(self):
-        if not self.running() or time.time() - self.last_activity() < self.QUIET:
+    def check(self, quiet=None):
+        if not self.running() or time.time() - self.last_activity() < (self.QUIET if quiet is None else quiet):
             return False
-        self.tried_at = self.socket.stat().st_mtime
+        self.tried_at = self.marker()
         codex = shutil.which(self.cli)
         if not codex:
             return False
@@ -189,6 +201,9 @@ class Integrations:
         self.manager.enable_routing("codex")
         self.watch = CodexServerWatch(self.codex_home, self.manager.notify)
         self.watch.start()
+        # Right after a Codex switch, stop the old shared server as soon as it is quiet.
+        self.manager.on_swap = lambda provider: provider == "codex" and threading.Thread(
+            target=self.watch.check, kwargs={"quiet": 30}, daemon=True).start()
 
     def stop(self):
         if self.watch:

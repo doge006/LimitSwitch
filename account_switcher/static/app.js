@@ -189,11 +189,6 @@ function buildCard(account, index) {
   swap.type = 'button';
   swap.append(label);
   swap.addEventListener('click', () => startSwap(account.id));
-  // The whole card switches too (like the tray panel), except its own buttons and fields.
-  card.addEventListener('click', event => {
-    if (event.target.closest('button, a, input, select, label') || !card.classList.contains('pickable')) return;
-    startSwap(account.id);
-  });
   const remove = node('button', 'button quiet remove', 'Remove');
   remove.type = 'button';
   remove.title = 'Forget this saved login';
@@ -301,11 +296,13 @@ function updateCards() {
     }
     const switching = pendingSwap === account.id;
     view.swap.disabled = locked || account.active || !account.eligible;
-    view.card.classList.toggle('pickable', !view.swap.disabled);
     view.swap.classList.toggle('working', switching);
     view.swap.classList.toggle('current', account.active);
     view.swap.classList.toggle('accent', !account.active && account.eligible);
-    setLabel(view.label, switching ? 'Switching…' : !account.eligible ? 'Unavailable' : account.active ? 'Active' : 'Swap to this');
+    setLabel(view.label, switching ? 'Switching…' : account.active ? 'In use' : !account.eligible ? 'Limit reached' : 'Swap to this');
+    view.swap.title = switching ? 'Switching…' : account.active ? 'This account is already in use'
+      : !account.eligible ? 'This account has used its limit; it can be picked again after the reset'
+      : locked ? 'Another switch is in progress' : `Use ${displayName(account)} for all sessions`;
     view.remove.hidden = state.mode !== 'live' || account.active;
     view.remove.disabled = locked;
     const problem = account.status;
