@@ -421,7 +421,6 @@ class AfkTests(unittest.TestCase):
 
     def test_status_line_script_reports_live_usage(self):
         from account_switcher import statusline
-        self.manager.meta["liveUsage"] = True
         controller = Controller(gateway=lambda notify: self.gateway)
         server = make_server(controller, idle_seconds=0)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -545,12 +544,41 @@ class IntegrationTests(unittest.TestCase):
             try:
                 self.assertIn("openai_base_url", (codex_home / "config.toml").read_text())
                 self.assertIn(claude_hooks.MARK, (claude_root / "settings.json").read_text())
+                self.assertIn(claude_hooks.STATUS_MARK, (claude_root / "settings.json").read_text())
                 self.assertTrue(integrations.state_file.exists())
             finally:
                 integrations.stop()
             self.assertEqual((codex_home / "config.toml").read_text(), 'model = "m"\n')
             self.assertEqual(json.loads((claude_root / "settings.json").read_text()), {"model": "opus"})
             self.assertFalse(integrations.state_file.exists())
+
+
+    def test_status_line_comes_back_when_settings_are_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_root = root / "claude"
+            claude_root.mkdir()
+            (claude_root / "settings.json").write_text('{"model": "opus"}')
+            gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
+                                  background=False)
+            gateway.manager.meta.update(startWithWindows=False)
+            integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
+                                        claude_root=claude_root)
+            integrations.SETTINGS_EVERY = 0.05
+            with mock.patch("account_switcher.integrations.codex_present", return_value=False):
+                integrations.start()
+            try:
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+                time.sleep(0.2)
+                (claude_root / "settings.json").write_text('{"model": "sonnet"}')  # e.g. Claude Code rewriting it
+                deadline = time.time() + 5
+                while time.time() < deadline and not claude_hooks.statusline_installed(claude_root):
+                    time.sleep(0.05)
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+                self.assertEqual(json.loads((claude_root / "settings.json").read_text())["model"], "sonnet")
+            finally:
+                integrations.stop()
+            self.assertFalse(claude_hooks.statusline_installed(claude_root))
 
 
 if __name__ == "__main__":

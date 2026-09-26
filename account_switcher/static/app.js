@@ -89,16 +89,6 @@ function setLabel(el, text) {
 }
 
 // Short count for changed percentages (~0.35s, then stops).
-function liveSeenText(state) {
-  if (state.mode !== 'live' || !state.liveUsage) return '';
-  const seen = state.liveSeen;
-  if (!seen) return 'Waiting for Claude Code: send a message in Claude Code in a terminal (the desktop app and VS Code have no status line).';
-  const ago = Math.max(0, Math.round(Date.now() / 1000 - seen.at));
-  const when = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.round(ago / 60)} min ago` : `${Math.round(ago / 3600)} h ago`;
-  return seen.limits ? `Last update from Claude Code: ${when}`
-    : `Claude Code reported ${when} but without usage numbers: update Claude Code (claude update); they need a recent version and a Pro or Max plan.`;
-}
-
 function tweenNumber(el, to) {
   const from = Number(el.dataset.value ?? to);
   el.dataset.value = to;
@@ -387,12 +377,9 @@ function render(next) {
   $('lab').hidden = live;
   $('reset').title = $('reset').ariaLabel = live ? 'Refresh usage' : 'Reset sample accounts';
   $('add').hidden = !live;
-  if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap && (pendingPrefs.liveUsage === undefined || state.liveUsage === pendingPrefs.liveUsage)) pendingPrefs = null;
+  if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
   $('auto-swap').checked = pendingPrefs?.autoSwap ?? state.autoSwap;
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
-  $('live-usage-row').hidden = state.mode !== 'live';
-  $('live-usage').checked = pendingPrefs?.liveUsage ?? state.liveUsage;
-  $('live-seen').textContent = liveSeenText(state);
   const locked = state.busy || !!submitting;
   const pill = $('automation-state');
   pill.textContent = state.busy ? 'Working…' : state.afk ? 'AFK armed' : state.autoSwap ? 'Watching' : 'Manual';
@@ -410,7 +397,7 @@ function render(next) {
   } else if (!state.output && state.status === 'Stopped') {
     output.textContent = 'Session stopped. Pick a scenario to run another test.';
   }
-  for (const id of ['run', 'continue', 'reset', 'auto-swap', 'afk', 'live-usage', 'scenario']) $(id).disabled = locked;
+  for (const id of ['run', 'continue', 'reset', 'auto-swap', 'afk', 'scenario']) $(id).disabled = locked;
   $('continue').disabled ||= !state.sessionId;
   $('run').classList.toggle('working', submitting?.el === $('run'));
   updateCards();
@@ -529,10 +516,9 @@ function setLab(open) {
 $('lab-toggle').addEventListener('click', () => setLab(!$('lab').classList.contains('open')));
 setLab(false);
 
-const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked, ...(state?.mode === 'live' ? { liveUsage: $('live-usage').checked } : {}) });
+const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked });
 $('auto-swap').addEventListener('change', sendPrefs);
 $('afk').addEventListener('change', sendPrefs);
-$('live-usage').addEventListener('change', sendPrefs);
 $('run').addEventListener('click', () => act('run', { scenario: $('scenario').value }, $('run')));
 $('continue').addEventListener('click', () => act('continue', {}, $('continue')));
 $('stop').addEventListener('click', () => act('stop'));

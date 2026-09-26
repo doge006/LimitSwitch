@@ -317,5 +317,3 @@ footer { display: flex; align-items: center; justify-content: space-between; gap
 .card-foot { margin-top: auto; }
 main { padding-bottom: 32px; }
 
-.live-seen { display: block; margin-top: 4px; color: var(--faint); }
-.live-seen:empty { display: none; }
