@@ -65,7 +65,7 @@ class FlyoutRenderTests(unittest.TestCase):
         texts = [t[2] for t in layout.texts]
         self.assertIn("personal@example.com", texts)
         self.assertNotIn("Personal", texts)
-        self.assertTrue(any(t.startswith("in ") and t.endswith("m") for t in texts))  # reset timers, e.g. "in 2h 0m"
+        self.assertTrue(any(t.startswith("resets in ") and t.endswith("m") for t in texts))  # e.g. "resets in 2h 0m"
         self.assertFalse(any(t.startswith(("Renews", "Ends")) for t in texts))     # unknown subscription: nothing
         state = self.controller.snapshot()
         state["accounts"][0]["subscription"] = {"at": fr.time.time() + 12.5 * 86400, "ends": False}

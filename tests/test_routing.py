@@ -253,6 +253,12 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.upstream.seen[-1]["token"], "at-y")  # used up: the new turn starts on y
         self.assertEqual(self.manager.active["codex"], self.y)
 
+    def test_live_usage_never_adds_windows_the_account_does_not_have(self):
+        entry = self.manager.meta["accounts"][self.x]
+        entry["usage"] = [w for w in entry["usage"] if w["key"] == "five_hour"]  # no weekly limit
+        self.manager.observe(self.x, [(300, 42.0, 1999999999.0), (10080, 0.0, None), (0, 0.0, None)])
+        self.assertEqual([(w["key"], w["used"]) for w in entry["usage"]], [("five_hour", 42.0)])
+
     def test_thread_state_survives_a_restart(self):
         saved = {}
         state = ThreadState(save=saved.update)
