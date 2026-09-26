@@ -41,6 +41,18 @@ def _as(text):
     return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def protocols(*names):
+    """The named Objective-C protocols that exist here. Conforming is only a declaration: a
+    missing one (older macOS, or not loaded) must not stop the app from starting."""
+    found = []
+    for name in names:
+        try:
+            found.append(objc.protocolNamed(name))
+        except Exception:
+            pass
+    return found
+
+
 def web_view(url, frame, transparent=False, handler=None):
     config = WKWebViewConfiguration.alloc().init()
     if handler is not None:
@@ -54,7 +66,7 @@ def web_view(url, frame, transparent=False, handler=None):
     return view
 
 
-class Bridge(NSObject, protocols=[objc.protocolNamed("WKScriptMessageHandler")]):
+class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
     """Messages from the panel page: its height, and Full View / Quit."""
 
     def initWithApp_(self, app):
@@ -74,7 +86,7 @@ class Bridge(NSObject, protocols=[objc.protocolNamed("WKScriptMessageHandler")])
             self.app.quit_(None)
 
 
-class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
+class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
     def initWithController_server_openNow_(self, controller, server, open_now):
         self = objc.super(MenuBarApp, self).init()
         self.controller, self.server, self.open_now = controller, server, open_now

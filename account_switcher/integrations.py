@@ -289,6 +289,9 @@ def _set_launch_agent(enabled):
     script = Path(__file__).resolve().parent.parent / "AccountSwitcher.pyw"
     plist = {"Label": LAUNCH_AGENT, "ProgramArguments": [str(python), str(script)], "RunAtLoad": True,
              "ProcessType": "Interactive", "WorkingDirectory": str(script.parent)}
+    from .vault import data_dir
+    log = str(data_dir() / "app.log")  # a failed start at login is not silent either
+    plist.update(StandardOutPath=log, StandardErrorPath=log)
     data = plistlib.dumps(plist)
     try:
         if not path.exists() or path.read_bytes() != data:

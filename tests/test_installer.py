@@ -83,15 +83,24 @@ class MacBundleTests(unittest.TestCase):
     def test_app_bundle_is_menu_bar_only_and_starts_the_venv(self):
         installer = load_installer()
         with tempfile.TemporaryDirectory() as tmp:
-            installer.MAC_APP = Path(tmp) / "Account Switcher.app"
+            system, user = Path(tmp) / "system" / "Account Switcher.app", Path(tmp) / "user" / "Account Switcher.app"
+            system.parent.mkdir()
+            installer.MAC_APPS = (system, user)
+            installer.build_mac_app(user)  # an older install in ~/Applications
             installer.mac_app()
-            info = plistlib.loads((installer.MAC_APP / "Contents" / "Info.plist").read_bytes())
+            self.assertEqual(installer.MAC_APP, system)  # writable: /Applications
+            self.assertFalse(user.exists())  # the old copy is removed
+            info = plistlib.loads((system / "Contents" / "Info.plist").read_bytes())
             self.assertTrue(info["LSUIElement"])
             self.assertEqual(info["CFBundleExecutable"], "AccountSwitcher")
-            launcher = installer.MAC_APP / "Contents" / "MacOS" / "AccountSwitcher"
+            launcher = system / "Contents" / "MacOS" / "AccountSwitcher"
             self.assertTrue(os.access(launcher, os.X_OK))
-            self.assertIn("AccountSwitcher.pyw", launcher.read_text())
-            self.assertTrue((installer.MAC_APP / "Contents" / "Resources" / "AppIcon.icns").exists())
+            text = launcher.read_text()
+            self.assertIn("AccountSwitcher.pyw", text)
+            self.assertIn('>>"$LOG" 2>&1', text)  # a failed start leaves its error in app.log
+            self.assertTrue((system / "Contents" / "Resources" / "AppIcon.icns").exists())
+            done = subprocess.run(["sh", "-n", str(launcher)], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_login_item(self):
         from account_switcher import integrations
