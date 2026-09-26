@@ -293,7 +293,7 @@ def dump_stuck():
     """A copy that is running but never got ready: have it write where it is stuck to app.log."""
     if WINDOWS:
         return
-    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw"], capture_output=True, text=True)
+    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw|MacOS/Account Switcher"], capture_output=True, text=True)
     for pid in done.stdout.split():
         subprocess.run(["kill", "-USR1", pid], check=False)
         say(f"(still running as process {pid}; its stack follows)", "warn")

@@ -22,7 +22,7 @@ def check(ok, text):
 
 
 def app_pid():
-    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw"], capture_output=True, text=True)
+    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw|MacOS/Account Switcher"], capture_output=True, text=True)
     pids = [int(p) for p in done.stdout.split()]
     return pids[0] if pids else None
 
@@ -63,6 +63,10 @@ def click(x, y):
 pid = app_pid()
 check(pid is not None, "app process is running")
 if pid is None:
+    print(subprocess.run("ps axww -o pid,comm,args | grep -i -e account -e python | grep -v grep", shell=True,
+                         capture_output=True, text=True).stdout)
+    log = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+    print("---- app.log ----\n" + (log.read_text() if log.exists() else "(none)"))
     sys.exit(1)
 time.sleep(3)
 shot("1-desktop.png")
