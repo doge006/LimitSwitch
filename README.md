@@ -64,7 +64,9 @@ With two accounts of the same provider saved, quit the app (tray: right-click, Q
 3. Simulates that account hitting its limit (in memory only; no quota is burned) and checks that Auto swap moves to the other account and the CLI works there.
 4. Switches back and confirms every login is still valid.
 
-That's two tiny requests in total. A report without tokens is saved in `%LOCALAPPDATA%\AccountSwitcher`.
+That's two tiny requests in total.
+- **For the cleanest result:** pause any running Codex/Claude session and close the ChatGPT app first, so nothing writes the old login back mid-test. The script warns if one is open.
+- **"Model not supported":** if your CLI's default model isn't offered on your plan (for example a model only available with an API key), the prompt comes back that way. That still proves the switch: you were signed in and reached the provider as that account, and the report says so. Add `--model <name>` to run the prompt with a model your plan offers. A report without tokens is saved in `%LOCALAPPDATA%\AccountSwitcher`.
 
 What "seamless" covers today: after a switch, **new** Codex/Claude sessions and new CLI runs use the new account immediately. A session that's already running keeps its account until it's restarted.
 

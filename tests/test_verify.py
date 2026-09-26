@@ -71,6 +71,14 @@ class VerifyTests(unittest.TestCase):
             finally:
                 api.close()
 
+    def test_model_rejection_counts_as_signed_in(self):
+        user_report = ('{"type":"error","status":400,"error":{"type":"invalid_request_error","message":'
+                       '"The \'gpt-6-luna\' model is not supported when using Codex with a ChatGPT account."}}')
+        self.assertEqual(verify.classify(False, user_report), "model")
+        self.assertEqual(verify.classify(False, '{"status":401,"error":"Unauthorized"}'), "fail")
+        self.assertEqual(verify.classify(True, "OK"), "ok")
+        self.assertEqual(verify.classify(False, "codex not found on PATH"), "fail")
+
 
 if __name__ == "__main__":
     unittest.main()

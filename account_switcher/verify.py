@@ -35,6 +35,7 @@ COMMANDS = {
 class Report:
     def __init__(self):
         self.lines, self.failed = [], False
+        self.model_note = None
 
     def say(self, text=""):
         print(text, flush=True)
@@ -44,6 +45,49 @@ class Report:
         self.failed |= not ok
         self.say(f"  {'PASS' if ok else 'FAIL'}  {name}{f'  ({detail})' if detail else ''}")
         return ok
+
+
+MODEL_REJECTED = ("model is not supported", "not supported when using", "model_not_found", "does not exist or you do not have access")
+AUTH_FAILED = ("401", "unauthorized", "invalid_api_key", "token_expired", "authentication")
+
+
+def classify(ok, output):
+    """"ok": answered. "model": signed in and reached the provider, which rejected the
+    configured model (so the login works). "fail": anything else."""
+    text = output.lower()
+    if ok:
+        return "ok"
+    if any(k in text for k in MODEL_REJECTED) and not any(k in text for k in AUTH_FAILED):
+        return "model"
+    return "fail"
+
+
+def configured_model(provider):
+    """The model the CLI will use by default (Codex: ~/.codex/config.toml), for the report."""
+    if provider != "codex":
+        return None
+    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "model":
+                return value.strip().strip('"\'')
+    except OSError:
+        pass
+    return None
+
+
+def running_clients():
+    """Codex / ChatGPT / Claude processes that could rewrite the login file mid-test (Windows)."""
+    if sys.platform != "win32":
+        return []
+    try:
+        listing = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = {line.split('","')[0].strip('"').lower() for line in listing.splitlines() if line}
+    watch = {"codex.exe": "Codex", "chatgpt.exe": "ChatGPT app", "claude.exe": "Claude"}
+    return sorted({label for exe, label in watch.items() if exe in names})
 
 
 def run_cli(command, timeout=240):
@@ -67,8 +111,23 @@ def usage_line(account):
     return ", ".join(parts) or "no usage reported"
 
 
+def check_prompt(report, label, command):
+    ok, output = run_cli(command)
+    result = classify(ok, output)
+    if result == "model":
+        report.check(f"{label}: signed in and reached the provider as this account", True,
+                     "it rejected the configured model, not the login; add --model <a model your plan offers> "
+                     "to run the prompt fully")
+        report.model_note = output
+    else:
+        report.check(f"{label}: official CLI answered", result == "ok", output)
+
+
 def verify(manager, provider, command, report):
     manager.spacing = 1.0
+    model = configured_model(provider)
+    if model:
+        report.say(f"Codex default model (config.toml): {model}")
     manager.sync_live(force=True)
     accounts = [a for a in manager.accounts() if a.provider == provider]
     report.say(f"{provider.title()} accounts saved: {len(accounts)}")
@@ -88,8 +147,7 @@ def verify(manager, provider, command, report):
     manager.swap(a.id)
     live = manager.providers[provider].read_live()
     report.check("login files now hold A", live is not None and live.email == a.email, live.email if live else "no login")
-    ok, output = run_cli(command)
-    report.check("official CLI answered on A", ok, output)
+    check_prompt(report, "on A", command)
 
     report.say(f"\n3. Simulate {a.email} hitting its limit (in memory only) and let Auto swap act")
     with manager.lock:
@@ -108,8 +166,7 @@ def verify(manager, provider, command, report):
     live = manager.providers[provider].read_live()
     report.check("login files now hold the new account", live is not None and target is not None and live.email == target.email,
                  live.email if live else "no login")
-    ok, output = run_cli(command)
-    report.check("official CLI answered on the new account", ok, output)
+    check_prompt(report, "on the new account", command)
 
     report.say("\n4. Switch back and re-check every login")
     if original and original != manager.active.get(provider):
@@ -126,6 +183,7 @@ def verify(manager, provider, command, report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--provider", choices=sorted(COMMANDS), default="codex")
+    parser.add_argument("--model", help="Model for the test prompt (default: whatever the CLI is configured to use)")
     args = parser.parse_args(argv)
     runtime = Path(__file__).resolve().parent.parent / ".runtime"
     from .tray import existing_instance
@@ -134,9 +192,16 @@ def main(argv=None):
         return 2
     report = Report()
     report.say(f"Account Switcher switching check · {time.strftime('%Y-%m-%d %H:%M')}")
+    busy = running_clients()
+    if busy:
+        report.say(f"Note: {', '.join(busy)} is running. It can refresh its login and write the old account back "
+                   "while this test switches; for the cleanest result, pause it and close the app first.")
+    command = list(COMMANDS[args.provider])
+    if args.model:
+        command[1:1] = ["-m", args.model] if args.provider == "codex" else ["--model", args.model]
     manager = LiveAccounts(lambda kind, value: report.say(f"     · {value}") if kind == "log" else None)
     try:
-        verify(manager, args.provider, COMMANDS[args.provider], report)
+        verify(manager, args.provider, command, report)
     except Exception as error:  # report, don't hide
         report.check("finished without errors", False, f"{type(error).__name__}: {error}")
     report.say("\nRESULT: " + ("FAILED - see above" if report.failed else "ALL PASSED"))
