@@ -216,30 +216,18 @@ class RouterTests(unittest.TestCase):
             time.sleep(0.05)
         return check()
 
-    def test_checkpoint_is_written_out_and_carried_to_the_next_account(self):
-        _, body = post(self.url, {"model": "m", "instructions": "i", "input": [{"type": "message", "role": "user", "content": "hi"},
-                                                                          {"type": "compaction_trigger"}]})
-        checkpoint = self.items_of(body)[0]
-        self.assertTrue(self.wait_for(lambda: self.proxy.router.state.text(checkpoint["encrypted_content"])))
-        writer = next(s for s in self.upstream.seen if "plain-text handoff" in json.dumps(s["input"]))
-        self.assertEqual(writer["token"], "at-x")  # the account that made it wrote it out
-        self.manager.swap(self.y)
-        status, _ = post(self.url, {"input": [checkpoint, {"type": "message", "role": "user", "content": "go on"}]})
-        self.assertEqual(status, 200)
-        sent = self.upstream.seen[-1]
-        self.assertEqual(sent["token"], "at-y")
-        text = sent["input"][0]["content"][0]["text"]
-        self.assertIn("HANDOFF OF at-x:cmp", text)
-        self.assertTrue(text.startswith("Another language model started to solve this problem"))
-
-    def test_thread_stays_with_the_checkpoints_account_until_it_is_written_out(self):
-        self.proxy.can_switch = lambda: False  # no write-out
+    def test_no_extra_requests_and_the_thread_stays_with_its_checkpoints_account(self):
         _, body = post(self.url, {"input": [{"type": "compaction_trigger"}]})
         checkpoint = self.items_of(body)[0]
         self.manager.swap(self.y)
         post(self.url, {"input": [checkpoint, {"type": "message", "role": "user", "content": "go on"}]})
         self.assertEqual(self.upstream.seen[-1]["token"], "at-x")  # x can still read it: stay
         self.assertEqual(self.upstream.seen[-1]["input"][0], checkpoint)
+        self.assertEqual(len(self.upstream.seen), 2)  # only Codex's own requests, nothing extra
+        self.upstream.limited.add("at-x")  # x used up: the thread moves on without the checkpoint
+        status, _ = post(self.url, {"input": [checkpoint, {"type": "message", "role": "user", "content": "go on"}]})
+        self.assertEqual((status, self.upstream.seen[-1]["token"]), (200, "at-y"))
+        self.assertEqual(self.upstream.seen[-1]["input"], [{"type": "message", "role": "user", "content": "go on"}])
 
     def test_hidden_reasoning_travels_as_its_summary(self):
         _, body = post(self.url, {"input": []})

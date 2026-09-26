@@ -176,7 +176,6 @@ class Integrations:
         vault = self.manager.vault
         state = ThreadState(load=lambda: vault.read_secret(THREADS), save=lambda data: vault.write_secret(THREADS, data))
         proxy = CodexProxy(RoutedAccounts(self.manager), port=port, secret=secret, state=state, **kwargs)
-        proxy.can_switch = lambda: sum(a.provider == "codex" for a in self.manager.accounts()) > 1
         try:
             base_url = proxy.start()
             codex_config.apply(base_url, self.codex_home)
