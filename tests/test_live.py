@@ -278,7 +278,7 @@ class LiveTests(unittest.TestCase):
         b_id = self.by_email(m, "b@example.com").id
         a_id = m.active["claude"]
         now = time.time()
-        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 300, delta=5)
+        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 90, delta=5)  # in use: near-live
         self.assertGreater(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 1700)  # inactive: 30 min
         # A passed reset is applied locally without asking the API.
         m.meta["accounts"][b_id]["usage"][0]["resetsAt"] = now - 5
@@ -309,15 +309,43 @@ class LiveTests(unittest.TestCase):
         calls = []
         def limited(secret, allow_refresh):
             calls.append(1)
-            raise ProviderError("Usage API is rate limiting; will retry", retry_after=60)
+            raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=60, rate_limited=True)
         self.providers["claude"].fetch = limited
         m.refresh(force=True)
         m.refresh(force=True)
-        self.assertEqual(len(calls), 1)  # second call held back by the backoff
+        self.assertEqual(len(calls), 1)  # second call held back by the backoff, even when forced
         a = self.by_email(m, "a@example.com")
-        until, failures = m.backoff[a.id]
-        self.assertGreaterEqual(until - time.monotonic(), 290)  # at least 5 minutes, not just Retry-After
-        self.assertIn("rate limiting", a.status)
+        meta = m.meta["accounts"][a.id]
+        wait = meta["backoffUntil"] - time.time()
+        self.assertTrue(55 <= wait <= 70, wait)  # what Retry-After asked, plus a little jitter
+        self.assertEqual(meta["pace"], 2.0)  # and a slower pace from now on
+        self.assertIn("Rate limited", a.status)
+        self.assertGreaterEqual(m.due(a.id, meta, True, time.time()), meta["backoffUntil"])
+        again = self.manager()  # restarting keeps the backoff
+        self.assertEqual(again.meta["accounts"][a.id]["backoffUntil"], meta["backoffUntil"])
+
+    def test_rate_limit_without_retry_after_backs_off_exponentially_and_recovers(self):
+        from account_switcher.providers import ProviderError
+        m = self.manager()
+        m.sync_live()
+        real = self.providers["claude"].fetch
+        self.providers["claude"].fetch = lambda secret, allow_refresh: (_ for _ in ()).throw(
+            ProviderError("Rate limited", rate_limited=True))
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        first = m.meta["accounts"][a.id]["backoffUntil"] - time.time()
+        self.assertTrue(55 <= first <= 70, first)
+        m.meta["accounts"][a.id]["backoffUntil"] = 0.0
+        m.refresh(force=True)
+        second = m.meta["accounts"][a.id]["backoffUntil"] - time.time()
+        self.assertTrue(115 <= second <= 140, second)  # doubled
+        self.assertEqual(m.meta["accounts"][a.id]["pace"], 4.0)
+        self.providers["claude"].fetch = real
+        m.meta["accounts"][a.id]["backoffUntil"] = 0.0
+        m.refresh(force=True)
+        meta = m.meta["accounts"][a.id]
+        self.assertEqual((meta["backoffUntil"], meta["backoffFailures"]), (0.0, 0))
+        self.assertLess(meta["pace"], 4.0)  # eases back after a success
 
     def test_subscription_dates_credits_and_manual_override(self):
         m = self.manager()

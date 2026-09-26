@@ -8,6 +8,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -16,20 +17,22 @@ import sys
 import time
 import unicodedata
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from . import tls
 from .vault import atomic_write
 
 TIMEOUT = 15
+log = logging.getLogger("account_switcher.providers")
 
 
 class ProviderError(Exception):
     """Short, user-facing problem description."""
 
-    def __init__(self, message, retry_after=None, relogin=False):
+    def __init__(self, message, retry_after=None, relogin=False, rate_limited=False):
         super().__init__(message)
-        self.retry_after, self.relogin = retry_after, relogin
+        self.retry_after, self.relogin, self.rate_limited = retry_after, relogin, rate_limited
 
 
 @dataclass
@@ -49,7 +52,14 @@ def _http(method, url, headers, body=None):
     except HTTPError as error:
         retry = error.headers.get("Retry-After") if error.headers else None
         if error.code == 429:
-            raise ProviderError("Usage API is rate limiting; will retry", retry_after=float(retry) if retry and retry.isdigit() else 300)
+            wait = float(retry) if retry and retry.strip().isdigit() else None
+            try:
+                detail = error.read(300).decode("utf-8", "replace")
+            except OSError:
+                detail = ""
+            where = urlsplit(url)
+            log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, detail.strip())
+            raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=wait, rate_limited=True)
         if error.code in (401, 403):
             raise ProviderError("Login expired", relogin=True)
         raise ProviderError(f"Usage API error {error.code}")
