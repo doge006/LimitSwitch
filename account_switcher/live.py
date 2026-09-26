@@ -423,11 +423,10 @@ class LiveAccounts:
                 return
             usage = [dict(w) for w in entry.get("usage") or []]
             for minutes, used, reset in windows:
-                key, label = WINDOW_KEYS.get(minutes, (f"window-{minutes * 60}", f"{round(minutes / 60)}-hour"))
+                key = WINDOW_KEYS.get(minutes, (f"window-{minutes * 60}",))[0]
                 window = next((w for w in usage if w["key"] == key), None)
-                if window is None:
-                    window = {"key": key, "label": label, "scope": "account", "used": -1.0}
-                    usage.append(window)
+                if window is None or minutes <= 0:
+                    continue  # only windows the account really has (headers may report others)
                 if round(window.get("used", -1)) != round(used) or window.get("resetsAt") != reset:
                     changed = True
                 window.update(used=float(used), resetsAt=reset)

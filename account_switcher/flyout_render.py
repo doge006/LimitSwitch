@@ -331,7 +331,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
                         L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
                     L.text(x0 + col_w - 14, ly, f"{shown:.0f}%", 11, level_rgb(shown), bold=True, anchor="rm")
                     if window.get("resetsAt"):
-                        L.text(bar_x, ly + 14, "in " + until(window["resetsAt"]), 10, FAINT)
+                        L.text(bar_x, ly + 14, "resets in " + until(window["resetsAt"]), 10, FAINT)
             if switchable:
                 L.hit(8, top, W - 16, ROW_H, key)
             if not account["eligible"]:
