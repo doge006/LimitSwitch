@@ -120,6 +120,13 @@ def open_dashboard(url):
         subprocess.Popen([browser, f"--app={url}", "--window-size=1200,900"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        if sys.platform == "win32":  # its own taskbar button (name and icon), not Edge's
+            try:
+                from .integrations import launcher
+                from .win_window import brand_full_view
+                brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico")
+            except Exception:
+                logging.getLogger("account_switcher").exception("full view taskbar identity")
     else:
         webbrowser.open(url)
 

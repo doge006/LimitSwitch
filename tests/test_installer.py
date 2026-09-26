@@ -105,6 +105,15 @@ class MacBundleTests(unittest.TestCase):
             done = subprocess.run(["sh", "-n", str(launcher)], capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
 
+    def test_prebuilt_launcher_when_the_build_tools_cannot_link(self):
+        installer = load_installer()
+        self.assertTrue(installer.PREBUILT_LAUNCHER.is_file())  # universal build from CI, kept in the repo
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "Account Switcher"
+            self.assertTrue(installer.build_launcher(target, prebuilt_only=True))
+            self.assertEqual(target.read_bytes(), installer.PREBUILT_LAUNCHER.read_bytes())
+            self.assertTrue(os.access(target, os.X_OK))
+
     def test_login_item(self):
         from account_switcher import integrations
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(integrations.Path, "home", return_value=Path(tmp)):

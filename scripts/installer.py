@@ -37,6 +37,7 @@ APP_NAME = "Account Switcher"
 MAC_APPS = (Path("/Applications") / f"{APP_NAME}.app", Path.home() / "Applications" / f"{APP_NAME}.app")
 MAC_APP = MAC_APPS[1]
 WINDOWS, MAC = sys.platform == "win32", sys.platform == "darwin"
+PREBUILT_ONLY = False  # --prebuilt-launcher (CI: test the launcher copy kept in the repo)
 
 
 def say(text, tone=""):
@@ -159,35 +160,70 @@ def mac_app():
     build_mac_app(MAC_APP)
 
 
-def compile_launcher(target):
-    """Build the app's own executable (scripts/mac_launcher.c), which runs Python inside its
-    process. Needs clang (Apple's command line tools) and a Python with its headers, as
-    python.org and Homebrew have. Returns False when it can't be built."""
-    clang = shutil.which("clang")
-    if not clang or not venv_python().exists():
-        return False
-    query = ("import json, os, sys, sysconfig; v = sysconfig.get_config_var; framework = os.path.join(sys.base_prefix, 'Python'); "
-             "print(json.dumps({'include': sysconfig.get_path('include'), 'lib': framework if os.path.isfile(framework) "
-             "else os.path.join(v('LIBDIR') or '', 'libpython' + (v('LDVERSION') or '') + '.dylib')}))")
+PREBUILT_LAUNCHER = ROOT / "scripts" / "mac_launcher"
+
+
+def python_library():
+    """Python's shared library behind .venv (the framework's Python on python.org and
+    Homebrew builds, else libpython*.dylib), which the launcher loads at run time."""
+    if not venv_python().exists():
+        return None
+    query = ("import os, sys, sysconfig; v = sysconfig.get_config_var; framework = os.path.join(sys.base_prefix, 'Python'); "
+             "print(framework if os.path.isfile(framework) else os.path.join(v('LIBDIR') or '', 'libpython' + (v('LDVERSION') or '') + '.dylib'))")
     done = subprocess.run([str(venv_python()), "-c", query], capture_output=True, text=True)
-    try:
-        paths = json.loads(done.stdout)
-    except ValueError:
-        return False
-    if not (Path(paths["include"]) / "Python.h").exists() or not Path(paths["lib"]).is_file():
-        return False
+    path = Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else None
+    return path if path and path.is_file() else None
 
-    def text(value):
-        return json.dumps(str(value))  # a C string literal
 
-    build = subprocess.run([clang, "-O2", "-Wall", "-o", str(target), str(ROOT / "scripts" / "mac_launcher.c"),
-                            "-I", paths["include"], paths["lib"],
-                            f"-DACCOUNT_SWITCHER_VENV_PYTHON={text(venv_python())}",
-                            f"-DACCOUNT_SWITCHER_SCRIPT={text(ROOT / 'AccountSwitcher.pyw')}",
-                            f"-DACCOUNT_SWITCHER_LOG={text(log_path())}"], capture_output=True, text=True)
-    if build.returncode != 0:
-        say("Couldn't build the app launcher (using a script instead):\n" + (build.stderr or "").strip()[-600:], "warn")
+def sdks():
+    """None (clang's default SDK), then every installed macOS SDK, newest first. A linker older
+    than the newest SDK can't read it ("tapi error: unknown architecture"), and an older SDK
+    installed alongside still works."""
+    found = []
+    for root in (Path("/Library/Developer/CommandLineTools/SDKs"),
+                 Path("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs")):
+        try:
+            found += [p for p in root.iterdir() if p.suffix == ".sdk" and not p.is_symlink()]
+        except OSError:
+            continue
+
+    def version(path):
+        digits = path.stem.replace("MacOSX", "")
+        return tuple(int(x) for x in digits.split(".") if x.isdigit()) or (0,)
+    return [None] + sorted(found, key=version, reverse=True)
+
+
+def build_launcher(target, prebuilt_only=False):
+    """The app's own executable (scripts/mac_launcher.c): built with this Mac's clang, trying
+    each SDK; else the copy CI built from the same source. Returns False when neither works."""
+    clang = shutil.which("clang")
+    errors = []
+    if clang and not prebuilt_only:
+        for sdk in sdks():
+            command = [clang, "-O2", "-Wall", "-mmacosx-version-min=11.0", "-o", str(target),
+                       str(ROOT / "scripts" / "mac_launcher.c")] + (["-isysroot", str(sdk)] if sdk else [])
+            build = subprocess.run(command, capture_output=True, text=True)
+            if build.returncode == 0:
+                return True
+            errors.append(f"{sdk.name if sdk else 'default SDK'}: {(build.stderr or '').strip()[-300:]}")
+    if PREBUILT_LAUNCHER.is_file():
+        shutil.copy2(PREBUILT_LAUNCHER, target)
+        target.chmod(0o755)
+        if errors:
+            say("Built-in launcher used (this Mac's build tools can't link; updating them in Software Update fixes that).", "dim")
+        return True
+    if errors:
+        say("Couldn't build the app launcher (using a script instead):\n" + "\n".join(errors), "warn")
+    return False
+
+
+def launcher_config(resources):
+    """Contents/Resources/launcher.conf: what the launcher runs. False without a Python library."""
+    library = python_library()
+    if not library:
         return False
+    (resources / "launcher.conf").write_text(
+        "\n".join(str(p) for p in (library, venv_python(), ROOT / "AccountSwitcher.pyw", log_path())) + "\n")
     return True
 
 
@@ -201,7 +237,7 @@ def build_mac_app(app):
     # executable: a script that replaces itself with Python gets an icon of height 0. So the
     # executable is a small native launcher running Python in-process (as py2app apps do).
     native = macos / "Account Switcher"
-    built = compile_launcher(native)
+    built = launcher_config(contents / "Resources") and build_launcher(native, PREBUILT_ONLY)
     if not built and native.exists():
         native.unlink()
     plist = {"CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": "com.accountswitcher.app",
@@ -236,8 +272,8 @@ $ARCH "$PY" "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
-    source = ROOT / "account_switcher" / "static" / "assets" / "switcher.png"
-    sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256)]
+    source = ROOT / "account_switcher" / "static" / "assets" / "appicon-mac.png"  # on the macOS icon grid
+    sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)]
     try:
         from PIL import Image  # the icon is optional; Pillow is in .venv, not always here
     except ImportError:
@@ -316,7 +352,10 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-launch", action="store_true")
     parser.add_argument("--skip-code", action="store_true", help="do not touch the code (use this folder as it is)")
+    parser.add_argument("--prebuilt-launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    global PREBUILT_ONLY
+    PREBUILT_ONLY = args.prebuilt_launcher
     if not (WINDOWS or MAC):
         say("Account Switcher runs on Windows and macOS.", "error")
         return 1
