@@ -1,6 +1,6 @@
 """Fault-injection Anthropic endpoint. Contains NO live-provider implementation.
 
-The native UI and installed Claude CLI use this loopback endpoint to make
+The dashboard and installed Claude CLI use this loopback endpoint to make
 failure/recovery experiments repeatable without touching subscription accounts.
 """
 import json

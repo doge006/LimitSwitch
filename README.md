@@ -1,33 +1,35 @@
 # Account Switcher
 
-Local Claude/Codex account-manager prototype with a Windows tray dashboard and a shared authenticated Web UI. Native account rows use actual Codex Vitals source. Dark #1e1e1e surfaces, provider logos, an app icon, rounded buttons and finite motion are included.
+A Windows tray app that shows every Claude Code and Codex usage limit at a glance, swaps accounts, and (with AFK mode) continues an interrupted Claude session after a quota failure.
 
-**All accounts and usage are synthetic.** Real login, encrypted token storage, actual quota fetching, live failover, interactive CLI attachment and VS Code/desktop integration are unfinished. Codex currently demonstrates selection only.
+**Accounts and usage are still synthetic.** Real sign-in, encrypted credential storage and live usage fetching are the next milestones. See `docs/REVIEW.md`.
 
-## Windows
+## Run it (Windows)
 
-Requires Python 3.13 with Tk.
+Needs Python 3.12+.
 
 ```powershell
 python -m pip install -r requirements-native.txt
-python -m account_switcher.native
+.\Launch.cmd            # starts the tray and opens the dashboard
+.\Launch.cmd --quiet    # starts in the tray only
 ```
 
-`Launch.cmd` uses the original machine's Python 3.13 installation. The module command above works with your selected Python. `--tray` starts hidden; `--port 8765` selects a fixed port. Open Web UI supplies the private per-launch URL. Close hides to tray; Exit or Web Shut down closes the host and owned processes. Nothing is registered at Windows sign-in.
+- **Left-click the tray icon:** opens the dashboard, a borderless Edge/Chrome app window (falls back to your default browser).
+- **Right-click:** one-click account swaps with 5-hour and weekly headroom, plus Auto swap, AFK mode and Quit.
+- **Hover:** shows the account in use per provider and how much is left.
+- **The icon's dot:** green, amber or red for the tightest limit in use.
+- **Failover:** a Windows notification says what switched and why.
+- **Launching again:** opens the running copy's dashboard instead of starting a second one.
+- **Quit** (tray menu or dashboard) stops everything the app started. Nothing runs at sign-in.
 
-Hover the tray icon for selected-account quota status; click it for the compact account panel. Recovery controls are under Session tools. Motion respects Windows animation settings and stops when settled.
+Resource use: one Python process with no timers or polling. It sleeps until something changes. Measured idle over 30 s (Linux, virtual display): about 31 MB, 3 threads, 0 CPU, 0 wake-ups. The dashboard window costs memory only while it's open. The Go proxy and Claude CLI run only between Run and Stop in the Recovery lab.
 
-For the default recovery experiment, install Claude Code and build the proxy using Go 1.26 or newer:
+## Updating
 
-```powershell
-./experiments/proxy/build.ps1
-```
-
-The proxy and client start only on Run and stop on Stop. The fixture uses dummy accounts and local upstreams, with coding tools disabled. It never loads existing client credentials. `--simulator` bypasses the compiled proxy; running its recovery experiment still requires the Claude CLI.
-
-## Updating from GitHub
-
-Double-click `Update.cmd` (or run it from a terminal) to download the latest version into this folder. It runs once and exits: it fetches from GitHub, fast-forwards the checkout, reinstalls Python requirements if they changed, and, if Account Switcher is running, closes it cleanly and starts it again on the new version.
+Double-click `Update.cmd` (or run it from a terminal). It runs once and then exits:
+1. It fetches the latest code from GitHub and fast-forwards this folder.
+2. It reinstalls the Python requirements if they changed.
+3. If the app is running, it closes it cleanly and restarts it in the tray.
 
 ```powershell
 .\Update.cmd                                           # update the current branch
@@ -35,44 +37,34 @@ Double-click `Update.cmd` (or run it from a terminal) to download the latest ver
 .\Update.cmd -Force                                    # update even with local edits (saved to git stash / a backup branch first)
 ```
 
-It needs git (`winget install --id Git.Git -e`). A folder downloaded as a ZIP is converted into a git checkout on first run; git-ignored files such as the built proxy are kept. Nothing is installed as a service or scheduled.
+It needs git (`winget install --id Git.Git -e`). A ZIP download is converted into a git checkout on first run; git-ignored files such as the built proxy are kept.
 
-## Cloud sessions / Linux
+## Recovery lab (optional)
 
-This repository contains both modified upstream sources as ordinary folders. No submodules or private machine paths are required for core/Web development.
+The dashboard's Recovery lab runs the official Claude CLI against local test upstreams to demonstrate AFK recovery. It needs Claude Code installed and the proxy built with Go 1.26+:
 
-For full test discovery, install Tk and Pillow (on Debian/Ubuntu: `apt-get install python3-tk`, then `python -m pip install Pillow==12.2.0`). A virtual environment is recommended. Native tray interaction must be tested on Windows.
+```powershell
+./experiments/proxy/build.ps1
+```
+
+`--simulator` (on `Launch.cmd` or the dev server) skips the compiled proxy. The fixture uses dummy accounts, disables coding tools, and never loads your real credentials.
+
+## Development (any OS)
 
 ```sh
-python -m account_switcher.web --simulator --no-browser
+python -m account_switcher.web --simulator --no-browser   # dashboard only, prints a private URL
 python -m unittest discover -s tests -v
 ```
 
-The Web server prints a private loopback URL. Use the cloud environment's authenticated port-forwarding facility if available; do not expose the control port publicly. Tests requiring Claude, the built Windows proxy, or a graphical display skip when prerequisites are absent. Pure core tests need only Python:
+Tray tests use pystray's dummy backend and need `pystray` + `Pillow`; they skip if those are missing. Tests needing the Claude CLI or the built proxy also skip when absent. Don't expose the dashboard port publicly.
 
-```sh
-python -m unittest discover -s tests -p test_core.py -v
-```
+## Layout
 
-The live Windows tray and installed-client workflows remain Windows-specific. Cloud sessions can edit source and exercise portable logic/Web behavior.
-
-## Verification and boundaries
-
-The latest UI pass passed 25 tests, native smoke checks and programmatic popup reversal/account selection. Native screenshots were reviewed. Full live-account behavior has never been verified.
-
-The Claude fixture demonstrates terminal quota failure followed by opt-in Continue within the same session. It does not guarantee word-exact continuation, and Claude may omit incomplete assistant output. The reserve account is deliberately failed and restored in the fixture to let native retries settle.
-
-A 10-second idle sample with both native views open measured 58.82 MiB working set, 32.82 MiB private memory and 0 CPU seconds. Browser/client/proxy costs are separate. GPU use is unmeasured. The original 30 MB target remains unmet.
-
-See `docs/REVIEW.md` for the latest review and priorities.
-
-## Source map
-
-- `account_switcher/`: controller, clients, native shell and Web assets.
-- `tests/`: routing, recovery, Web lifecycle and native controls.
-- `experiments/`: reproducible compatibility scripts and result summaries; raw transcripts are regenerated locally.
-- `SOURCE_PROVENANCE.md`: pinned upstream versions and local changes. Original licenses remain in each source folder.
-- `IMPLEMENTATION_STATUS.md`: evidence and outstanding implementation work.
-- `ACCOUNT_SWITCHER_TECHNICAL_PLAN.md`: original technical plan; current verified status takes precedence over its proposed work.
-
-Upstream Vitals and proxy credential-management code has not been integrated. Do not run the upstream application entry points as our launcher. Build caches, executables, toolchains, temporary credentials and local handoffs are excluded from version control.
+- `account_switcher/tray.py`: the app (tray icon, menu, notifications).
+- `account_switcher/web.py` + `static/`: controller and dashboard.
+- `account_switcher/core.py`: routing and AFK recovery rules.
+- `account_switcher/client.py`, `demo.py`, `proxy_demo.py`: Recovery lab plumbing.
+- `scripts/update.ps1`: the updater.
+- `docs/REVIEW.md`: latest review and priorities.
+- `ACCOUNT_SWITCHER_TECHNICAL_PLAN.md`: original plan.
+- `experiments/`, `proxy-fork/`, `codex-vitals-source/`: compatibility spikes and vendored upstream sources. See `SOURCE_PROVENANCE.md`.

@@ -9,7 +9,7 @@ const PROVIDERS = [
 ];
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, stopped = false, submitting = null, pendingPrefs = null, lastLogId = null, minuteTimer = null;
-const cards = new Map(), tiles = new Map(), lastActive = {};
+const cards = new Map(), tiles = new Map();
 
 // ---------- helpers ----------
 function node(tag, className, text) {
@@ -36,14 +36,14 @@ const resetText = ts => `Resets ${absolute(ts)} · ${relative(ts)}`;
 const accountWindows = a => a.windows.filter(w => w.key === 'five_hour' || w.key === 'weekly');
 const headroom = a => Math.min(...accountWindows(a).map(w => remaining(w.used)));
 
-// Finite count-up for changed percentages (~0.6s, then stops).
+// Short count for changed percentages (~0.35s, then stops).
 function tweenNumber(el, to) {
   const from = Number(el.dataset.value ?? to);
   el.dataset.value = to;
   if (reduceMotion || from === to) { el.textContent = `${Math.round(to)}%`; return; }
   const start = performance.now();
   const step = now => {
-    const p = Math.min(1, (now - start) / 600), e = 1 - (1 - p) ** 3;
+    const p = Math.min(1, (now - start) / 350), e = 1 - (1 - p) ** 3;
     el.textContent = `${Math.round(from + (to - from) * e)}%`;
     if (p < 1 && el.dataset.value == to) requestAnimationFrame(step);
   };
@@ -91,7 +91,7 @@ function buildTile(provider) {
 function buildCard(account, index) {
   const card = node('article', 'card enter');
   card.style.setProperty('--i', index);
-  // Drop the entry animation once finished so it cannot pin `transform` for hover/pop.
+  // Drop the entry animation class once it has played.
   card.addEventListener('animationend', e => { if (e.animationName === 'rise') card.classList.remove('enter'); });
   const head = node('div', 'card-head'), avatar = node('span', 'avatar'), logo = node('img');
   logo.src = `/assets/${account.provider}.png`; logo.alt = '';
@@ -155,14 +155,8 @@ function updateCards() {
   for (const account of state.accounts) {
     const view = cards.get(account.id);
     if (!view) continue;
-    const wasActive = view.card.classList.contains('active');
     view.card.classList.toggle('active', account.active);
     view.card.classList.toggle('spent', !account.eligible);
-    if (account.active && !wasActive && lastActive[account.provider] !== undefined && !reduceMotion) {
-      view.card.classList.remove('just-active');
-      void view.card.offsetWidth;
-      view.card.classList.add('just-active');
-    }
     view.badge.textContent = account.eligible ? 'In use' : 'Limit reached';
     for (const w of account.windows) {
       const wv = view.windows.get(w.key);
@@ -196,12 +190,6 @@ function updateTiles() {
     view.meta.textContent = [account.plan, account.email].filter(Boolean).join(' · ');
     const soonest = accountWindows(account).reduce((a, b) => (a.resetsAt < b.resetsAt ? a : b));
     view.next.replaceChildren('Next reset ', node('b', 'num', relative(soonest.resetsAt)), ` · ${soonest.label}`);
-    if (lastActive[provider.id] && lastActive[provider.id] !== account.id && !reduceMotion) {
-      view.tile.classList.remove('swapped');
-      void view.tile.offsetWidth;
-      view.tile.classList.add('swapped');
-    }
-    lastActive[provider.id] = account.id;
   }
 }
 
