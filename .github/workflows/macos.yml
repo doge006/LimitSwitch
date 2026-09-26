@@ -29,6 +29,18 @@ jobs:
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
           /tmp/probe/bin/python .github/mac_smoke.py
+      - name: Control (a minimal native menu bar app)
+        if: always()
+        run: |
+          app=/tmp/StatusProbe.app; mkdir -p $app/Contents/MacOS
+          swiftc -O .github/probe/StatusProbe.swift -o $app/Contents/MacOS/StatusProbe
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.example.statusprobe" -c "Add :CFBundleExecutable string StatusProbe" -c "Add :LSUIElement bool true" $app/Contents/Info.plist
+          codesign --force --sign - $app
+          open -W -o /tmp/probe.out $app &
+          sleep 6
+          cat /tmp/probe.out || true
+          mkdir -p shots; screencapture -x shots/5-probe.png
+          pkill StatusProbe || true
       - name: Menu bar details
         if: always()
         run: |
