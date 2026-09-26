@@ -309,8 +309,17 @@ function updateCards() {
     view.remove.disabled = locked;
     const problem = account.status;
     view.hint.classList.toggle('warn', !!problem);
-    view.hint.textContent = problem
-      || (account.active ? 'All sessions use this account' : !account.eligible ? 'Waiting for reset' : '');
+    const relogin = state.mode === 'live' && /sign in|expired|missing/i.test(problem || '');
+    if (relogin) {  // one click back in, with the app's own sign-in (it leaves other logins alone)
+      const again = node('button', 'link-button', 'Sign in again');
+      again.type = 'button';
+      again.disabled = (state.signingIn || []).includes(account.provider);
+      again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider }); });
+      view.hint.replaceChildren(node('span', '', 'Login expired · '), again);
+    } else {
+      view.hint.textContent = problem
+        || (account.active ? 'All sessions use this account' : !account.eligible ? 'Waiting for reset' : '');
+    }
     if (!problem && state.mode === 'live' && account.updated_at) view.hint.title = ago(account.updated_at);
   }
 }

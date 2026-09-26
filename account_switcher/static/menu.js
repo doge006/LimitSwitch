@@ -86,6 +86,12 @@ function row(account) {
   } else {
     r.append(el('div', 'loading', account.status || 'Usage not loaded yet'));
   }
+  if (/sign in|expired|missing/i.test(account.status || '')) {  // one click back in (the app's own sign-in)
+    const again = el('button', 'relogin', 'Sign in again');
+    again.type = 'button';
+    again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider }); });
+    r.append(again);
+  }
   return r;
 }
 
