@@ -41,6 +41,12 @@ jobs:
           cat /tmp/probe.out || true
           mkdir -p shots; screencapture -x shots/5-probe.png
           pkill StatusProbe || true
+      - name: Which part macOS rejects (PyObjC variants)
+        if: always()
+        run: |
+          for v in title symbol symbol+regular symbol+regular-later symbol+menu; do
+            .venv/bin/python3 .github/probe/pyprobe.py "$v" || echo "$v failed"
+          done
       - name: Menu bar details
         if: always()
         run: |
