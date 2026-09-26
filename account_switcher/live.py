@@ -550,6 +550,8 @@ class LiveAccounts:
                 with self.lock:
                     account_id = self.adopt(name, login)
                     self.save()
+                if hasattr(isolated, "forget"):
+                    isolated.forget()
                 self.refresh(only=account_id)
             else:
                 self.notify("log", f"{name.title()} sign-in closed without a login")

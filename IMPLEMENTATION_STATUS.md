@@ -33,6 +33,16 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 - **Start with Windows:** on by default (a `HKCU\...\Run` entry for `AccountSwitcher.pyw`), because Codex's requests go through the app.
 - **Remove:** removes a saved account; the account in use can't be removed.
 
+## macOS
+
+- **What exists:** a menu bar app (`macos_app.py`, PyObjC) with a native popover panel (`static/menu.*`, WKWebView), a right-click menu and a full-view window. It uses the Keychain for Claude Code's login and for the vault key, and a LaunchAgent for start at login.
+- **What was tested:** everything that runs off a Mac. That covers the Keychain wrapper (against a stand-in for Apple's `security` tool), Claude's Keychain switching, the vault cipher, the app bundle, the login item, and the panel page in light and dark mode.
+- **What wasn't:** the PyObjC app itself has not been run on a real Mac yet.
+
+## Installer
+
+`scripts/installer.py` (one script for Windows and macOS): git update with backups, a `.venv` with this OS's requirements, a Start menu shortcut or `~/Applications` app, and a restart. The git logic is covered by tests with throwaway repos. The Windows path was run under Wine: it created the venv, installed the requirements, and the app started and quit from it.
+
 ## Limits
 
 - Hidden reasoning can only cross accounts as the plain-text summary ChatGPT returns with it (it's encrypted per account). A compaction summary can't cross at all: a thread that moves after its account is used up loses that older summary (recent messages stay).

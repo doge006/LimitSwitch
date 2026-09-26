@@ -1,6 +1,6 @@
 # Adds "Account Switcher" to the Start menu (and, with -Desktop, the desktop), with the app icon.
 # Run again at any time; it overwrites the shortcut. -Remove deletes it.
-param([switch]$Desktop, [switch]$Remove)
+param([switch]$Desktop, [switch]$Remove, [string]$Python = "")
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $places = @([Environment]::GetFolderPath('Programs'))
@@ -12,11 +12,13 @@ if ($Remove) {
     exit 0
 }
 
-# The same windowless Python Launch.cmd uses, so no console window flashes up.
-$pythonw = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\pythonw.exe'
+# Windowless Python, so no console window flashes up: the installer's .venv first.
+$pythonw = $Python
+if (-not $pythonw) { $pythonw = Join-Path $root '.venv\Scripts\pythonw.exe' }
+if (-not (Test-Path -LiteralPath $pythonw)) { $pythonw = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\pythonw.exe' }
 if (-not (Test-Path -LiteralPath $pythonw)) {
     $found = Get-Command pythonw.exe, pyw.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $found) { throw 'pythonw.exe not found. Install Python 3.12+ from python.org first.' }
+    if (-not $found) { throw 'pythonw.exe not found. Run Install.cmd first.' }
     $pythonw = $found.Source
 }
 

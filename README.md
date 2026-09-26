@@ -1,19 +1,46 @@
 # Account Switcher
 
-A Windows tray app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
+A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
 
-## Run it (Windows)
+## Install and update (Windows and macOS)
 
-Needs Python 3.12+.
+One installer for both; it detects the OS. Run it again at any time to update.
+
+- **Windows:** double-click `Install.cmd` (or `Update.cmd`, which does the same).
+- **macOS:** double-click `Install.command` in Finder (or run `./Install.command` in Terminal). If macOS says it can't verify it, right-click it, choose Open, then Open.
+
+Each run:
+1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
+2. Updates this folder from GitHub. Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
+3. Sets up a private Python environment (`.venv`) with this OS's requirements; they're only reinstalled when they change.
+4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in `~/Applications` on macOS. The app registers itself to start at sign-in.
+5. Restarts the app on the new version (or starts it on a first install).
+
+Options: `--branch NAME` (switch to and update another branch), `--force`, `--no-launch`.
+
+A first install from nothing: `git clone https://github.com/doge006/Account-Switcher.git`, then run the installer in that folder.
+
+## macOS
+
+- **Menu bar:** the tray becomes a menu bar icon.
+  - Click it for the panel, a native popover that follows light and dark mode.
+  - Drag the panel away from the menu bar and it stays open as a floating window.
+  - Right-click (or Control-click) for the menu; **Full View…** opens the dashboard in its own window.
+  - There's no Dock icon.
+- **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
+- **Codex** works exactly as on Windows (the local router, `~/.codex/auth.json`).
+- **Saved logins** are encrypted with a random key kept in your login Keychain, under `~/Library/Application Support/AccountSwitcher`.
+- **Start at login:** a LaunchAgent (`~/Library/LaunchAgents/com.accountswitcher.app.plist`).
+
+## Run it by hand (Windows)
 
 ```powershell
-python -m pip install -r requirements-native.txt
 .\Launch.cmd            # starts the tray and opens the full view
 .\Launch.cmd --quiet    # starts in the tray only
 .\Launch.cmd --demo     # sample accounts + the Recovery lab, no real logins touched
 ```
 
-**Start menu shortcut:** double-click `Add-Shortcut.cmd` to add **Account Switcher** to the Start menu with the app's icon; from there you can also pin it to Start or the taskbar. Add `-Desktop` to put one on the desktop too, and `-Remove` to take them away. The shortcut starts the app without a console window. If the app is already running, it opens the full view instead.
+**Start menu shortcut:** the installer adds it. `Add-Shortcut.cmd -Desktop` also puts one on the desktop, and `-Remove` takes them away. The shortcut starts the app without a console window. If the app is already running, it opens the full view instead.
 
 ## Your accounts
 
@@ -93,21 +120,6 @@ That's two tiny requests in total.
 
 `Verify-Switch.cmd` checks the login-file switch (what Codex uses while the app is closed, and what Claude Code always uses). With the app running, Codex switching goes through the router instead. That path is covered by `tests/test_routing.py` and was checked with the real Codex CLI.
 
-## Updating
-
-Double-click `Update.cmd` (or run it from a terminal). It runs once and then exits:
-1. It fetches the latest code from GitHub and fast-forwards this folder.
-2. It reinstalls the Python requirements if they changed.
-3. If the app is running, it closes it cleanly and restarts it in the tray.
-
-```powershell
-.\Update.cmd                                           # update the current branch
-.\Update.cmd -Branch claude/pensive-brahmagupta-cufhuf # switch to and update another branch
-.\Update.cmd -Force                                    # update even with local edits (saved to git stash / a backup branch first)
-```
-
-It needs git (`winget install --id Git.Git -e`). A ZIP download is converted into a git checkout on first run; git-ignored files are kept.
-
 ## Demo mode and the Recovery lab
 
 `--demo` swaps in sample accounts and shows the Recovery lab. The lab runs the official Claude CLI against local test upstreams and demonstrates AFK: a mid-response quota failure, a switch, then one Continue. It needs Claude Code, and the proxy built with Go 1.26+ (`./experiments/proxy/build.ps1`); add `--simulator` to skip the proxy.
@@ -135,6 +147,8 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/web.py` + `static/`: controller and full view.
 - `account_switcher/core.py`: account model, routing and AFK recovery rules.
 - `account_switcher/client.py`, `demo.py`, `proxy_demo.py`: Recovery lab (demo mode).
-- `scripts/update.ps1`: the updater.
+- `scripts/installer.py` (+ `Install.cmd` / `Install.command`): the installer and updater.
+- `account_switcher/macos_app.py` + `static/menu.*`: the macOS menu bar app and its panel.
+- `account_switcher/keychain.py`: macOS Keychain access.
 - `docs/REVIEW.md`: review and priorities.
 - `experiments/`, `proxy-fork/`, `codex-vitals-source/`: spikes and vendored upstream sources (see `SOURCE_PROVENANCE.md`).

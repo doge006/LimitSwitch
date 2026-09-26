@@ -305,7 +305,7 @@ def main(argv=None):
     if sys.platform == "win32":
         from .flyout import enable_dpi_awareness
         enable_dpi_awareness()
-    if sys.platform == "win32":
+    if sys.platform in ("win32", "darwin"):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     controller = Controller(args.simulator, live=not (args.demo or args.simulator))
@@ -324,7 +324,11 @@ def main(argv=None):
         except Exception:
             logging.getLogger("account_switcher").exception("integrations failed to start")
     try:
-        Tray(controller, server).run(open_now=not args.quiet)
+        if sys.platform == "darwin":
+            from .macos_app import run  # menu bar app
+            run(controller, server, open_now=not args.quiet)
+        else:
+            Tray(controller, server).run(open_now=not args.quiet)
     finally:
         if integrations:
             integrations.stop()  # Codex and Claude Code keep working without the app

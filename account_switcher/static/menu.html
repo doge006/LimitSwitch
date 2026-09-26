@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Account Switcher</title>
+<link rel="stylesheet" href="/menu.css">
+</head>
+<body>
+<header>
+  <span class="title">Account Switcher</span>
+  <button id="full" class="link" type="button">Full View…</button>
+</header>
+<main id="list" aria-live="polite"></main>
+<footer>
+  <label class="switch"><input id="auto" type="checkbox"><span class="track"></span>Auto swap</label>
+  <label class="switch"><input id="afk" type="checkbox"><span class="track"></span>AFK</label>
+  <button id="quit" class="link quiet" type="button">Quit</button>
+</footer>
+<script src="/menu.js"></script>
+</body>
+</html>
