@@ -722,6 +722,10 @@ class Flyout(Popup):
             tray.act("preferences", prefs)
         elif action.startswith("add:"):
             tray.act("add", {"provider": action[4:]})
+        elif action.startswith("relogin:"):  # Sign in again, for that account
+            account = next((a for a in tray.state["accounts"] if a["id"] == action[8:]), None)
+            if account:
+                tray.act("add", {"provider": account["provider"], "id": account["id"]})
 
 
 class TrayMenu(Popup):

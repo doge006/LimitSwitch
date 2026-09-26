@@ -574,8 +574,9 @@ class LiveAccounts:
         self.notify("accounts", None)
 
     # ---------- adding accounts ----------
-    def add(self, name):
-        """Run the official sign-in in an isolated folder so the current login is untouched."""
+    def add(self, name, expect=None):
+        """Run the official sign-in in an isolated folder so the current login is untouched.
+        expect: the account being signed back in ("Sign in again"), to say so if another lands."""
         provider = self.providers.get(name)
         if provider is None:
             raise ValueError("Unknown provider")
@@ -602,10 +603,10 @@ class LiveAccounts:
             watch_process = True
         self.logins[name] = process
         self.notify("log", f"{name.title()} sign-in opened in a new window")
-        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory, watch_process),
+        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory, watch_process, expect),
                          daemon=True).start()
 
-    def _finish_login(self, name, process, isolated, directory, watch_process=True):
+    def _finish_login(self, name, process, isolated, directory, watch_process=True, expect=None):
         try:
             # Watch for the login file (the CLI may stay open); stop after 10 minutes.
             deadline = time.monotonic() + 600
@@ -622,6 +623,11 @@ class LiveAccounts:
                     self.save()
                 if hasattr(isolated, "forget"):
                     isolated.forget()
+                wanted = self.meta["accounts"].get(expect) if expect else None
+                if wanted and account_id != expect:  # the browser was signed in to another account
+                    self.notify("log", f"Signed in as {login.email or login.identity}, not "
+                                       f"{wanted.get('email') or wanted.get('identity')}. To fix that account, sign out of "
+                                       f"claude.ai in the browser (or switch accounts there), then click Sign in again.")
                 self.refresh(only=account_id)
             else:
                 self.notify("log", f"{name.title()} sign-in closed without a login")
