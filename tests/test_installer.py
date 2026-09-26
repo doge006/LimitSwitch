@@ -92,12 +92,14 @@ class MacBundleTests(unittest.TestCase):
             self.assertFalse(user.exists())  # the old copy is removed
             info = plistlib.loads((system / "Contents" / "Info.plist").read_bytes())
             self.assertTrue(info["LSUIElement"])
+            self.assertEqual(info["LSArchitecturePriority"][0], "arm64")  # not Rosetta on Apple silicon
             self.assertEqual(info["CFBundleExecutable"], "AccountSwitcher")
             launcher = system / "Contents" / "MacOS" / "AccountSwitcher"
             self.assertTrue(os.access(launcher, os.X_OK))
             text = launcher.read_text()
             self.assertIn("AccountSwitcher.pyw", text)
-            self.assertIn('>>"$LOG" 2>&1', text)  # a failed start leaves its error in app.log
+            self.assertIn('>>"$LOG" 2>&1', text)
+            self.assertIn("arch -arm64", text)  # a failed start leaves its error in app.log
             self.assertTrue((system / "Contents" / "Resources" / "AppIcon.icns").exists())
             done = subprocess.run(["sh", "-n", str(launcher)], capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)

@@ -166,7 +166,10 @@ def build_mac_app(app):
     plist = {"CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": "com.accountswitcher.app",
              "CFBundleExecutable": "AccountSwitcher", "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
              "CFBundleShortVersionString": "1.0", "LSUIElement": True, "LSMinimumSystemVersion": "11.0",
-             "NSHighResolutionCapable": True}
+             "NSHighResolutionCapable": True,
+             # The launcher is a script, which macOS would otherwise run under Rosetta on Apple
+             # silicon, and the .venv's native libraries can't load there.
+             "LSArchitecturePriority": ["arm64", "x86_64"], "LSRequiresNativeExecution": True}
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
     launcher = contents / "MacOS" / "AccountSwitcher"
     log = log_path()
@@ -179,6 +182,9 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 mkdir -p "$(dirname "$LOG")"
+if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+  exec /usr/bin/arch -arm64 "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
+fi
 exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
