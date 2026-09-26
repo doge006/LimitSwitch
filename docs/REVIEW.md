@@ -61,13 +61,13 @@ Changes in this pass:
 
 The Web UI has been rebuilt around the references:
 
-- A Fluent-style top bar with a provider filter.
+- A Fluent-style dark top bar.
 - "In use" tiles per provider, with a headroom ring and the next reset.
 - An automation card.
 - Account cards per provider, each showing every usage window (including per-model caps like "Weekly · Fable"), plan chip, email and reset time in absolute and relative form.
 - Swap buttons in the provider's accent colour.
 
-Motion: pointer spotlight, active-card glow, and toasts for swaps, failovers and errors. The Recovery lab expands smoothly and shows an activity timeline. It follows the system light/dark theme and respects reduced-motion settings.
+Motion: active-card glow and toasts for swaps, failovers and errors. The Recovery lab expands smoothly and shows an activity timeline. Dark theme only, kept deliberately minimal; it respects reduced-motion settings.
 
 Recommendation: keep the **tray as the always-on, lightweight piece** and the **Web UI as the premium surface you open on demand**. Closing the tab frees its memory. Tk can't do anti-aliasing, blur or smooth compositing, so it'll never feel premium; stop investing in the Tk dashboard beyond the tray popup. If you later want premium *and* tiny in one always-open window, the realistic path is a native WinUI/Win32 shell. That's a much bigger job, so do it only after real data and real-session AFK work.
 

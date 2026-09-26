@@ -69,6 +69,17 @@ function Stop-RunningApp([string]$UrlFile) {
     return $true
 }
 
+function Test-LocalWorkOnGitHub([string]$target) {
+    # True when nothing would be lost by taking GitHub's version: the local files match
+    # a commit on GitHub, or every local-only commit has an equivalent change there.
+    $tree = RunGit rev-parse "HEAD^{tree}"
+    $remoteTrees = RunGit log --format=%T --max-count=500 "origin/$target"
+    if (($remoteTrees -split "`n") -contains $tree) { return $true }
+    $cherry = & git -C $Root cherry "origin/$target" HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return -not ($cherry | Where-Object { $_ -like "+*" })
+}
+
 function Update-Checkout {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw "git is not installed. Install it with:  winget install --id Git.Git -e"
@@ -114,15 +125,18 @@ function Update-Checkout {
 
     & git -C $Root merge --quiet --ff-only "origin/$target" 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        if (-not $Force) {
-            Say "Your branch has commits that are not on GitHub, so it can't be updated automatically." Yellow
+        $safe = Test-LocalWorkOnGitHub $target
+        if (-not $safe -and -not $Force) {
+            Say "Your local $target has commits that are not on GitHub:" Yellow
+            & git -C $Root log --oneline --no-decorate --max-count=10 "origin/$target..HEAD" | Out-Host
             Say "Rerun with -Force to save them on a backup branch and take GitHub's version." Yellow
             return @{ Status = "blocked" }
         }
         $backup = "backup/update-" + (Get-Date -Format "yyyyMMdd-HHmmss")
         RunGit branch $backup | Out-Null
         RunGit reset --quiet --hard "origin/$target" | Out-Null
-        Say "Your local commits were saved on branch $backup." Yellow
+        if ($safe) { Say "Your local commits were already on GitHub under different IDs; old history kept on branch $backup." DarkGray }
+        else { Say "Your local commits were saved on branch $backup." Yellow }
     }
     return @{ Status = "updated"; Before = $before; After = (RunGit rev-parse HEAD) }
 }
@@ -134,7 +148,7 @@ try {
 
     if ($result.Before -and $result.Before -ne $result.After) {
         Say "Updated $($result.Before.Substring(0,7)) -> $($result.After.Substring(0,7)):" Green
-        RunGit log --oneline --no-decorate "$($result.Before)..$($result.After)" | Write-Host
+        RunGit log --oneline --no-decorate --max-count=15 "$($result.Before)..$($result.After)" | Write-Host
         $changed = RunGit diff --name-only $result.Before $result.After
     } else {
         Say "Installed $((RunGit rev-parse --short HEAD))." Green

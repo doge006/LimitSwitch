@@ -18,10 +18,6 @@ function node(tag, className, text) {
   if (text !== undefined) n.textContent = text;
   return n;
 }
-const store = {
-  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
-  set(key, value) { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } },
-};
 const remaining = used => Math.max(0, Math.min(100, 100 - used));
 const level = left => left > 30 ? 'level-good' : left > 10 ? 'level-warn' : 'level-bad';
 const shortName = account => account.alias.split(' · ').pop().replace(' (synthetic)', '');
@@ -151,7 +147,6 @@ function build() {
     group.append(head, grid);
     $('accounts').append(group);
   }
-  applyFilter(store.get('filter') || 'all');
 }
 
 // ---------- update (every state change) ----------
@@ -337,34 +332,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------- interactions ----------
-function applyFilter(filter) {
-  store.set('filter', filter);
-  for (const b of document.querySelectorAll('[data-filter]')) b.setAttribute('aria-pressed', String(b.dataset.filter === filter));
-  for (const g of document.querySelectorAll('.group')) g.hidden = filter !== 'all' && g.dataset.provider !== filter;
-}
-for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => applyFilter(b.dataset.filter));
-
-// Pointer spotlight: one delegated listener, at most one style write per frame.
-let spotlightFrame = 0;
-$('accounts').addEventListener('pointermove', event => {
-  const card = event.target.closest('.card');
-  if (!card || spotlightFrame) return;
-  spotlightFrame = requestAnimationFrame(() => {
-    spotlightFrame = 0;
-    const r = card.getBoundingClientRect();
-    card.style.setProperty('--mx', `${event.clientX - r.left}px`);
-    card.style.setProperty('--my', `${event.clientY - r.top}px`);
-  });
-});
-
 function setLab(open) {
   $('lab').classList.toggle('open', open);
   $('lab-toggle').setAttribute('aria-expanded', String(open));
   $('lab-body').inert = !open;
-  store.set('lab', open ? '1' : '0');
 }
 $('lab-toggle').addEventListener('click', () => setLab(!$('lab').classList.contains('open')));
-setLab(store.get('lab') === '1');
+setLab(false);
 
 const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked });
 $('auto-swap').addEventListener('change', sendPrefs);
