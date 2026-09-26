@@ -81,6 +81,7 @@ class Controller:
                 "mode": "live" if self.live else "demo",
                 "accounts": accounts,
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
+                "liveUsage": bool(self.gateway.manager.meta.get("liveUsage", True)) if self.live else False,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -116,7 +117,8 @@ class Controller:
             raise ValueError("Choose a supported test scenario")
         if action in {"swap", "remove"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
-        if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
+        if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool
+                                        or type(body.get("liveUsage", True)) is not bool):
             raise ValueError("Preferences must be booleans")
         if not self.operations.acquire(blocking=False):
             raise RuntimeError("An operation is already running")
@@ -130,7 +132,10 @@ class Controller:
                 if action == "preferences":
                     self.gateway.router.auto_swap = body["autoSwap"]
                     if self.live:
-                        self.gateway.set_afk(body["afk"])  # also updates the Claude hook
+                        if "liveUsage" in body:
+                            with self.gateway.manager.lock:
+                                self.gateway.manager.meta["liveUsage"] = body["liveUsage"]
+                        self.gateway.set_afk(body["afk"])  # also updates the Claude hook and status line
                     self.afk = body["afk"]
                     if self.session:
                         self.session.recovery.enable(self.afk)
@@ -188,6 +193,12 @@ class Controller:
 
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
+
+    def statusline(self, body):
+        """Live Claude usage from Claude Code's status line; returns the line to show there."""
+        if not self.live:
+            return None
+        return self.gateway.manager.statusline(body.get("rate_limits"))
 
     def afk_limit(self, body):
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
@@ -293,6 +304,18 @@ def make_server(controller, port=0, idle_seconds=90):
             self.respond(200, controller.snapshot())
 
         def do_POST(self):
+            if self.path == "/api/statusline":  # Claude Code's status line script: live usage, same narrow token
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 8192 else {}
+                    self.respond(200, {"line": controller.statusline(body if isinstance(body, dict) else {})})
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"line": None, "error": str(error)})
+                return
             if self.path == "/api/afk":  # the Claude Code AFK hook, with its own narrow token
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):

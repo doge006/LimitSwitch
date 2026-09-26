@@ -335,8 +335,16 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
                     if left > 0.5:
                         L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
                     L.text(x0 + col_w - 14, ly, f"{shown:.0f}%", 11, level_rgb(shown), bold=True, anchor="rm")
+                    right_edge = x0 + col_w - 14
+                    L.text(right_edge, ly + 14, "left", 10, FAINT, anchor="rm")  # under the %
                     if window.get("resetsAt"):
-                        L.text(bar_x, ly + 14, "resets in " + until(window["resetsAt"]), 10, FAINT)
+                        room = right_edge - text_w("left", 10) - 6 - bar_x
+                        full = "resets in " + until(window["resetsAt"])
+                        if text_w(full, 10) <= room:
+                            L.text(bar_x, ly + 14, full, 10, FAINT)
+                        else:  # three meters: a small clock and the time
+                            L.icon("clock", bar_x + 4, ly + 14, 3.6, FAINT)
+                            L.text(bar_x + 11, ly + 14, until(window["resetsAt"]), 10, FAINT)
             if switchable:
                 L.hit(8, top, W - 16, ROW_H, key)
             if not account["eligible"]:

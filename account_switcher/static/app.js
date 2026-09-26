@@ -168,7 +168,9 @@ function buildCard(account, index) {
     const row = node('div', 'window'), top = node('div', 'window-top');
     const value = node('span', 'window-value num');
     value.dataset.value = '0';
-    top.append(node('span', 'window-label', w.label), value);
+    const amount = node('span', 'window-amount');
+    amount.append(value, node('span', 'window-left', ' left'));
+    top.append(node('span', 'window-label', w.label), amount);
     const bar = node('div', 'bar'), fill = node('div', 'bar-fill');
     bar.setAttribute('role', 'progressbar');
     bar.setAttribute('aria-label', `${w.label} remaining`);
@@ -375,9 +377,11 @@ function render(next) {
   $('lab').hidden = live;
   $('reset').title = $('reset').ariaLabel = live ? 'Refresh usage' : 'Reset sample accounts';
   $('add').hidden = !live;
-  if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
+  if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap && (pendingPrefs.liveUsage === undefined || state.liveUsage === pendingPrefs.liveUsage)) pendingPrefs = null;
   $('auto-swap').checked = pendingPrefs?.autoSwap ?? state.autoSwap;
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
+  $('live-usage-row').hidden = state.mode !== 'live';
+  $('live-usage').checked = pendingPrefs?.liveUsage ?? state.liveUsage;
   const locked = state.busy || !!submitting;
   const pill = $('automation-state');
   pill.textContent = state.busy ? 'Working…' : state.afk ? 'AFK armed' : state.autoSwap ? 'Watching' : 'Manual';
@@ -395,7 +399,7 @@ function render(next) {
   } else if (!state.output && state.status === 'Stopped') {
     output.textContent = 'Session stopped. Pick a scenario to run another test.';
   }
-  for (const id of ['run', 'continue', 'reset', 'auto-swap', 'afk', 'scenario']) $(id).disabled = locked;
+  for (const id of ['run', 'continue', 'reset', 'auto-swap', 'afk', 'live-usage', 'scenario']) $(id).disabled = locked;
   $('continue').disabled ||= !state.sessionId;
   $('run').classList.toggle('working', submitting?.el === $('run'));
   updateCards();
@@ -514,9 +518,10 @@ function setLab(open) {
 $('lab-toggle').addEventListener('click', () => setLab(!$('lab').classList.contains('open')));
 setLab(false);
 
-const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked });
+const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked, ...(state?.mode === 'live' ? { liveUsage: $('live-usage').checked } : {}) });
 $('auto-swap').addEventListener('change', sendPrefs);
 $('afk').addEventListener('change', sendPrefs);
+$('live-usage').addEventListener('change', sendPrefs);
 $('run').addEventListener('click', () => act('run', { scenario: $('scenario').value }, $('run')));
 $('continue').addEventListener('click', () => act('continue', {}, $('continue')));
 $('stop').addEventListener('click', () => act('stop'));

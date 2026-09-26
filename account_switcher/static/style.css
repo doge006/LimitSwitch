@@ -157,6 +157,7 @@ h1 { margin: 0; font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", syst
 .window-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
 .window-label { font-size: 13px; color: var(--text); }
 .window-value { font-size: 13px; font-weight: 650; color: var(--level); transition: color .4s; }
+.window-left { font-size: 12px; font-weight: 500; color: var(--muted); }
 .bar { height: 6px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .bar-fill { height: 100%; width: 100%; border-radius: inherit; background: var(--level); transform-origin: left; transform: scaleX(0); transition: transform .5s var(--ease), background-color .3s; }
 .window-reset { margin-top: 4px; font-size: 11.5px; color: var(--faint); }

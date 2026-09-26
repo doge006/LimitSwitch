@@ -76,7 +76,10 @@ function row(account) {
       fill.style.width = `${left}%`;
       track.append(fill);
       meter.append(el('span', 'label', short(w)), track, el('span', `pct ${level(left)}-text`, `${Math.round(left)}%`));
-      if (w.resetsAt) meter.append(el('span', 'reset', `resets in ${until(w.resetsAt)}`));
+      const reset = el('span', 'reset' + (windows.length > 2 ? ' compact' : ''),
+        w.resetsAt ? (windows.length > 2 ? until(w.resetsAt) : `resets in ${until(w.resetsAt)}`) : '');
+      if (w.resetsAt) reset.title = `resets in ${until(w.resetsAt)}`;
+      meter.append(reset, el('span', 'left', 'left'));
       bars.append(meter);
     }
     r.append(bars);

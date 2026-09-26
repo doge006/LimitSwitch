@@ -117,3 +117,73 @@ def uninstall(root=None):
         return False
     atomic_write(path, (json.dumps(updated, indent=2) + "\n").encode("utf-8"))
     return True
+
+
+# ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
+STATUS_MARK = "account_switcher_statusline"
+
+
+def statusline_command(state_file):
+    python = Path(sys.executable)
+    console = python.with_name("python.exe")
+    if python.name.lower() == "pythonw.exe" and console.exists():
+        python = console  # the status line is read from stdout
+    script = Path(__file__).with_name("statusline.py")
+    return f"{_short(python)} {_short(script)} {_short(state_file)} {STATUS_MARK}"
+
+
+def _backup(state_file):
+    return Path(state_file).with_name("statusline-previous.json")
+
+
+def install_statusline(state_file, root=None):
+    """Make our script Claude Code's status line. The user's own status line (if any) is kept in
+    a backup and still shown: our script runs it. Returns that command (or None)."""
+    path = (Path(root) if root else settings_path()) / "settings.json"
+    data = _load(path)
+    current = data.get("statusLine")
+    backup = _backup(state_file)
+    if isinstance(current, dict) and STATUS_MARK in str(current.get("command", "")):
+        try:
+            previous = json.loads(backup.read_text(encoding="utf-8")).get("previous")
+        except (OSError, ValueError, AttributeError):
+            previous = None
+    else:
+        previous = current if isinstance(current, dict) else None
+        atomic_write(backup, json.dumps({"previous": previous}).encode("utf-8"))
+    entry = dict(previous or {"padding": 0}, type="command", command=statusline_command(state_file))
+    if data.get("statusLine") != entry:
+        updated = dict(data, statusLine=entry)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(path, (json.dumps(updated, indent=2) + "\n").encode("utf-8"))
+    command = (previous or {}).get("command")
+    return command if isinstance(command, str) and command.strip() else None
+
+
+def uninstall_statusline(state_file, root=None):
+    """Put the user's own status line back (or none, if they had none)."""
+    path = (Path(root) if root else settings_path()) / "settings.json"
+    backup = _backup(state_file)
+    try:
+        data = _load(path)
+    except (ValueError, OSError):
+        return False
+    current = data.get("statusLine")
+    changed = False
+    if isinstance(current, dict) and STATUS_MARK in str(current.get("command", "")):
+        try:
+            previous = json.loads(backup.read_text(encoding="utf-8")).get("previous")
+        except (OSError, ValueError, AttributeError):
+            previous = None
+        updated = dict(data)
+        if isinstance(previous, dict):
+            updated["statusLine"] = previous
+        else:
+            updated.pop("statusLine", None)
+        atomic_write(path, (json.dumps(updated, indent=2) + "\n").encode("utf-8"))
+        changed = True
+    try:
+        backup.unlink()
+    except OSError:
+        pass
+    return changed
