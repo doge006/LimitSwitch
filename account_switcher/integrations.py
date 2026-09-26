@@ -153,6 +153,7 @@ class CodexServerWatch:
 
 
 class Integrations:
+    SETTINGS_EVERY = 20  # seconds between checks that Claude Code's settings still have our status line
     def __init__(self, gateway, hook_url, hook_token, codex_home=None, claude_root=None, upstream=None):
         self.gateway = gateway
         self.manager = gateway.manager
@@ -170,6 +171,7 @@ class Integrations:
     # ---------- start / stop ----------
     def start(self):
         self.apply_afk()
+        self.keep_claude_settings()
         if codex_present(self.codex_home):
             self.start_codex()
         if self.manager.meta.get("startWithWindows", True):
@@ -204,7 +206,36 @@ class Integrations:
         self.manager.on_swap = lambda provider: provider == "codex" and threading.Thread(
             target=self.watch.check, kwargs={"quiet": 30}, daemon=True).start()
 
+    def keep_claude_settings(self):
+        """Claude Code (updating itself, /config) and other tools rewrite settings.json, which can
+        drop our status line. Check whenever the file changes and put it back: without it there
+        is no live Claude usage. Only a stat every 20 s while nothing changes."""
+        self.settings_stop = threading.Event()
+        path = (Path(self.claude_root) if self.claude_root else claude_hooks.settings_path()) / "settings.json"
+
+        def loop():
+            seen = None
+            while not self.settings_stop.wait(self.SETTINGS_EVERY):
+                try:
+                    stamp = os.stat(path).st_mtime_ns
+                except OSError:
+                    stamp = None
+                if stamp == seen:
+                    continue
+                seen = stamp
+                if not claude_hooks.statusline_installed(self.claude_root):
+                    log.warning("Claude Code's status line was not ours any more (settings.json rewritten); restoring it")
+                    self.apply_afk()
+                    try:
+                        seen = os.stat(path).st_mtime_ns
+                    except OSError:
+                        pass
+
+        threading.Thread(target=loop, daemon=True, name="claude-settings-watch").start()
+
     def stop(self):
+        if getattr(self, "settings_stop", None):
+            self.settings_stop.set()
         if self.watch:
             self.watch.close()
         if self.proxy:
@@ -241,11 +272,9 @@ class Integrations:
         previous = None
         try:
             # Live Claude usage from Claude Code's status line: no tokens, no API calls.
-            if self.manager.meta.get("liveUsage", True):
-                previous = claude_hooks.install_statusline(self.state_file, self.claude_root)
-            else:
-                claude_hooks.uninstall_statusline(self.state_file, self.claude_root)
+            previous = claude_hooks.install_statusline(self.state_file, self.claude_root)
         except (OSError, ValueError) as error:
+            log.warning("could not install Claude Code's status line: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's status line: {error}")
         self.write_state(previous)
         try:
@@ -255,6 +284,7 @@ class Integrations:
             else:
                 claude_hooks.uninstall(self.claude_root)
         except (OSError, ValueError) as error:
+            log.warning("could not update Claude Code's hook: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's settings for AFK: {error}")
 
 

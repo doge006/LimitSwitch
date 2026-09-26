@@ -469,10 +469,6 @@ class LiveAccounts:
         self.sync_live()
         account_id = self.live_ids.get(name)
         now = time.time()
-        with_limits = isinstance(limits, dict) and any(isinstance(limits.get(k), dict) for k in ("five_hour", "seven_day"))
-        with self.lock:  # what Claude Code last reported, shown in the full view (diagnosis)
-            self.meta["liveSeen"] = {"at": now, "limits": with_limits}
-        self.notify("accounts", None)
         entry = self.meta["accounts"].get(account_id) if account_id else None
         if entry is None:
             return None

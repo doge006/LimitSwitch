@@ -81,8 +81,6 @@ class Controller:
                 "mode": "live" if self.live else "demo",
                 "accounts": accounts,
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
-                "liveUsage": bool(self.gateway.manager.meta.get("liveUsage", True)) if self.live else False,
-                "liveSeen": self.gateway.manager.meta.get("liveSeen") if self.live else None,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -118,8 +116,7 @@ class Controller:
             raise ValueError("Choose a supported test scenario")
         if action in {"swap", "remove"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
-        if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool
-                                        or type(body.get("liveUsage", True)) is not bool):
+        if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
             raise ValueError("Preferences must be booleans")
         if not self.operations.acquire(blocking=False):
             raise RuntimeError("An operation is already running")
@@ -133,9 +130,6 @@ class Controller:
                 if action == "preferences":
                     self.gateway.router.auto_swap = body["autoSwap"]
                     if self.live:
-                        if "liveUsage" in body:
-                            with self.gateway.manager.lock:
-                                self.gateway.manager.meta["liveUsage"] = body["liveUsage"]
                         self.gateway.set_afk(body["afk"])  # also updates the Claude hook and status line
                     self.afk = body["afk"]
                     if self.session:

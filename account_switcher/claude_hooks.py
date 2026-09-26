@@ -160,6 +160,14 @@ def install_statusline(state_file, root=None):
     return command if isinstance(command, str) and command.strip() else None
 
 
+def statusline_installed(root=None):
+    try:
+        line = _load((Path(root) if root else settings_path()) / "settings.json").get("statusLine")
+    except (OSError, ValueError):
+        return False
+    return isinstance(line, dict) and STATUS_MARK in str(line.get("command", ""))
+
+
 def uninstall_statusline(state_file, root=None):
     """Put the user's own status line back (or none, if they had none)."""
     path = (Path(root) if root else settings_path()) / "settings.json"
