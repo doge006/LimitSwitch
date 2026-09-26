@@ -7,12 +7,13 @@ from pathlib import Path
 import secrets
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import webbrowser
 
 from .client import ClaudeSession
 from .core import CONTINUE
 from .demo import DemoGateway
+from .local_http import LocalServer
 
 ASSETS = Path(__file__).with_name("static")
 
@@ -333,7 +334,7 @@ def make_server(controller, port=0, idle_seconds=90):
             except RuntimeError as error:
                 self.respond(409, {"error": str(error)})
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = LocalServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     server.expected_host = f"127.0.0.1:{server.server_port}"
     server.last_seen = time.monotonic()

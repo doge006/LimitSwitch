@@ -1,0 +1,41 @@
+name: macOS app
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install (the same script users run)
+        run: |
+          mkdir -p ~/.codex
+          launchctl setenv ACCOUNT_SWITCHER_DEBUG 1
+          sw_vers
+          bash Install.command --skip-code
+      - name: Smoke test
+        run: |
+          python3 -m venv /tmp/probe
+          /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
+          /tmp/probe/bin/python .github/mac_smoke.py
+      - name: Keep screenshots
+        if: always()
+        run: |
+          [ -d shots ] || exit 0
+          branch="ci-shots/${{ matrix.os }}"
+          cd shots
+          git init -q -b "$branch"
+          git -c user.name=ci -c user.email=ci@example.com add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "screenshots ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/$branch"

@@ -7,6 +7,11 @@ import sys
 root = os.path.dirname(os.path.abspath(__file__))
 os.chdir(root)
 sys.path.insert(0, root)
+if sys.prefix == sys.base_prefix:  # started by the macOS app's launcher: use the .venv's packages
+    import glob
+    import site
+    for folder in glob.glob(os.path.join(root, ".venv", "lib", "python%d.%d" % sys.version_info[:2], "site-packages")):
+        site.addsitedir(folder)
 
 
 def report(text):
@@ -27,6 +32,11 @@ def report(text):
                         f'display alert "Account Switcher couldn\'t start" message "{last}\n\nDetails: {log}" as critical'],
                        check=False)
 
+
+if sys.platform != "win32" and sys.stderr is not None:
+    import faulthandler
+    import signal
+    faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1: where is it stuck?
 
 try:
     from account_switcher.tray import main

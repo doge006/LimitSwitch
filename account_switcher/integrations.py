@@ -287,7 +287,14 @@ def _set_launch_agent(enabled):
         return
     python = Path(sys.executable)
     script = Path(__file__).resolve().parent.parent / "AccountSwitcher.pyw"
-    plist = {"Label": LAUNCH_AGENT, "ProgramArguments": [str(python), str(script)], "RunAtLoad": True,
+    arguments = [str(python), str(script)]
+    app = os.environ.get("ACCOUNT_SWITCHER_APP")
+    if app:  # started as the app: log in as the app (its launcher, quietly)
+        for name in ("Account Switcher", "AccountSwitcher"):
+            if (Path(app) / "Contents" / "MacOS" / name).exists():
+                arguments = [str(Path(app) / "Contents" / "MacOS" / name), "--at-login"]
+                break
+    plist = {"Label": LAUNCH_AGENT, "ProgramArguments": arguments, "RunAtLoad": True,
              "ProcessType": "Interactive", "WorkingDirectory": str(script.parent)}
     from .vault import data_dir
     log = str(data_dir() / "app.log")  # a failed start at login is not silent either

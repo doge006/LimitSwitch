@@ -68,6 +68,16 @@ class KeychainTests(unittest.TestCase):
         keychain.delete("Claude Code-credentials", "daniel")
         self.assertIsNone(keychain.get("Claude Code-credentials", "daniel"))
 
+    def test_a_failing_keychain_is_not_a_missing_item(self):
+        self.assertIsNone(keychain.get("svc", "acct", strict=True))  # really missing: fine
+        failing = self.root / "failing"
+        failing.write_text("#!/bin/sh\nexit 51\n")
+        failing.chmod(0o755)
+        with mock.patch.object(keychain, "SECURITY", str(failing)):
+            self.assertIsNone(keychain.get("svc", "acct"))
+            with self.assertRaises(OSError):
+                keychain.get("svc", "acct", strict=True)
+
     def test_claude_reads_and_switches_through_the_keychain(self):
         home = self.root / "home"
         home.mkdir()

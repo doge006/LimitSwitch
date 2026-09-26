@@ -75,7 +75,9 @@ elif sys.platform == "darwin":
         global _key
         if _key is None:
             from . import keychain
-            stored = keychain.get("Account Switcher", "vault-key")
+            # strict: a keychain that fails to answer must never be mistaken for "no key yet",
+            # or a new key would replace the one every saved login is encrypted with.
+            stored = keychain.get("Account Switcher", "vault-key", strict=True)
             if not (stored and stored.startswith("k1:")):
                 stored = "k1:" + secrets.token_hex(32)
                 keychain.put("Account Switcher", "vault-key", stored)

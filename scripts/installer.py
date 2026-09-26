@@ -159,27 +159,80 @@ def mac_app():
     build_mac_app(MAC_APP)
 
 
+def compile_launcher(target):
+    """Build the app's own executable (scripts/mac_launcher.c), which runs Python inside its
+    process. Needs clang (Apple's command line tools) and a Python with its headers, as
+    python.org and Homebrew have. Returns False when it can't be built."""
+    clang = shutil.which("clang")
+    if not clang or not venv_python().exists():
+        return False
+    query = ("import json, os, sys, sysconfig; v = sysconfig.get_config_var; framework = os.path.join(sys.base_prefix, 'Python'); "
+             "print(json.dumps({'include': sysconfig.get_path('include'), 'lib': framework if os.path.isfile(framework) "
+             "else os.path.join(v('LIBDIR') or '', 'libpython' + (v('LDVERSION') or '') + '.dylib')}))")
+    done = subprocess.run([str(venv_python()), "-c", query], capture_output=True, text=True)
+    try:
+        paths = json.loads(done.stdout)
+    except ValueError:
+        return False
+    if not (Path(paths["include"]) / "Python.h").exists() or not Path(paths["lib"]).is_file():
+        return False
+
+    def text(value):
+        return json.dumps(str(value))  # a C string literal
+
+    build = subprocess.run([clang, "-O2", "-Wall", "-o", str(target), str(ROOT / "scripts" / "mac_launcher.c"),
+                            "-I", paths["include"], paths["lib"],
+                            f"-DACCOUNT_SWITCHER_VENV_PYTHON={text(venv_python())}",
+                            f"-DACCOUNT_SWITCHER_SCRIPT={text(ROOT / 'AccountSwitcher.pyw')}",
+                            f"-DACCOUNT_SWITCHER_LOG={text(log_path())}"], capture_output=True, text=True)
+    if build.returncode != 0:
+        say("Couldn't build the app launcher (using a script instead):\n" + (build.stderr or "").strip()[-600:], "warn")
+        return False
+    return True
+
+
 def build_mac_app(app):
     contents = app / "Contents"
-    (contents / "MacOS").mkdir(parents=True, exist_ok=True)
+    macos = contents / "MacOS"
+    macos.mkdir(parents=True, exist_ok=True)
     (contents / "Resources").mkdir(parents=True, exist_ok=True)
+    log_path().parent.mkdir(parents=True, exist_ok=True)
+    # macOS 26 gives menu bar space only when the running program is the bundle's own
+    # executable: a script that replaces itself with Python gets an icon of height 0. So the
+    # executable is a small native launcher running Python in-process (as py2app apps do).
+    native = macos / "Account Switcher"
+    built = compile_launcher(native)
+    if not built and native.exists():
+        native.unlink()
     plist = {"CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": "com.accountswitcher.app",
-             "CFBundleExecutable": "AccountSwitcher", "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
-             "CFBundleShortVersionString": "1.0", "LSUIElement": True, "LSMinimumSystemVersion": "11.0",
-             "NSHighResolutionCapable": True}
+             "CFBundleExecutable": native.name if built else "AccountSwitcher", "CFBundleIconFile": "AppIcon",
+             "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0", "LSUIElement": True,
+             "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
+             # Never Rosetta on Apple silicon: the .venv's native libraries can't load there.
+             "LSArchitecturePriority": ["arm64", "x86_64"], "LSRequiresNativeExecution": True}
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
-    launcher = contents / "MacOS" / "AccountSwitcher"
+    # The script: the login item's entry point, and the app itself when the launcher couldn't
+    # be built. It starts Python as a child process rather than replacing itself with it,
+    # which macOS 26 would again leave without a menu bar icon.
+    launcher = macos / "AccountSwitcher"
     log = log_path()
     launcher.write_text(f"""#!/bin/sh
-# Starts Account Switcher from its folder (--show: opened by the user, so show the window). Anything it prints goes to app.log.
+# Starts Account Switcher. Anything it prints goes to app.log.
+# Opened by the user it shows its window; --at-login (the login item) starts it quietly.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$HERE/Account Switcher" ]; then exec "$HERE/Account Switcher" "$@"; fi
 PY="{venv_python()}"
 LOG="{log}"
+SHOW=--show
+if [ "$1" = "--at-login" ]; then SHOW=""; shift; fi
 if [ ! -x "$PY" ]; then
   /usr/bin/osascript -e 'display alert "Account Switcher did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
   exit 1
 fi
-mkdir -p "$(dirname "$LOG")"
-exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
+export ACCOUNT_SWITCHER_APP="$(cd "$HERE/../.." && pwd)"
+ARCH=""
+if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then ARCH="/usr/bin/arch -arm64"; fi
+$ARCH "$PY" "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
@@ -192,6 +245,8 @@ exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
                         f"Image.open(sys.argv[1]).save(sys.argv[2], sizes={sizes})", str(source), str(icon)], check=False)
     else:
         Image.open(source).save(icon, sizes=sizes)
+    if MAC:  # one consistent (local) signature for the bundle and the binary it now contains
+        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], capture_output=True, check=False)
     subprocess.run(["touch", str(app)], check=False)  # Finder picks up the new icon
 
 
@@ -234,6 +289,17 @@ def started(seconds=20):
     return False
 
 
+def dump_stuck():
+    """A copy that is running but never got ready: have it write where it is stuck to app.log."""
+    if WINDOWS:
+        return
+    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw|MacOS/Account Switcher"], capture_output=True, text=True)
+    for pid in done.stdout.split():
+        subprocess.run(["kill", "-USR1", pid], check=False)
+        say(f"(still running as process {pid}; its stack follows)", "warn")
+    time.sleep(1)
+
+
 def start():
     if MAC:
         subprocess.run(["open", str(MAC_APP)], check=False)
@@ -273,8 +339,9 @@ def main(argv=None):
         windows_shortcut() if WINDOWS else mac_app()
         if not args.no_launch:
             start()
-            if not started():
+            if not started(45 if MAC else 20):
                 say("Account Switcher didn't start. The error:", "error")
+                dump_stuck()
                 try:
                     print("\n".join(log_path().read_text(encoding="utf-8").splitlines()[-25:]))
                 except OSError:

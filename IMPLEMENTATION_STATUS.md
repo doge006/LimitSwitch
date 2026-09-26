@@ -37,7 +37,9 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 - **What exists:** a menu bar app (`macos_app.py`, PyObjC) with a native popover panel (`static/menu.*`, WKWebView), a right-click menu and a full-view window. It uses the Keychain for Claude Code's login and for the vault key, and a LaunchAgent for start at login.
 - **What was tested:** everything that runs off a Mac. That covers the Keychain wrapper (against a stand-in for Apple's `security` tool), Claude's Keychain switching, the vault cipher, the app bundle, the login item, and the panel page in light and dark mode.
-- **What wasn't:** the PyObjC app itself has not been run on a real Mac yet.
+- **On real Macs (CI):** `.github/workflows/macos.yml` installs with `Install.command` on macOS 15 and macOS 26 runners, then checks that the process is the app itself, the menu bar icon has a place, clicking it works, the window opens, and quitting ends the process and restores the Codex config. Screenshots go to the `ci-shots/*` branches.
+- **macOS 26 lesson:** a bundle whose executable is a script that `exec`s another program gets a menu bar item of height 0 (confirmed with a Swift control app). The bundle's executable is therefore a small native launcher (`scripts/mac_launcher.c`, compiled at install) that runs Python in-process; without clang, a script starts Python as a child process instead.
+- **Not covered:** logging in to real Claude / Codex accounts on a Mac (no accounts on the runners).
 
 ## Installer
 

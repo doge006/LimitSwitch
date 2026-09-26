@@ -337,17 +337,29 @@ def main(argv=None):
             integrations.start()
         except Exception:
             logging.getLogger("account_switcher").exception("integrations failed to start")
+    done = []
+
+    def shutdown():
+        """Undo what the app set up. Runs once, from the host's quit or on the way out."""
+        if done:
+            return
+        done.append(True)
+        try:
+            if integrations:
+                integrations.stop()  # Codex and Claude Code keep working without the app
+        finally:
+            controller.close()  # stops any proxy / Claude processes this app owns
+            clear_url_file(args.url_file, server.launch_url)
+
     try:
         if sys.platform == "darwin":
             from .macos_app import run  # menu bar app
-            run(controller, server, open_now=args.show or not args.quiet)
+            # Cocoa ends the process inside its own quit, so the app runs shutdown there.
+            run(controller, server, open_now=args.show or not args.quiet, cleanup=shutdown)
         else:
             Tray(controller, server).run(open_now=args.show or not args.quiet)
     finally:
-        if integrations:
-            integrations.stop()  # Codex and Claude Code keep working without the app
-        controller.close()  # stops any proxy / Claude processes this app owns
-        clear_url_file(args.url_file, server.launch_url)
+        shutdown()
 
 
 if __name__ == "__main__":
