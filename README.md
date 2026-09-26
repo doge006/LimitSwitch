@@ -15,7 +15,7 @@ Each run:
 1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
 2. Updates this folder from GitHub. Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
 3. Sets up a private Python environment (`.venv`) with this OS's requirements; they're only reinstalled when they change.
-4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in `~/Applications` on macOS. The app registers itself to start at sign-in.
+4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable). The app registers itself to start at sign-in.
 5. Restarts the app on the new version (or starts it on a first install).
 
 Options: `--branch NAME` (switch to and update another branch), `--force`, `--no-launch`.

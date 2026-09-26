@@ -12,7 +12,7 @@ which make sure Python and git exist first. Each run:
 2. Creates or refreshes a private Python environment in .venv with the requirements for
    this OS (only reinstalled when they change).
 3. Adds the app where you expect it: a Start menu shortcut on Windows; "Account Switcher"
-   in ~/Applications on macOS (menu bar only, no Dock icon). The app itself registers to
+   in Applications on macOS (menu bar only, no Dock icon). The app itself registers to
    start at sign-in.
 4. Restarts Account Switcher on the new version (or starts it, on first install).
 """
@@ -34,7 +34,8 @@ REQUIREMENTS = ROOT / "requirements-native.txt"
 VENV = ROOT / ".venv"
 RUNTIME = ROOT / ".runtime"
 APP_NAME = "Account Switcher"
-MAC_APP = Path.home() / "Applications" / f"{APP_NAME}.app"
+MAC_APPS = (Path("/Applications") / f"{APP_NAME}.app", Path.home() / "Applications" / f"{APP_NAME}.app")
+MAC_APP = MAC_APPS[1]
 WINDOWS, MAC = sys.platform == "win32", sys.platform == "darwin"
 
 
@@ -141,10 +142,25 @@ def windows_shortcut():
                     str(ROOT / "scripts" / "shortcut.ps1"), "-Python", str(venv_python(windowless=True))], check=False)
 
 
+def mac_app_location():
+    """/Applications when this user can write there (admin accounts can), else ~/Applications."""
+    system = MAC_APPS[0]
+    return system if os.access(system.parent, os.W_OK) or os.access(system, os.W_OK) else MAC_APPS[1]
+
+
 def mac_app():
-    """~/Applications/Account Switcher.app: a small bundle that starts the app from .venv
-    (LSUIElement: menu bar only, no Dock icon)."""
-    contents = MAC_APP / "Contents"
+    """Account Switcher.app: a small bundle that starts the app from .venv (LSUIElement: menu
+    bar only, no Dock icon). Its output goes to app.log, so a failed start is never silent."""
+    global MAC_APP
+    MAC_APP = mac_app_location()
+    for other in MAC_APPS:
+        if other != MAC_APP and (other / "Contents" / "MacOS" / "AccountSwitcher").exists():
+            shutil.rmtree(other, ignore_errors=True)  # one copy only (older installs used ~/Applications)
+    build_mac_app(MAC_APP)
+
+
+def build_mac_app(app):
+    contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True, exist_ok=True)
     (contents / "Resources").mkdir(parents=True, exist_ok=True)
     plist = {"CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": "com.accountswitcher.app",
@@ -153,19 +169,30 @@ def mac_app():
              "NSHighResolutionCapable": True}
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
     launcher = contents / "MacOS" / "AccountSwitcher"
-    launcher.write_text(f'#!/bin/sh\nexec "{venv_python()}" "{ROOT / "AccountSwitcher.pyw"}" "$@"\n')
+    log = log_path()
+    launcher.write_text(f"""#!/bin/sh
+# Starts Account Switcher from its folder. Anything it prints goes to app.log.
+PY="{venv_python()}"
+LOG="{log}"
+if [ ! -x "$PY" ]; then
+  /usr/bin/osascript -e 'display alert "Account Switcher did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
+  exit 1
+fi
+mkdir -p "$(dirname "$LOG")"
+exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" "$@" >>"$LOG" 2>&1
+""")
     launcher.chmod(0o755)
+    icon = contents / "Resources" / "AppIcon.icns"
+    source = ROOT / "account_switcher" / "static" / "assets" / "switcher.png"
+    sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256)]
     try:
         from PIL import Image  # the icon is optional; Pillow is in .venv, not always here
     except ImportError:
         subprocess.run([str(venv_python()), "-c", "from PIL import Image; import sys; "
-                        "Image.open(sys.argv[1]).save(sys.argv[2], sizes=[(16,16),(32,32),(64,64),(128,128),(256,256)])",
-                        str(ROOT / "account_switcher" / "static" / "assets" / "switcher.png"),
-                        str(contents / "Resources" / "AppIcon.icns")], check=False)
+                        f"Image.open(sys.argv[1]).save(sys.argv[2], sizes={sizes})", str(source), str(icon)], check=False)
     else:
-        Image.open(ROOT / "account_switcher" / "static" / "assets" / "switcher.png").save(
-            contents / "Resources" / "AppIcon.icns", sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256)])
-    subprocess.run(["touch", str(MAC_APP)], check=False)  # Finder picks up the new icon
+        Image.open(source).save(icon, sizes=sizes)
+    subprocess.run(["touch", str(app)], check=False)  # Finder picks up the new icon
 
 
 # ---------- 4. running copy ----------
@@ -255,7 +282,7 @@ def main(argv=None):
                     say(f"(no log yet) To see it, run:  \"{python}\" \"{ROOT / 'AccountSwitcher.pyw'}\"", "warn")
                 return 1
             say("Restarted Account Switcher." if was_running else "Started Account Switcher.", "ok")
-        say("Done." + (" It's in the Start menu." if WINDOWS else " It's in your menu bar and in ~/Applications."), "ok")
+        say("Done." + (" It's in the Start menu." if WINDOWS else f" It's in your menu bar and in {MAC_APP.parent}."), "ok")
         return 0
     except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
         say(str(error), "error")

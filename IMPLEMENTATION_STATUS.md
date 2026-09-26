@@ -41,7 +41,7 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 ## Installer
 
-`scripts/installer.py` (one script for Windows and macOS): git update with backups, a `.venv` with this OS's requirements, a Start menu shortcut or `~/Applications` app, and a restart. The git logic is covered by tests with throwaway repos. The Windows path was run under Wine: it created the venv, installed the requirements, and the app started and quit from it.
+`scripts/installer.py` (one script for Windows and macOS): git update with backups, a `.venv` with this OS's requirements, a Start menu shortcut or an app in `/Applications` (`~/Applications` if not writable) whose output goes to app.log, and a restart. The git logic is covered by tests with throwaway repos. The Windows path was run under Wine: it created the venv, installed the requirements, and the app started and quit from it.
 
 ## Limits
 
