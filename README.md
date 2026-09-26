@@ -19,6 +19,7 @@ python -m pip install -r requirements-native.txt
 
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
 - **Switching:** switching saves the outgoing account's newest tokens, then writes the chosen account's login into the files the official clients read (`~/.claude/.credentials.json` + `~/.claude.json`, `~/.codex/auth.json`). **New sessions use it right away. Sessions already running keep the account they started with until you restart them.**
+- **Codex's background server:** current Codex CLIs run one shared background server that every session connects to, and it survives `/exit`. It reads the login once and keeps it in memory, so after a Codex switch the app restarts it with `codex app-server daemon restart`, but only if one is running. Codex saves its open threads first and restores them after, including a turn that was cut off. Open Codex sessions then reconnect and continue on the new account.
 - **Usage:** read from each provider's own usage endpoint:
   - Claude: 5-hour, weekly and per-model weekly caps, plus extra usage.
   - Codex: 5-hour, weekly or 30-day windows, plus credits.
