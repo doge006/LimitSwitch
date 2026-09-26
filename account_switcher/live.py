@@ -44,6 +44,12 @@ from .vault import Vault, atomic_write
 ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 1800
 FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
 MAX_PACE = 8
+# Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
+# gently and follows live through Claude Code's status line instead (no tokens, no API calls).
+PROVIDER_INTERVALS = {"claude": (300, 180)}   # (in use, near a limit) when not live
+LIVE_FRESH = 900            # status line data this recent counts as live
+LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
+SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
 MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
 SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
@@ -65,6 +71,7 @@ class LiveAccounts:
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
         self.live_ids = {}       # provider -> account in the official login file
+        self.live_since = {}     # provider -> when the account in the login file last changed
         self.routed = set()      # providers whose requests go through the local router
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
@@ -116,6 +123,8 @@ class LiveAccounts:
                     continue
                 account_id = self.adopt(name, login)
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
+                if previous != account_id:
+                    self.live_since[name] = time.time()
                 # Routed: the router decides; only a different login in the file (the user
                 # signed in to another account) changes the account in use.
                 follow = name not in self.routed or previous != account_id or name not in self.active
@@ -154,9 +163,12 @@ class LiveAccounts:
         if meta.get("status") or not updated:
             return max(held, last + max(ACTIVE_INTERVAL * pace, 300))   # failing: retry gently, never in a loop
         if is_active:
+            if now - meta.get("liveAt", 0.0) < LIVE_FRESH:  # followed live: the API only fills in the rest
+                return max(held, meta.get("apiAt", updated) + LIVE_API_INTERVAL)
             usage = project(meta.get("usage") or [], now)
             near = any(w["scope"] == "account" and w["used"] >= 90 for w in usage)
-            return max(held, updated + (URGENT_INTERVAL if near else ACTIVE_INTERVAL) * pace)
+            active, urgent = PROVIDER_INTERVALS.get(meta.get("provider"), (ACTIVE_INTERVAL, URGENT_INTERVAL))
+            return max(held, meta.get("apiAt", updated) + (urgent if near else active) * pace)
         # Inactive: usage only changes when a window resets (or if used elsewhere).
         resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
         return min([updated + IDLE_INTERVAL] + resets)
@@ -218,7 +230,7 @@ class LiveAccounts:
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
                 secret = updated
-            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(),
+            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
             self.check_subscription(account_id, meta, provider, secret)
@@ -314,6 +326,7 @@ class LiveAccounts:
                     raise RuntimeError("Switch could not be verified; your previous login was restored")
                 self.signatures[name] = provider.signature()
                 self.live_ids[name] = account_id
+                self.live_since[name] = time.time()
             self.active[name] = account_id
             if name in self.routed:
                 self.meta["selected"][name] = account_id
@@ -423,8 +436,9 @@ class LiveAccounts:
         self.swap(best.id, reason="auto")
         return best.id
 
-    def observe(self, account_id, windows):
-        """Live usage the service reported with a response: [(window minutes, used %, reset)]."""
+    def observe(self, account_id, windows, add=False):
+        """Live usage the service reported with a response: [(window minutes, used %, reset)].
+        add: also windows the account doesn't show yet (the source is certain of them)."""
         changed = False
         with self.lock:
             entry = self.meta["accounts"].get(account_id)
@@ -434,6 +448,10 @@ class LiveAccounts:
             for minutes, used, reset in windows:
                 key = WINDOW_KEYS.get(minutes, (f"window-{minutes * 60}",))[0]
                 window = next((w for w in usage if w["key"] == key), None)
+                if window is None and add and minutes in WINDOW_KEYS:
+                    window = {"key": key, "label": WINDOW_KEYS[minutes][1], "used": 0.0, "resetsAt": None, "scope": "account"}
+                    usage.append(window)
+                    changed = True
                 if window is None or minutes <= 0:
                     continue  # only windows the account really has (headers may report others)
                 if round(window.get("used", -1)) != round(used) or window.get("resetsAt") != reset:
@@ -443,6 +461,38 @@ class LiveAccounts:
             entry["updatedAt"] = time.time()
         if changed:
             self.notify("accounts", None)
+
+    def statusline(self, limits):
+        """Live usage from a Claude Code status line (rate_limits), for the account signed in to
+        Claude Code. Returns the compact status line text."""
+        name = "claude"
+        self.sync_live()
+        account_id = self.live_ids.get(name)
+        now = time.time()
+        entry = self.meta["accounts"].get(account_id) if account_id else None
+        if entry is None:
+            return None
+        settled = now - self.live_since.get(name, 0.0) >= SWAP_SETTLE
+        if isinstance(limits, dict) and settled:
+            windows = []
+            for key, minutes in (("five_hour", 300), ("seven_day", 10080)):
+                window = limits.get(key)
+                if isinstance(window, dict) and isinstance(window.get("used_percentage"), (int, float)):
+                    reset = window.get("resets_at")
+                    windows.append((minutes, float(window["used_percentage"]),
+                                    float(reset) if isinstance(reset, (int, float)) else None))
+            if windows:
+                self.observe(account_id, windows, add=True)
+                with self.lock:
+                    entry["liveAt"] = now
+                    if entry.get("status", "").startswith("Rate limited"):
+                        entry["status"] = ""  # live numbers: the API's rate limit no longer matters
+        parts = ["⇄ " + (entry.get("email") or entry.get("identity") or "Claude")]
+        for window in project(entry.get("usage") or [], now):
+            if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
+                label = "5h" if window["key"] == "five_hour" else "1w"
+                parts.append(f"{label} {max(0, 100 - window['used']):.0f}% left")
+        return " · ".join(parts)
 
     def _best_other(self, name, current, allow_unknown=False):
         """The other account with the most headroom. allow_unknown also accepts accounts whose

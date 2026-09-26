@@ -334,6 +334,23 @@ class ClaudeHookTests(unittest.TestCase):
             claude_hooks.uninstall(tmp)
             self.assertEqual(json.loads(path.read_text()), theirs)
 
+    def test_status_line_wraps_the_users_own_and_puts_it_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path, state = Path(tmp) / "settings.json", Path(tmp) / "state.json"
+            theirs = {"model": "opus", "statusLine": {"type": "command", "command": "my-line.sh", "padding": 2}}
+            path.write_text(json.dumps(theirs))
+            self.assertEqual(claude_hooks.install_statusline(state, tmp), "my-line.sh")
+            self.assertEqual(claude_hooks.install_statusline(state, tmp), "my-line.sh")  # again: still theirs
+            line = json.loads(path.read_text())["statusLine"]
+            self.assertIn(claude_hooks.STATUS_MARK, line["command"])
+            self.assertEqual(line["padding"], 2)  # their options stay
+            claude_hooks.uninstall_statusline(state, tmp)
+            self.assertEqual(json.loads(path.read_text()), theirs)
+            path.write_text(json.dumps({"model": "opus"}))  # no status line of their own
+            self.assertIsNone(claude_hooks.install_statusline(state, tmp))
+            claude_hooks.uninstall_statusline(state, tmp)
+            self.assertEqual(json.loads(path.read_text()), {"model": "opus"})
+
     def test_invalid_settings_are_never_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
@@ -398,6 +415,34 @@ class AfkTests(unittest.TestCase):
             status, body = post(server.hook_url, {"provider": "claude", "session": "s"},
                                 {"Authorization": "Bearer " + server.hook_token})
             self.assertEqual((status, json.loads(body)["action"]), (200, "continue"))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_status_line_script_reports_live_usage(self):
+        from account_switcher import statusline
+        self.manager.meta["liveUsage"] = True
+        controller = Controller(gateway=lambda notify: self.gateway)
+        server = make_server(controller, idle_seconds=0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.manager.live_since["claude"] = 0
+        state = Path(self.tmp.name) / "state.json"
+        state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
+        event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}}}
+        try:
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
+                    mock.patch.object(sys, "stdout", out):
+                self.assertEqual(statusline.main(["statusline", str(state)]), 0)
+            self.assertIn("a@example.com · 5h 60% left", out.getvalue())
+            five = next(w for w in self.manager.accounts() if w.email == "a@example.com").windows()[0]
+            self.assertEqual(five["used"], 40.0)
+            state.write_text(json.dumps({"url": server.hook_url, "token": "wrong", "statusline": None}))
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
+                    mock.patch.object(sys, "stdout", out):
+                statusline.main(["statusline", str(state)])
+            self.assertEqual(out.getvalue(), "")  # a wrong token gets nothing
         finally:
             server.shutdown()
             server.server_close()

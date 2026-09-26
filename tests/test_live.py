@@ -278,7 +278,7 @@ class LiveTests(unittest.TestCase):
         b_id = self.by_email(m, "b@example.com").id
         a_id = m.active["claude"]
         now = time.time()
-        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 90, delta=5)  # in use: near-live
+        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 300, delta=5)  # Claude in use, not live: gently
         self.assertGreater(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 1700)  # inactive: 30 min
         # A passed reset is applied locally without asking the API.
         m.meta["accounts"][b_id]["usage"][0]["resetsAt"] = now - 5
@@ -301,6 +301,29 @@ class LiveTests(unittest.TestCase):
         now = time.time()
         self.assertGreater(m.due(a.id, m.meta["accounts"][a.id], True, now) - now, 250)
         self.assertGreaterEqual(m.next_delay(), 20)
+
+    def test_status_line_keeps_claude_live_without_the_api(self):
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        m.live_since["claude"] = 0  # settled after the last switch
+        calls = len(self.api.calls)
+        reset = time.time() + 3600
+        line = m.statusline({"five_hour": {"used_percentage": 77, "resets_at": reset},
+                             "seven_day": {"used_percentage": 20.4, "resets_at": reset + 86400}})
+        self.assertEqual(len(self.api.calls), calls)  # nothing asked of the API
+        a = self.by_email(m, "a@example.com")
+        five = next(w for w in a.windows() if w["key"] == "five_hour")
+        self.assertEqual((five["used"], five["resetsAt"]), (77.0, reset))
+        self.assertEqual(line, "⇄ a@example.com · 5h 23% left · 1w 80% left")
+        meta = m.meta["accounts"][a.id]
+        now = time.time()
+        self.assertGreater(m.due(a.id, meta, True, now) - now, 1700)  # while live, the API only every 30 min
+        m.live_since["claude"] = time.time()  # just switched: the report may still be the old account
+        m.statusline({"five_hour": {"used_percentage": 5, "resets_at": reset}})
+        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 77.0)
 
     def test_backoff_on_rate_limit(self):
         from account_switcher.providers import ProviderError

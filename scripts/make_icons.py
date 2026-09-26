@@ -16,8 +16,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 ASSETS = Path(__file__).resolve().parent.parent / "account_switcher" / "static" / "assets"
 SS = 4  # supersampling
 TOP, BOTTOM = (54, 60, 76), (16, 18, 24)
-ORANGE = ((246, 172, 132), (222, 128, 92))
-VIOLET = ((186, 176, 255), (134, 116, 240))
+ORANGE = ((236, 146, 112), (217, 119, 87))     # Claude (#D97757)
+VIOLET = ((120, 150, 255), (150, 110, 250))    # Codex (blue to violet)
 
 
 def squircle(size, exponent=5.0):

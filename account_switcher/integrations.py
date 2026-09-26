@@ -169,7 +169,6 @@ class Integrations:
 
     # ---------- start / stop ----------
     def start(self):
-        atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token}).encode())
         self.apply_afk()
         if codex_present(self.codex_home):
             self.start_codex()
@@ -223,12 +222,32 @@ class Integrations:
         except OSError as error:
             log.warning("could not remove the Claude hook: %s", error)
         try:
+            claude_hooks.uninstall_statusline(self.state_file, self.claude_root)
+        except OSError as error:
+            log.warning("could not restore the Claude status line: %s", error)
+        try:
             self.state_file.unlink()
         except OSError:
             pass
 
     # ---------- AFK ----------
+    def write_state(self, statusline=None):
+        """What the hook and the status line script need: where the app is, their token, and
+        the user's own status line command (which the script keeps showing)."""
+        atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
+                                                   "statusline": statusline}).encode())
+
     def apply_afk(self):
+        previous = None
+        try:
+            # Live Claude usage from Claude Code's status line: no tokens, no API calls.
+            if self.manager.meta.get("liveUsage", True):
+                previous = claude_hooks.install_statusline(self.state_file, self.claude_root)
+            else:
+                claude_hooks.uninstall_statusline(self.state_file, self.claude_root)
+        except (OSError, ValueError) as error:
+            self.manager.notify("log", f"Couldn't update Claude Code's status line: {error}")
+        self.write_state(previous)
         try:
             # The hook reports Claude's usage limits: needed for Auto swap and for AFK.
             if self.manager.meta.get("afk") or self.manager.meta.get("autoSwap"):
