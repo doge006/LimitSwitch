@@ -41,11 +41,24 @@ jobs:
           cat /tmp/probe.out || true
           mkdir -p shots; screencapture -x shots/5-probe.png
           pkill StatusProbe || true
-      - name: Which part macOS rejects (PyObjC variants)
+      - name: Does a script launcher break the menu bar icon? (Swift control)
         if: always()
         run: |
-          for v in symbol+popover symbol+window symbol+tooltip symbol+action symbol+menu+popover+window+tooltip+action; do
-            .venv/bin/python3 .github/probe/pyprobe.py "$v" || echo "$v failed"
+          for mode in exec child; do
+            app=/tmp/Probe-$mode.app; mkdir -p $app/Contents/MacOS
+            swiftc -O .github/probe/StatusProbe.swift -o $app/Contents/MacOS/StatusProbe
+            printf '#!/bin/sh\n' > $app/Contents/MacOS/launch
+            if [ $mode = exec ]; then echo 'exec "$(dirname "$0")/StatusProbe"' >> $app/Contents/MacOS/launch
+            else echo '"$(dirname "$0")/StatusProbe"' >> $app/Contents/MacOS/launch; fi
+            chmod +x $app/Contents/MacOS/launch
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.example.probe$mode" -c "Add :CFBundleExecutable string launch" -c "Add :LSUIElement bool true" $app/Contents/Info.plist
+            codesign --force --deep --sign - $app
+            open -o /tmp/probe-$mode.out $app
+            sleep 6
+            echo "$mode: $(cat /tmp/probe-$mode.out)"
+            screencapture -x shots/6-probe-$mode.png
+            pkill StatusProbe || true
+            sleep 1
           done
       - name: The real app started from the shell
         if: always()
