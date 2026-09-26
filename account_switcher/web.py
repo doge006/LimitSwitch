@@ -82,6 +82,7 @@ class Controller:
                 "accounts": accounts,
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
                 "liveUsage": bool(self.gateway.manager.meta.get("liveUsage", True)) if self.live else False,
+                "liveSeen": self.gateway.manager.meta.get("liveSeen") if self.live else None,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",

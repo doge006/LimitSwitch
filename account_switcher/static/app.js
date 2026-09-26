@@ -89,6 +89,16 @@ function setLabel(el, text) {
 }
 
 // Short count for changed percentages (~0.35s, then stops).
+function liveSeenText(state) {
+  if (state.mode !== 'live' || !state.liveUsage) return '';
+  const seen = state.liveSeen;
+  if (!seen) return 'Waiting for Claude Code: send a message in Claude Code in a terminal (the desktop app and VS Code have no status line).';
+  const ago = Math.max(0, Math.round(Date.now() / 1000 - seen.at));
+  const when = ago < 60 ? `${ago}s ago` : ago < 3600 ? `${Math.round(ago / 60)} min ago` : `${Math.round(ago / 3600)} h ago`;
+  return seen.limits ? `Last update from Claude Code: ${when}`
+    : `Claude Code reported ${when} but without usage numbers: update Claude Code (claude update); they need a recent version and a Pro or Max plan.`;
+}
+
 function tweenNumber(el, to) {
   const from = Number(el.dataset.value ?? to);
   el.dataset.value = to;
@@ -382,6 +392,7 @@ function render(next) {
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
   $('live-usage-row').hidden = state.mode !== 'live';
   $('live-usage').checked = pendingPrefs?.liveUsage ?? state.liveUsage;
+  $('live-seen').textContent = liveSeenText(state);
   const locked = state.busy || !!submitting;
   const pill = $('automation-state');
   pill.textContent = state.busy ? 'Working…' : state.afk ? 'AFK armed' : state.autoSwap ? 'Watching' : 'Manual';
