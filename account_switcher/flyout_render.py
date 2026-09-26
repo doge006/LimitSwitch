@@ -178,6 +178,7 @@ def subscription_text(account):
     when = days_text(sub["at"]) if sub.get("at") else None
     if not when:
         return None, None
+    when = ("~" if sub.get("estimated") else "") + when
     return (f"Ends {when}", WARN) if sub.get("ends") else (f"Renews {when}", MUTED)
 
 
@@ -296,6 +297,11 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
             elif sub_text:
                 L.text(right, cy, sub_text, 11, sub_color, anchor="rm")
                 right -= text_w(sub_text, 11) + 12
+            resets = (account.get("credits") or {}).get("resets")
+            if resets:
+                label = f"{resets} reset" + ("s" if resets != 1 else "")
+                L.text(right, cy, label, 11, ACCENT[provider], anchor="rm")
+                right -= text_w(label, 11) + 12
             chip = account.get("plan") or ""
             chip_w = text_w(chip, 10, True) + 12 if chip else 0
             name = fit(display_name(account), 13, True, right - 22 - (chip_w + 8 if chip else 0))

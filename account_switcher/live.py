@@ -36,6 +36,7 @@ FRESH_ENOUGH = 120          # opening the panel refreshes only data older than t
 MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
 SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
+SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
 
 
@@ -187,6 +188,7 @@ class LiveAccounts:
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
+            self.record_values(meta["provider"] + "-usage", getattr(provider, "last_scalars", None))
             self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
@@ -195,18 +197,21 @@ class LiveAccounts:
 
     def check_subscription(self, account_id, meta, provider, secret):
         """Renewal / end date, at most once a day, never when a manual date is set."""
-        if meta.get("subscriptionManual") or time.time() - meta.get("subscriptionCheckedAt", 0) < SUBSCRIPTION_INTERVAL:
+        fresh = time.time() - meta.get("subscriptionCheckedAt", 0) < SUBSCRIPTION_INTERVAL
+        if meta.get("subscriptionManual") or (fresh and meta.get("subscriptionLogic") == SUBSCRIPTION_LOGIC):
             return
         if not hasattr(provider, "subscription"):
             return
         time.sleep(self.spacing)
+        estimated = False
         try:
-            at, ends, paths = provider.subscription(secret)
-        except ProviderError:
-            at, ends, paths = None, None, []
+            result = provider.subscription(secret)
+            at, ends, paths = result[:3]
+            estimated = bool(result[3]) if len(result) > 3 else False
         except Exception:
             at, ends, paths = None, None, []
-        self._set(account_id, subscription={"at": at, "ends": ends} if at else None, subscriptionCheckedAt=time.time())
+        self._set(account_id, subscription={"at": at, "ends": ends, "estimated": estimated} if at else None,
+                  subscriptionCheckedAt=time.time(), subscriptionLogic=SUBSCRIPTION_LOGIC)
         self.record_fields(meta["provider"], paths)
 
     def record_fields(self, provider, paths):
@@ -222,6 +227,21 @@ class LiveAccounts:
         known[provider] = sorted(set(known.get(provider, [])) | set(paths))[:400]
         try:
             atomic_write(path, json.dumps(known, indent=2).encode())
+        except OSError:
+            pass
+
+    def record_values(self, name, values):
+        """Plain values of code-named usage fields (flags/counts only) for identifying features."""
+        if not values:
+            return
+        path = self.vault.root / "usage-values.json"
+        try:
+            known = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            known = {}
+        known[name] = values
+        try:
+            atomic_write(path, json.dumps(known, indent=2, default=str).encode())
         except OSError:
             pass
 

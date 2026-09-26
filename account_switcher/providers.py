@@ -142,6 +142,41 @@ def subscription_from(data):
     return found, ends
 
 
+def next_monthly(start, now=None):
+    """Next monthly anniversary of a subscription start (Claude reports only the start)."""
+    if not start:
+        return None
+    import calendar
+    from datetime import datetime, timezone
+    now = now or time.time()
+    first = datetime.fromtimestamp(start, timezone.utc)
+    year, month = first.year, first.month
+    while True:
+        day = min(first.day, calendar.monthrange(year, month)[1])
+        candidate = first.replace(year=year, month=month, day=day).timestamp()
+        if candidate > now:
+            return candidate
+        month += 1
+        if month > 12:
+            year, month = year + 1, 1
+
+
+def scalar_fields(body):
+    """Plain top-level values (flags, counts, short labels) of a usage response, used to
+    identify code-named features such as Claude's free resets. Never nested data or long text."""
+    out = {}
+    private = lambda k: "email" in str(k).lower() or str(k).lower().endswith("_id")
+    for key, value in (body or {}).items():
+        if private(key):
+            continue
+        if value is None or isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 40):
+            out[key] = value
+        elif isinstance(value, dict):
+            out[key] = {k: v for k, v in value.items()
+                        if v is None or isinstance(v, (bool, int, float)) or (isinstance(v, str) and len(v) <= 40)}
+    return out
+
+
 def banked_resets(body):
     """A count of saved/banked limit resets, if the usage response reports one (best effort)."""
     found = None
@@ -247,6 +282,7 @@ class Claude:
                                                   "User-Agent": "account-switcher"})
         self.last_credits = with_resets(self.credits(body or {}), body or {})
         self.last_fields = key_paths(body or {})
+        self.last_scalars = scalar_fields(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
 
     def refresh(self, secret):
@@ -302,7 +338,17 @@ class Claude:
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
                                                   "User-Agent": "account-switcher"})
         at, ends = subscription_from(body or {})
-        return at, ends, key_paths(body or {})
+        estimated = False
+        org = (body or {}).get("organization") or {}
+        status = str(org.get("subscription_status") or "").lower()
+        if status in ("canceled", "cancelled", "non_renewing", "ending", "expired"):
+            ends = True
+        elif status in ("active", "trialing", "past_due") and ends is None:
+            ends = False
+        if at is None:
+            at = next_monthly(_ts(org.get("subscription_created_at")))
+            estimated = at is not None
+        return at, ends, key_paths(body or {}), estimated
 
     @staticmethod
     def credits(body):
@@ -373,9 +419,20 @@ class Codex:
             body = self._usage(tokens)
         claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}
         plan = _plan_name(body.get("plan_type") or claims.get("chatgpt_plan_type"))
-        self.last_credits = with_resets(self.credits(body), body)
+        resets = self.resets(body)
+        self.last_credits = with_resets(self.credits(body), body) if resets is None else \
+            dict(self.credits(body) or {"kind": "none", "enabled": False}, resets=resets)
         self.last_fields = key_paths(body)
+        self.last_scalars = scalar_fields(body)
         return self.windows(body), plan, updated
+
+    @staticmethod
+    def resets(body):
+        """Banked usage-limit resets (ChatGPT settings: "Usage limit resets")."""
+        data = body.get("rate_limit_reset_credits")
+        if isinstance(data, dict) and isinstance(data.get("available_count"), int):
+            return data["available_count"]
+        return None
 
     @staticmethod
     def credits(body):
