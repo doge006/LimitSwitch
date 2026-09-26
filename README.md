@@ -20,8 +20,8 @@ python -m pip install -r requirements-native.txt
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
 - **Switching:** click an account and every session moves to it, including sessions that are already open. Nothing needs restarting.
   - *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request.
-  - *Codex:* while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. A switch applies to every open session on its next request.
-  - *On quit:* the app writes the chosen Codex account into `~/.codex/auth.json` and puts `~/.codex/config.toml` back exactly as it was, so Codex works without the app too.
+  - *Codex:* the chosen login is written into `~/.codex/auth.json` (so new windows and Codex's `/status` show it), and while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. So a switch also applies to sessions that are already open, on their next request.
+  - *On quit:* the app puts `~/.codex/config.toml` back exactly as it was, so Codex works without the app, on the chosen account.
 - **What the app changes in `~/.codex/config.toml` while it runs** (every line is tagged `# account-switcher` and removed again on quit):
   - `openai_base_url` points at the router;
   - `enable_request_compression = false`, so the router can read requests;

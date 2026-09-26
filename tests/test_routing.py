@@ -138,12 +138,12 @@ class RouterTests(unittest.TestCase):
     def id_of(self, email):
         return next(a.id for a in self.manager.accounts() if a.email == email)
 
-    def test_uses_the_chosen_account_and_switches_without_touching_files(self):
+    def test_uses_the_chosen_account_everywhere(self):
         status, _ = post(self.url, {"input": []})
         self.assertEqual(status, 200)
         self.assertEqual((self.upstream.seen[-1]["token"], self.upstream.seen[-1]["workspace"]), ("at-x", "acct-x"))
         self.manager.swap(self.y)
-        self.assertEqual(self.codex.read_live().email, "x@example.com")  # the file is not rewritten
+        self.assertEqual(self.codex.read_live().email, "y@example.com")  # new windows and /status agree
         post(self.url, {"input": []})
         self.assertEqual((self.upstream.seen[-1]["token"], self.upstream.seen[-1]["workspace"]), ("at-y", "acct-y"))
 
@@ -192,7 +192,8 @@ class RouterTests(unittest.TestCase):
 
     def test_missing_saved_login_falls_back_to_the_sessions_own(self):
         self.manager.swap(self.y)
-        self.manager.vault.delete_secret(self.y)
+        self.manager.active["codex"] = self.x  # routed to an account whose saved login is gone
+        self.manager.vault.delete_secret(self.x)
         post(self.url, {"input": []})
         self.assertEqual(self.upstream.seen[-1]["token"], "client-token")
 
@@ -268,9 +269,9 @@ class RouterTests(unittest.TestCase):
 
     def test_the_login_files_tokens_are_never_rotated_here(self):
         self.manager.swap(self.y)
-        del self.api.codex_usage["at-x"]  # x's token now looks expired to the usage endpoint
+        del self.api.codex_usage["at-y"]  # y's token now looks expired to the usage endpoint
         self.manager.refresh(force=True)
-        self.assertNotIn(("/codex/token", "rt-x"), self.api.refreshes)  # Codex owns x's tokens
+        self.assertNotIn(("/codex/token", "rt-y"), self.api.refreshes)  # y is in the file: Codex owns it
 
     def test_signing_in_elsewhere_is_followed(self):
         self.manager.swap(self.y)

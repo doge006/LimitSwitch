@@ -70,6 +70,7 @@ class LiveAccounts:
         self.spacing = SPACING
         self.on_new_account = lambda: None
         self.on_limit = lambda: None   # a client reported a limit: fetch fresh usage soon
+        self.on_swap = lambda provider: None
         self.logins = {}   # provider -> running login process info
 
     # ---------- account list ----------
@@ -286,23 +287,15 @@ class LiveAccounts:
                 raise ValueError("Unknown account")
             name = target["provider"]
             provider = self.providers[name]
-            if name in self.routed:
-                if self.active.get(name) == account_id:
-                    return
-                if self.vault.read_secret(account_id) is None:
-                    raise RuntimeError("This account's saved login is missing; sign in again")
-                self.active[name] = account_id  # the router uses it from the next request on
-                self.meta["selected"][name] = account_id
-                self.save()
-            else:
-                self.sync_live(force=True)
-                current = self.active.get(name)
-                if current == account_id:
-                    return
-                secret = self.vault.read_secret(account_id)
-                if secret is None:
-                    raise RuntimeError("This account's saved login is missing; sign in again")
-                # sync_live(force=True) just saved the outgoing account's newest tokens.
+            if self.active.get(name) == account_id and self.live_ids.get(name) == account_id:
+                return
+            secret = self.vault.read_secret(account_id)
+            if secret is None:
+                raise RuntimeError("This account's saved login is missing; sign in again")
+            self.sync_live(force=True)  # saves the outgoing account's newest tokens first
+            # Write the login file too: new sessions (and Codex's own /status) then show the
+            # chosen account even without the router; the router covers sessions already open.
+            if self.live_ids.get(name) != account_id:
                 before = provider.read_live()
                 provider.write_live(secret)
                 after = provider.read_live()
@@ -311,8 +304,12 @@ class LiveAccounts:
                         provider.write_live(before.secret)  # put things back exactly as they were
                     raise RuntimeError("Switch could not be verified; your previous login was restored")
                 self.signatures[name] = provider.signature()
-                self.active[name] = self.live_ids[name] = account_id
-                self.save()
+                self.live_ids[name] = account_id
+            self.active[name] = account_id
+            if name in self.routed:
+                self.meta["selected"][name] = account_id
+            self.save()
+        self.on_swap(name)
         if reason == "quiet":
             return
         who = target.get("email") or target["identity"]

@@ -136,8 +136,7 @@ h1 { margin: 0; font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", syst
   padding: 16px 18px 14px; box-shadow: var(--shadow); isolation: isolate;
   transition: border-color .25s var(--ease), background-color .25s, transform .25s var(--ease), box-shadow .25s var(--ease);
 }
-.card:hover { border-color: var(--line-strong); background: #232323; transform: translateY(-1px); box-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 28px rgba(0, 0, 0, .28); }
-.card.pickable { cursor: pointer; }
+.card:hover { border-color: var(--line-strong); }
 .card.active { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .card.spent { opacity: .72; }
 
@@ -172,7 +171,9 @@ h1 { margin: 0; font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", syst
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .15s, border-color .15s, transform .15s var(--ease), opacity .2s; }
 .button:hover:not(:disabled) { background: var(--surface-3); }
 .button:active:not(:disabled) { transform: scale(.97); }
-.button:disabled { opacity: .6; cursor: default; }
+.button:disabled { opacity: .4; cursor: not-allowed; }
+/* The in-use account's button is a status, not a control: no button look at all. */
+.button.swap.current:disabled { opacity: 1; cursor: default; background: transparent; border-color: transparent; color: var(--accent); }
 .button.current, .button.current:disabled { opacity: 1; background: transparent; border-color: var(--line); color: var(--good); font-weight: 600; }
 .button svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
 .button.primary { background: var(--primary-bg); color: var(--primary-fg); border-color: transparent; }
