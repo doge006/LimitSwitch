@@ -13,13 +13,12 @@ import webbrowser
 from .client import ClaudeSession
 from .core import CONTINUE
 from .demo import DemoGateway
-from .proxy_demo import ProxyDemoGateway
 
 ASSETS = Path(__file__).with_name("static")
 
 
 class Controller:
-    def __init__(self, simulator=False):
+    def __init__(self, simulator=False, live=False, gateway=None):
         self.condition = threading.Condition(threading.RLock())
         self.operations = threading.Lock()
         self.revision = 0
@@ -32,7 +31,17 @@ class Controller:
         self.closed = False
         self.session = None
         self.simulator = simulator
-        self.gateway = DemoGateway(self.notify) if simulator else ProxyDemoGateway(self.notify)
+        if gateway is not None:
+            self.gateway = gateway(self.notify)
+        elif live:
+            from .live import LiveGateway
+            self.gateway = LiveGateway(self.notify)
+        elif simulator:
+            self.gateway = DemoGateway(self.notify)
+        else:
+            from .proxy_demo import ProxyDemoGateway
+            self.gateway = ProxyDemoGateway(self.notify)
+        self.live = getattr(self.gateway, "live", False)
         # Listing accounts and keeping a tray icon available should not start
         # the Go proxy or an official client. Start inference only on Run.
         self.url = None
@@ -59,15 +68,22 @@ class Controller:
             self.condition.notify_all()
 
     def snapshot(self):
+        # Read accounts before taking the controller lock: the live account manager has its
+        # own lock and posts log lines (which need this lock) while holding it.
+        router = self.gateway.router
+        active = dict(router.active)
+        accounts = [account_view(a, active.get(a.provider) == a.id) for a in router.accounts]
+        auto_swap = router.auto_swap
         with self.condition:
             return {
                 "revision": self.revision,
-                "accounts": [dict(asdict(a), active=self.gateway.router.active[a.provider] == a.id,
-                                  eligible=a.eligible, windows=a.windows()) for a in self.gateway.router.accounts],
-                "autoSwap": self.gateway.router.auto_swap, "afk": self.afk,
+                "mode": "live" if self.live else "demo",
+                "accounts": accounts,
+                "autoSwap": auto_swap, "afk": self.afk,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
-                "backend": "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
+                "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
+                "signingIn": sorted(getattr(getattr(self.gateway, "manager", None), "logins", {})),
                 "sessionId": self.session.session_id if self.session else None,
                 "clientPid": self.session.process.pid if self.session and self.session.process else None,
             }
@@ -75,11 +91,21 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "run", "continue", "stop"}:
+        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove"}:
             raise ValueError("Unknown action")
+        if action == "refresh":  # cheap and lock-free: just nudges the usage refresher
+            if hasattr(self.gateway, "poke"):
+                self.gateway.poke(body.get("ifOlderThan", 0) if isinstance(body.get("ifOlderThan", 0), (int, float)) else 0)
+            return
+        if action in {"add", "remove"} and not self.live:
+            raise ValueError("Adding and removing accounts needs real-account mode")
+        if action == "add" and body.get("provider") not in {"claude", "codex"}:
+            raise ValueError("Choose Claude or Codex")
+        if action in {"run", "continue"} and self.live:
+            raise ValueError("The Recovery lab runs in demo mode only (--demo)")
         if action == "run" and body.get("scenario") not in {"normal", "quota", "partial"}:
             raise ValueError("Choose a supported test scenario")
-        if action == "swap" and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
+        if action in {"swap", "remove"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
         if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
             raise ValueError("Preferences must be booleans")
@@ -102,7 +128,14 @@ class Controller:
                 elif action == "swap":
                     self.manual_swaps.add(body["id"])
                     account = self.gateway.swap(body["id"]) if hasattr(self.gateway, "swap") else self.gateway.router.swap(body["id"])
-                    self.notify("log", f"Next {account.provider} request selected: {account.alias}")
+                    if not self.live:
+                        self.notify("log", f"Next {account.provider} request selected: {account.alias}")
+                elif action == "add":
+                    self.gateway.manager.add(body["provider"])
+                elif action == "remove":
+                    self.gateway.manager.remove(body["id"])
+                elif action == "reset" and self.live:
+                    self.gateway.reset()  # the refresh button: fetch usage now
                 elif action in {"stop", "reset"}:
                     self.stop_session()
                     if action == "reset":
@@ -160,6 +193,16 @@ class Controller:
         with self.operations:
             self.stop_session()
             self.gateway.close()
+
+
+def account_view(account, active):
+    """JSON shape the dashboard and tray use for one account."""
+    view = asdict(account)
+    view.pop("usage", None)
+    view.update(active=active, eligible=account.eligible, windows=account.windows(),
+                headroom=account.headroom, renewsAt=account.renews_at,
+                name=account.email or account.alias.split(" · ")[-1].replace(" (synthetic)", ""))
+    return view
 
 
 def make_server(controller, port=0, idle_seconds=90):
@@ -291,11 +334,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--simulator", action="store_true", help="Use lightweight routing simulation instead of the compiled proxy")
+    parser.add_argument("--demo", action="store_true", help="Synthetic accounts and the Recovery lab instead of your real logins")
+    parser.add_argument("--simulator", action="store_true", help="Demo mode using a lightweight routing simulation instead of the compiled proxy")
     parser.add_argument("--idle-seconds", type=int, default=90)
     parser.add_argument("--url-file", help="Write the private launch URL here (used by the update script)")
     args = parser.parse_args()
-    controller = Controller(args.simulator)
+    controller = Controller(args.simulator, live=not (args.demo or args.simulator))
     server = make_server(controller, args.port, args.idle_seconds)
     write_url_file(args.url_file, server.launch_url)
     print(server.launch_url, flush=True)

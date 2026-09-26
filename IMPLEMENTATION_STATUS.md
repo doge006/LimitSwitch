@@ -2,27 +2,31 @@
 
 ## Shape of the app
 
-A single tray process (`account_switcher.tray`) hosts the controller and a loopback, token-protected dashboard. Left-click opens a compact native panel (accounts, usage, one-click swap, Auto swap/AFK, Full view); Full view opens the web dashboard. Right-click gives a short menu. The earlier Tk dashboard and Tk tray popup were removed in favour of the web dashboard. The standalone "web app" launcher is gone too; `python -m account_switcher.web` remains for development.
+A single tray process (`account_switcher.tray`) hosts the controller and a loopback, token-protected dashboard ("full view").
+- **Left-click:** a native panel appears above the tray icon, with accounts, usage, renewal times, click-to-switch, Auto swap/AFK, pop out (pin and drag) and Full view.
+- **Right-click:** a custom menu in the same style.
+- **`--demo`:** sample accounts and the Recovery lab.
 
-## Working (with synthetic data)
+## Working with real accounts
 
-- Usage windows per account (5-hour, weekly, per-model caps), reset times, and active account per provider.
-- Manual swap from the dashboard or the tray panel.
-- Auto swap: on a quota failure, moves to the account with the most headroom.
-- AFK recovery in the Recovery lab. The official Claude CLI in structured, tool-free mode hits a synthetic mid-response quota failure, the session moves to the reserve account, and one Continue is sent.
-- Failover notifications, a status-coloured tray icon and a quota tooltip.
-- One-shot `Update.cmd`.
+- **Import:** the live Claude Code and Codex logins are imported automatically. Add account runs `claude auth login` / `codex login` in an isolated folder.
+- **Storage:** logins are saved DPAPI-encrypted under `%LOCALAPPDATA%\AccountSwitcher`, with metadata and cached usage kept separately and no secrets in them.
+- **Usage:** read from `api.anthropic.com/api/oauth/usage` (5-hour, weekly, per-model weekly) and `chatgpt.com/backend-api/wham/usage` (5-hour / weekly / 30-day). It refreshes every 5 minutes (1 minute near a limit), on panel/full-view open, and on request.
+- **Tokens:** tokens are refreshed only for accounts that aren't in use; the live login belongs to the official client.
+- **Switching:** saves the outgoing tokens, writes the target's login, and verifies it (rolling back on mismatch). MCP credentials and other config keys are preserved.
+- **Auto swap:** moves to the account with the most headroom when the account in use hits a limit, with a notification.
+- **Remove:** removes a saved account; the account in use can't be removed.
 
-## Not built yet (in priority order)
+## Limits
 
-1. Real usage fetching: proxy quota endpoints or the Codex usage client in `codex-vitals-source`.
-2. Encrypted credential storage and real sign-in. The proxy writes plaintext auth files today.
-3. AFK for your real interactive Claude Code session (ConPTY or hooks). Today it only works in the lab's structured session.
-4. Codex switching beyond display. Tool-side-effect reconciliation, concurrent sessions, VS Code/desktop integration.
+- Running sessions keep their account until restarted; switching affects new sessions.
+- AFK continuation of a real interactive session isn't built. It needs a ConPTY supervisor or Claude Code hooks. The Recovery lab demonstrates it in structured mode only.
+- If an account is also signed in elsewhere and refreshes its token there, the saved copy expires ("Sign in again").
+- Real provider endpoints can't be reached from the development container. They follow the vendored Codex Vitals clients and are exercised against a fake API; first real use needs a check on your PC.
 
 ## Evidence
 
-- Tests pass for core, web and tray. Tests needing the Claude CLI or built proxy skip when those are absent.
-- Idle tray process, 30 s sample on Linux: about 31 MB RSS, 3 threads, 0 CPU ticks, 0 context switches.
-- The tray panel's Windows code runs under Wine (Windows Python 3.12 + pystray's Win32 backend): open, hover, click-to-swap, AFK switch, Esc, reopen, Full view and quit all pass. Real Windows still needs a hands-on check of the look, Segoe UI fonts, DPI scaling, notifications and the Edge app window.
-- Experiment write-ups: `experiments/*/RESULTS.md`.
+- 45 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
+- The same suites pass under Wine with Windows Python 3.12, including real DPAPI encryption.
+- An interactive Wine harness with the Win32 tray in real-account mode passes: left-click panel; click-to-switch shows "Switching…" then rewrites the login files; pinned panel is draggable and ignores click-away; unpinned closes; the right-click menu toggles AFK and opens the panel.
+- Idle tray process (Linux sample): about 31 MB RSS, 3 threads, 0 CPU ticks, 0 context switches; plus one usage check every 5 minutes in real mode.

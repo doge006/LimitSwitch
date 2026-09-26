@@ -71,8 +71,8 @@ class TrayTests(unittest.TestCase):
         state = self.controller.snapshot()
         text = tray.tooltip(state)
         self.assertLessEqual(len(text), 127)
-        self.assertIn("Claude: Personal · 36% left", text)
-        self.assertIn("Codex: Personal · 49% left", text)
+        self.assertIn("Claude: personal@example.com · 36% left", text)
+        self.assertIn("Codex: personal@example.com · 49% left", text)
         self.assertEqual(tray.tray_level(state), "good")
         state["accounts"][0]["eligible"] = False
         self.assertEqual(tray.tray_level(state), "bad")
@@ -122,14 +122,14 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(len(self.icon.notes), 1)
         title, message = self.icon.notes[0]
         self.assertEqual(title, "Claude switched accounts")
-        self.assertIn("Personal hit its limit", message)
-        self.assertIn("Second", message)
+        self.assertIn("personal@example.com hit its limit", message)
+        self.assertIn("second@example.com", message)
 
     def test_watch_follows_changes_and_quits_with_controller(self):
         thread = threading.Thread(target=self.tray.watch, daemon=True)
         thread.start()
         self.controller.action("swap", {"id": "codex-b"})
-        self.assertTrue(wait_for(lambda: "Codex: Second" in self.icon.title))
+        self.assertTrue(wait_for(lambda: "Codex: second@example.com" in self.icon.title))
         self.controller.close()
         thread.join(timeout=3)
         self.assertFalse(thread.is_alive())
