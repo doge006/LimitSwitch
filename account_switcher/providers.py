@@ -161,22 +161,6 @@ def next_monthly(start, now=None):
             year, month = year + 1, 1
 
 
-def scalar_fields(body):
-    """Plain top-level values (flags, counts, short labels) of a usage response, used to
-    identify code-named features such as Claude's free resets. Never nested data or long text."""
-    out = {}
-    private = lambda k: "email" in str(k).lower() or str(k).lower().endswith("_id")
-    for key, value in (body or {}).items():
-        if private(key):
-            continue
-        if value is None or isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 40):
-            out[key] = value
-        elif isinstance(value, dict):
-            out[key] = {k: v for k, v in value.items()
-                        if v is None or isinstance(v, (bool, int, float)) or (isinstance(v, str) and len(v) <= 40)}
-    return out
-
-
 def banked_resets(body):
     """A count of saved/banked limit resets, if the usage response reports one (best effort)."""
     found = None
@@ -282,7 +266,6 @@ class Claude:
                                                   "User-Agent": "account-switcher"})
         self.last_credits = with_resets(self.credits(body or {}), body or {})
         self.last_fields = key_paths(body or {})
-        self.last_scalars = scalar_fields(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
 
     def refresh(self, secret):
@@ -423,7 +406,6 @@ class Codex:
         self.last_credits = with_resets(self.credits(body), body) if resets is None else \
             dict(self.credits(body) or {"kind": "none", "enabled": False}, resets=resets)
         self.last_fields = key_paths(body)
-        self.last_scalars = scalar_fields(body)
         return self.windows(body), plan, updated
 
     @staticmethod

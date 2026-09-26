@@ -34,7 +34,7 @@ python -m pip install -r requirements-native.txt
   - Claude: its profile reports only when the subscription started and whether it's active or cancelled. The renewal is estimated as the next monthly anniversary and shown with a ~ (e.g. "Renews ~Oct 14").
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
-- **Usage limit resets:** banked resets are shown when available (Codex reports them). Claude's usage response names its features with code words, so the app also keeps their plain values (flags and counts, no emails or IDs) in `usage-values.json` to identify Claude's free resets.
+- **Usage limit resets:** banked resets are shown for Codex, which reports them. Claude's usage response doesn't include its free resets (they appear only in Claude's settings), so none are shown for Claude.
 - **Auto swap:** when the account in use hits a limit, Auto swap moves to the account with the most headroom and shows a notification. AFK continuation of an interrupted session is still demo-only (see below).
 - **Storage:** saved logins are encrypted with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\AccountSwitcher`. Nothing is sent anywhere except the providers' own usage and token endpoints.
 - **Token ownership:** each account should be managed from here only. If the same account is also signed in elsewhere and refreshes its token there, this copy expires and shows "Sign in again". The in-use account's token is never refreshed by this app; that stays with Claude Code / Codex.
@@ -50,7 +50,7 @@ Check the providers' terms for using several subscriptions this way; that's your
   - **Pop out** (next to **Full view ›**) pins the panel: it stays open and you can drag it by its header. Click it again to put it back.
   - **Full view ›** opens the dashboard in a borderless Edge/Chrome app window.
   - Esc or clicking elsewhere closes an unpinned panel.
-- **Right-click:** a menu in the same style: Open panel, Full view, Auto swap, AFK, Refresh usage, Add Claude/Codex account and Quit.
+- **Right-click:** a menu in the same style: Open panel, Full view, Auto swap, AFK and Quit. Toggling Auto swap or AFK keeps the menu open.
 - **Hover:** the tooltip shows the account in use per provider and what's left.
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
