@@ -98,6 +98,19 @@
     <button type="button" class="button quiet" id="shutdown" title="Close the dashboard and quit the tray app">Quit</button>
   </footer>
 </main>
+<div class="sub-editor" id="sub-editor" role="dialog" aria-label="Subscription date" hidden>
+  <div class="sub-kind">
+    <label><input type="radio" name="sub-kind" id="sub-renews" checked> Renews</label>
+    <label><input type="radio" name="sub-kind" id="sub-ends"> Ends (cancelled)</label>
+  </div>
+  <input type="date" id="sub-date" aria-label="Date">
+  <p id="sub-source"></p>
+  <div class="sub-actions">
+    <button type="button" class="button quiet" id="sub-clear">Use detected</button>
+    <button type="button" class="button quiet" id="sub-cancel">Cancel</button>
+    <button type="button" class="button primary" id="sub-save">Save</button>
+  </div>
+</div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>

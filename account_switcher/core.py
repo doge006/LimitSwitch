@@ -30,6 +30,8 @@ class Account:
     usage: list = None
     status: str = ""        # "" when fresh, otherwise a short problem description
     updated_at: float = 0.0
+    subscription: dict = None   # {"at": ts, "ends": bool|None, "source": "manual"|"auto"}
+    credits: dict = None        # Codex credits / Claude extra usage, as reported
 
     def account_windows(self):
         return [w for w in self.windows() if w["scope"] == "account"]

@@ -26,7 +26,7 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 ## Evidence
 
-- 45 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
+- 50 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
 - The same suites pass under Wine with Windows Python 3.12, including real DPAPI encryption.
 - An interactive Wine harness with the Win32 tray in real-account mode passes: left-click panel; click-to-switch shows "Switching…" then rewrites the login files; pinned panel is draggable and ignores click-away; unpinned closes; the right-click menu toggles AFK and opens the panel.
-- Idle tray process (Linux sample): about 31 MB RSS, 3 threads, 0 CPU ticks, 0 context switches; plus one usage check every 5 minutes in real mode.
+- Idle tray process in real-account mode, 60 s sample on Linux: 32 MB RSS, 1 wake-up, 0 ms CPU. Usage checks are scheduled per account (5 min in use, 30 min otherwise).
