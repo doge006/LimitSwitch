@@ -33,7 +33,7 @@ from .tray import APP, PROVIDERS, active_accounts, short_name, tooltip, tray_lev
 
 log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 392
-ICON = Path(__file__).resolve().parent / "static" / "assets" / "switcher.png"
+ICON = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"  # the Dock icon, macOS shape
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
            "warn": "arrow.triangle.2.circlepath", "bad": "exclamationmark.arrow.triangle.2.circlepath"}

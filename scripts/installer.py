@@ -272,8 +272,8 @@ $ARCH "$PY" "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
-    source = ROOT / "account_switcher" / "static" / "assets" / "switcher.png"
-    sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256)]
+    source = ROOT / "account_switcher" / "static" / "assets" / "appicon-mac.png"  # on the macOS icon grid
+    sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)]
     try:
         from PIL import Image  # the icon is optional; Pillow is in .venv, not always here
     except ImportError:
