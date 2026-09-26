@@ -56,6 +56,18 @@ Check the providers' terms for using several subscriptions this way; that's your
 
 Resource use: one Python process that sleeps until an account is due for a check or something changes. The panel and menu are native windows drawn with Pillow; they exist only while open. Measured idle over 60 s in real-account mode (Linux, virtual display): 32 MB, 1 wake-up, 0 ms CPU. The full-view window costs memory only while it's open.
 
+## Check that switching works on your PC
+
+With two accounts of the same provider saved, quit the app (tray: right-click, Quit) and double-click `Verify-Switch.cmd` (add `--provider claude` for Claude). It:
+1. Reads real usage for each account.
+2. Switches to one account and runs a single tiny prompt ("Reply with exactly: OK") through the official CLI.
+3. Simulates that account hitting its limit (in memory only; no quota is burned) and checks that Auto swap moves to the other account and the CLI works there.
+4. Switches back and confirms every login is still valid.
+
+That's two tiny requests in total. A report without tokens is saved in `%LOCALAPPDATA%\AccountSwitcher`.
+
+What "seamless" covers today: after a switch, **new** Codex/Claude sessions and new CLI runs use the new account immediately. A session that's already running keeps its account until it's restarted.
+
 ## Updating
 
 Double-click `Update.cmd` (or run it from a terminal). It runs once and then exits:

@@ -641,9 +641,13 @@ def tray_icon_class():
         popups = None  # (flyout, menu), set by the tray
 
         def _on_notify(self, wparam, lparam):
-            if self.popups and lparam == WM_LBUTTONUP:
+            if self.popups and lparam == WM_LBUTTONDOWN:
+                # React on press, not release: the release can arrive late (and the panel
+                # visibly lingers), while the press is delivered immediately.
                 self.popups[1].close()
                 self.popups[0].toggle()
+            elif self.popups and lparam in (WM_LBUTTONUP, 0x0203):  # release / double-click: handled on press
+                pass
             elif self.popups and lparam == 0x0205:  # WM_RBUTTONUP
                 if not self.popups[0].pinned:
                     self.popups[0].close()

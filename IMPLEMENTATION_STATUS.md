@@ -24,9 +24,13 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 - If an account is also signed in elsewhere and refreshes its token there, the saved copy expires ("Sign in again").
 - Real provider endpoints can't be reached from the development container. They follow the vendored Codex Vitals clients and are exercised against a fake API; first real use needs a check on your PC.
 
+## Verifying on a real PC
+
+`Verify-Switch.cmd` (`python -m account_switcher.verify`) checks real switching with two saved accounts. It reads real usage, runs one tiny prompt through the official CLI on account A, simulates A's limit in memory so Auto swap moves to B, runs one prompt on B, then switches back and re-validates every login. The flow is covered by `tests/test_verify.py`, whose stand-in CLI proves each prompt ran on the expected login.
+
 ## Evidence
 
-- 50 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
+- 52 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
 - The same suites pass under Wine with Windows Python 3.12, including real DPAPI encryption.
 - An interactive Wine harness with the Win32 tray in real-account mode passes: left-click panel; click-to-switch shows "Switching…" then rewrites the login files; pinned panel is draggable and ignores click-away; unpinned closes; the right-click menu toggles AFK and opens the panel.
 - Idle tray process in real-account mode, 60 s sample on Linux: 32 MB RSS, 1 wake-up, 0 ms CPU. Usage checks are scheduled per account (5 min in use, 30 min otherwise).
