@@ -20,6 +20,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Build the universal launcher (scripts/mac_launcher, the installer's fallback)
+        run: |
+          clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O2 -Wall -o /tmp/mac_launcher scripts/mac_launcher.c
+          lipo -info /tmp/mac_launcher
+          if ! cmp -s /tmp/mac_launcher scripts/mac_launcher; then cp /tmp/mac_launcher scripts/mac_launcher; fi
       - name: Install (the same script users run)
         run: |
           mkdir -p ~/.codex
@@ -41,6 +46,18 @@ jobs:
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
           /tmp/probe/bin/python .github/mac_smoke.py
+      - name: Again with the prebuilt launcher (as when the Mac's build tools can't link)
+        run: |
+          bash Install.command --skip-code --prebuilt-launcher
+          /tmp/probe/bin/python .github/mac_smoke.py
+      - name: Keep the launcher build
+        if: matrix.os == 'macos-15'
+        run: |
+          mkdir -p /tmp/launcher && cp /tmp/mac_launcher /tmp/launcher/mac_launcher && cd /tmp/launcher
+          git init -q -b ci-build/mac-launcher
+          git -c user.name=ci -c user.email=ci@example.com add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "mac_launcher from ${{ github.sha }}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-build/mac-launcher"
       - name: Keep screenshots
         if: always()
         run: |
