@@ -164,47 +164,7 @@ def icon_rect(icon):
     return None
 
 
-def taskbar_edge(monitor, work):
-    if work.left > monitor.left:
-        return "left"
-    if work.top > monitor.top:
-        return "top"
-    if work.right < monitor.right:
-        return "right"
-    return "bottom"
-
-
-def clamp(value, low, high):
-    return max(low, min(value, high))
-
-
-def place_above(anchor, monitor, work, width, height, scale):
-    """Top-left for an image (with shadow margin) so the panel sits over the anchor point,
-    next to the taskbar, 12 px from screen edges. Returns (x, y, slide direction)."""
-    ax, ay = anchor
-    gap, margin = round(12 * scale), round(fr.MARGIN * scale)
-    edge = taskbar_edge(monitor, work)
-    min_x, max_x = work.left + gap - margin, work.right - gap - width + margin
-    min_y, max_y = work.top + gap - margin, work.bottom - gap - height + margin
-    if edge in ("bottom", "top"):
-        x = clamp(round(ax - width / 2), min_x, max_x)
-        y = max_y if edge == "bottom" else min_y
-    else:
-        y = clamp(round(ay - height / 2), min_y, max_y)
-        x = min_x if edge == "left" else max_x
-    return x, y, {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[edge]
-
-
-def place_menu(point, monitor, work, width, height, scale):
-    """Like a context menu: open up and to the left of the cursor, kept on screen."""
-    px, py = point
-    margin = round(fr.MARGIN * scale)
-    x = px - width + margin if px + width - margin > work.right else px - margin
-    y = py - height + margin if py + height - margin > work.bottom else py - margin
-    x = clamp(x, work.left - margin, work.right - width + margin)
-    y = clamp(y, work.top - margin, work.bottom - height + margin)
-    edge = taskbar_edge(monitor, work)
-    return x, y, {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[edge]
+from .placement import place_above, place_menu, panel_contains  # noqa: E402
 
 
 class Popup:
@@ -373,8 +333,8 @@ class Popup:
         start, end, began, duration = self.anim
         progress = min(1.0, (time.perf_counter() - began) / duration)
         value = start + (end - start) * (1 - (1 - progress) ** 3)
-        travel = round(8 * self.scale * (1 - value))  # short slide toward the taskbar edge
-        self._push(self.image, value, (self.slide[0] * travel, self.slide[1] * travel))
+        travel = round(8 * self.scale * (1 - value))  # short slide in from the screen side,
+        self._push(self.image, value, (-self.slide[0] * travel, -self.slide[1] * travel))  # never over the taskbar
         if progress >= 1:
             user32.KillTimer(self.hwnd, TIMER_ANIM)
             self.anim = None
@@ -450,7 +410,11 @@ class Popup:
             user32.SetCursor(user32.LoadCursorW(None, ctypes.c_void_p(IDC_HAND if self.hover else IDC_ARROW)))
             return 1
         if msg == WM_LBUTTONDOWN:
-            self.pressed = fr.hit_test(self.hits, *self._logical(lparam))
+            x, y = self._logical(lparam)
+            if not panel_contains(x, y, self.size[0] / self.scale, self.size[1] / self.scale):
+                self.close()  # a click on the soft shadow means "somewhere else"
+                return 0
+            self.pressed = fr.hit_test(self.hits, x, y)
             return 0
         if msg == WM_LBUTTONUP:
             action = fr.hit_test(self.hits, *self._logical(lparam))
