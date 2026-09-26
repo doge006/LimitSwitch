@@ -29,7 +29,7 @@ SW_SHOWNA, VK_ESCAPE, ULW_ALPHA, TME_LEAVE = 8, 0x1B, 0x2, 0x2
 IDC_ARROW, IDC_HAND = 32512, 32649
 MONITOR_DEFAULTTONEAREST = 2
 CLASS_NAME = "AccountSwitcherFlyout"
-TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX = 1, 2, 3, 4
+TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS = 1, 2, 3, 4, 5
 log = logging.getLogger("account_switcher.flyout")
 
 
@@ -203,6 +203,35 @@ def force_foreground(hwnd):
     return user32.GetForegroundWindow() == hwnd
 
 
+# Windows' own hidden-icons popup (the ^ next to the clock): Windows 11 / Windows 10.
+OVERFLOW_CLASSES = ("TopLevelWindowForOverflowXamlIsland", "NotifyIconOverflowWindow")
+_sig(user32.GetClassNameW, ctypes.c_int, wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+_sig(user32.GetAncestor, wintypes.HWND, wintypes.HWND, wintypes.UINT)
+_sig(user32.keybd_event, None, wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t)
+
+
+def overflow_in_front():
+    """Is Windows' hidden-icons popup the foreground window right now?"""
+    foreground = user32.GetForegroundWindow()
+    if not foreground:
+        return False
+    root = user32.GetAncestor(foreground, 2) or foreground  # GA_ROOT
+    name = ctypes.create_unicode_buffer(128)
+    user32.GetClassNameW(root, name, 128)
+    return name.value in OVERFLOW_CLASSES
+
+
+def close_overflow():
+    """Close Windows' hidden-icons popup the way a user would: one Esc keypress, sent only
+    when that popup is the foreground window (so it can never reach another app).
+    Explorer then closes and resets it itself, unlike hiding its window from outside."""
+    if not overflow_in_front():
+        return False
+    user32.keybd_event(VK_ESCAPE, 0, 0, 0)
+    user32.keybd_event(VK_ESCAPE, 0, 2, 0)  # KEYEVENTF_KEYUP
+    return True
+
+
 def in_rect(rect, point):
     return rect is not None and rect[0] <= point[0] < rect[2] and rect[1] <= point[1] < rect[3]
 
@@ -317,6 +346,7 @@ class Popup:
 
     opener = "left"          # mouse button on the tray icon that opens this popup
     take_focus = True        # the panel takes focus; the right-click menu does not (like Steam's)
+    focus_delay = 0          # ms to wait before taking focus (after closing Windows' tray popup)
     icon_box = None          # screen rect of the tray icon (or around the click that opened us)
     suppress_until = 0.0     # ignore the tray's own notification for a press we already handled
 
@@ -371,7 +401,12 @@ class Popup:
         self._push(image, 0)
         user32.ShowWindow(self.hwnd, SW_SHOWNA)
         if self.take_focus:
-            force_foreground(self.hwnd)  # so Windows' own tray popup closes, as for any app
+            if self.focus_delay:
+                # Let Windows' hidden-icons popup handle its Esc first, then take focus.
+                user32.SetTimer(self.hwnd, TIMER_FOCUS, self.focus_delay, None)
+                self.focus_delay = 0
+            else:
+                force_foreground(self.hwnd)
         OutsideClicks.start()
         if self.minute_ticks:
             user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
@@ -475,6 +510,10 @@ class Popup:
                 self.redraw()
             elif wparam == TIMER_FX:
                 self.fx_step()
+            elif wparam == TIMER_FOCUS:
+                user32.KillTimer(hwnd, TIMER_FOCUS)
+                if not self.closing:
+                    force_foreground(hwnd)
             elif wparam == TIMER_PENDING:
                 user32.KillTimer(hwnd, TIMER_PENDING)
                 self.pending_timeout()
@@ -546,7 +585,7 @@ class Popup:
         if self.hwnd:
             hwnd, self.hwnd = self.hwnd, None
             Popup._windows.pop(hwnd, None)
-            for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX):
+            for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS):
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
             if not Popup._windows:
@@ -730,12 +769,15 @@ def tray_icon_class():
                 # React on press, not release: the release can arrive late (and the panel
                 # visibly lingers), while the press is delivered immediately.
                 self.popups[1].close()
-                self.popups[0].toggle()
+                flyout = self.popups[0]
+                if not (flyout.hwnd and not flyout.closing) and close_overflow():
+                    flyout.focus_delay = 150  # our icon was clicked in the hidden-icons popup
+                flyout.toggle()
             elif self.popups and lparam in (WM_LBUTTONUP, 0x0203):  # release / double-click: handled on press
                 # Windows grants foreground rights on the release; claim them now so the panel
                 # is really active (and the hidden-icons popup gets out of the way).
                 flyout = self.popups[0]
-                if flyout.hwnd and not flyout.closing:
+                if flyout.hwnd and not flyout.closing and not overflow_in_front():
                     force_foreground(flyout.hwnd)
             elif self.popups and lparam == 0x0205:  # WM_RBUTTONUP
                 if not self.popups[0].pinned:
