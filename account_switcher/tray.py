@@ -193,6 +193,13 @@ class Tray:
     def open_full_view(self):
         open_dashboard(self.url)
 
+    def popup_visible(self, shown):
+        """Hide the tooltip while the panel or menu is open so it can't cover them."""
+        self.popup_open = shown
+        title = "" if shown else tooltip(self.state)
+        if title != self.shown["title"]:
+            self.icon.title = self.shown["title"] = title
+
     def poke(self):
         """Refresh usage soon if it is more than a minute old (panel opened)."""
         try:
@@ -216,7 +223,7 @@ class Tray:
     def refresh(self):
         """Push the latest state to the icon, touching only what changed."""
         state = self.state = self.controller.snapshot()
-        title = tooltip(state)
+        title = "" if getattr(self, "popup_open", False) else tooltip(state)
         if title != self.shown["title"]:
             self.icon.title = self.shown["title"] = title
         status = tray_level(state)

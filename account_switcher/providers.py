@@ -84,6 +84,64 @@ def _jwt_payload(token):
         return {}
 
 
+# ---------- subscription renewal / end (best effort) ----------
+DATE_KEYS = ("current_period_end", "renews_at", "renewal_date", "next_billing_date", "next_billing_at",
+             "next_charge_date", "period_end", "billing_period_end", "subscription_expires_at", "expires_at",
+             "active_until", "chatgpt_subscription_active_until")
+CANCEL_DATE_KEYS = ("cancel_at", "cancels_at", "ends_at")
+
+
+def _ts(value):
+    """ISO string or epoch (s/ms) -> epoch seconds, or None."""
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return value / 1000 if value > 1e11 else float(value)
+    return _iso_ts(value)
+
+
+def key_paths(data, prefix=""):
+    """Field names only (never values), for diagnosing which fields an endpoint offers."""
+    paths = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            paths.append(path)
+            paths += key_paths(value, path)
+    elif isinstance(data, list) and data:
+        paths += key_paths(data[0], prefix + "[]")
+    return paths
+
+
+def subscription_from(data):
+    """(renews_or_ends_at, ends) from an account/billing payload.
+
+    ends: True when set to end, False when it says it will renew, None when unknown.
+    """
+    found, ends = None, None
+    stack = [data]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                k = str(key).lower()
+                if k in CANCEL_DATE_KEYS and _ts(value):
+                    found, ends = _ts(value), True
+                elif k in DATE_KEYS and found is None and _ts(value):
+                    found = _ts(value)
+                elif k == "cancel_at_period_end" and isinstance(value, bool):
+                    ends = True if value else (ends if ends else False)
+                elif k in ("will_renew", "auto_renew", "autorenew", "is_auto_renew") and isinstance(value, bool):
+                    ends = True if not value else (ends if ends else False)
+                elif k in ("subscription_status",) and str(value).lower() in ("canceled", "cancelled", "non_renewing", "ending"):
+                    ends = True
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found, ends
+
+
 def _plan_name(raw):
     names = {"max": "Max", "pro": "Pro", "plus": "Plus", "team": "Team", "enterprise": "Enterprise",
              "business": "Business", "free": "Free", "prolite": "Pro Lite", "edu": "Edu"}
@@ -92,6 +150,7 @@ def _plan_name(raw):
 
 class Claude:
     name = "claude"
+    last_credits = None
     USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
     TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
     CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -160,6 +219,7 @@ class Claude:
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
                                                   "User-Agent": "account-switcher"})
+        self.last_credits = self.credits(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
 
     def refresh(self, secret):
@@ -206,6 +266,29 @@ class Claude:
                          "resetsAt": _iso_ts(overage.get("resets_at")), "scope": "model"})
         return rows
 
+    PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+
+    def subscription(self, secret):
+        """(at, ends, field names) from Claude's account profile; best effort, at most daily."""
+        oauth = secret["credentials"]["claudeAiOauth"]
+        _, body = _http("GET", self.PROFILE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
+                                                  "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
+                                                  "User-Agent": "account-switcher"})
+        at, ends = subscription_from(body or {})
+        return at, ends, key_paths(body or {})
+
+    @staticmethod
+    def credits(body):
+        """Extra usage (pay-as-you-go credits) from the usage response, if reported."""
+        extra = body.get("extra_usage")
+        if not isinstance(extra, dict):
+            return None
+        info = {"kind": "extra", "enabled": bool(extra.get("is_enabled"))}
+        for src, dst in (("monthly_limit", "limit"), ("used_credits", "used"), ("utilization", "utilization")):
+            if isinstance(extra.get(src), (int, float)):
+                info[dst] = float(extra[src])
+        return info
+
     def login_command(self, directory):
         return ["claude", "auth", "login"], {"CLAUDE_CONFIG_DIR": str(directory)}
 
@@ -215,6 +298,7 @@ class Claude:
 
 class Codex:
     name = "codex"
+    last_credits = None
     USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
     TOKEN_URL = "https://auth.openai.com/oauth/token"
     CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -262,7 +346,22 @@ class Codex:
             body = self._usage(tokens)
         claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}
         plan = _plan_name(body.get("plan_type") or claims.get("chatgpt_plan_type"))
+        self.last_credits = self.credits(body)
         return self.windows(body), plan, updated
+
+    @staticmethod
+    def credits(body):
+        credits = body.get("credits")
+        if not isinstance(credits, dict):
+            return None
+        info = {"kind": "credits", "enabled": bool(credits.get("has_credits")) or bool(credits.get("unlimited")),
+                "unlimited": bool(credits.get("unlimited"))}
+        try:
+            if credits.get("balance") is not None:
+                info["balance"] = float(credits["balance"])
+        except (TypeError, ValueError):
+            pass
+        return info
 
     def _usage(self, tokens):
         headers = {"Authorization": "Bearer " + tokens["access_token"], "User-Agent": "codex-cli",
@@ -305,6 +404,29 @@ class Codex:
             max(rows, key=lambda r: r["used"])["used"] = 100.0  # provider says blocked even if rounding says otherwise
         order = {"five_hour": 0, "weekly": 1, "monthly": 2}
         return sorted(rows, key=lambda r: order.get(r["key"], 3))
+
+    CHECK_URL = "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27"
+
+    def subscription(self, secret):
+        """(at, ends, field names): paid-through date from the login token; cancellation best effort."""
+        tokens = secret["auth"]["tokens"]
+        claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}
+        at = _ts(claims.get("chatgpt_subscription_active_until"))
+        ends, paths = None, ["id_token." + k for k in claims]
+        headers = {"Authorization": "Bearer " + tokens["access_token"], "User-Agent": "codex-cli", "Accept": "application/json"}
+        if tokens.get("account_id"):
+            headers["ChatGPT-Account-Id"] = tokens["account_id"]
+        try:
+            _, body = _http("GET", self.CHECK_URL, headers)
+            accounts = (body or {}).get("accounts") if isinstance(body, dict) else None
+            account = accounts.get(tokens.get("account_id") or "") if isinstance(accounts, dict) else None
+            source = account if isinstance(account, dict) else (body or {})
+            api_at, ends = subscription_from(source.get("entitlement", source) if isinstance(source, dict) else {})
+            at = api_at or at
+            paths += key_paths(body or {})
+        except ProviderError:
+            pass  # the token date alone is still useful
+        return at, ends, paths
 
     def login_command(self, directory):
         return ["codex", "login"], {"CODEX_HOME": str(directory)}

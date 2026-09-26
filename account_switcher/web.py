@@ -91,11 +91,19 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove"}:
+        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription"}:
             raise ValueError("Unknown action")
         if action == "refresh":  # cheap and lock-free: just nudges the usage refresher
             if hasattr(self.gateway, "poke"):
                 self.gateway.poke(body.get("ifOlderThan", 0) if isinstance(body.get("ifOlderThan", 0), (int, float)) else 0)
+            return
+        if action == "subscription":  # manual renewal / end date; instant, no worker thread
+            if not self.live:
+                raise ValueError("Renewal dates need real-account mode")
+            at = body.get("at")
+            if at is not None and (not isinstance(at, (int, float)) or isinstance(at, bool)):
+                raise ValueError("Date must be a timestamp or null")
+            self.gateway.manager.set_subscription(body.get("id"), at, bool(body.get("ends")))
             return
         if action in {"add", "remove"} and not self.live:
             raise ValueError("Adding and removing accounts needs real-account mode")

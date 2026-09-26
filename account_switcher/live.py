@@ -5,12 +5,18 @@ How it works
   signing in to another account (in the CLI, or via "Add account") adds it here.
 - Switching saves the outgoing account's latest tokens, then writes the chosen account's
   login into the files the official clients read. New sessions use it right away.
-- Usage is fetched from each provider's own usage endpoint: every 5 minutes (1 minute when
-  the account in use is close to a limit), and when the panel or dashboard is opened.
+- Usage is fetched from each provider's own usage endpoint (read-only; it does not use any
+  quota). To stay well clear of the endpoints' rate limits, each account has its own schedule:
+  the account in use every 5 minutes (2 when close to a limit), others every 30 minutes or
+  just after one of their windows resets. Known reset times are applied locally in between,
+  requests are spaced out, and 429s back off exponentially (up to an hour).
+- Subscription renewal / end dates are checked at most once a day per account; a date you
+  enter by hand always wins.
 - Token refresh is done here only for accounts that are *not* in use; the live account's
   tokens belong to the official client, so they are never rotated behind its back.
 """
 from dataclasses import asdict
+import json
 import os
 from pathlib import Path
 import shutil
@@ -23,9 +29,14 @@ import uuid
 
 from .core import Account, Router
 from .providers import PROVIDERS, ProviderError
-from .vault import Vault
+from .vault import Vault, atomic_write
 
-NORMAL_INTERVAL, URGENT_INTERVAL, FRESH_ENOUGH = 300, 60, 60
+ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 300, 120, 1800
+FRESH_ENOUGH = 120          # opening the panel refreshes only data older than this
+MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
+SPACING = 1.5               # seconds between consecutive API calls
+SUBSCRIPTION_INTERVAL = 86400
+MAX_BACKOFF = 3600
 
 
 class LiveAccounts:
@@ -38,18 +49,24 @@ class LiveAccounts:
         self.meta = {"accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True)}
         self.active = {}
         self.signatures = {}
-        self.backoff = {}  # account id -> monotonic time before which we do not call its API
+        self.backoff = {}  # account id -> (monotonic time before which we do not call, failures)
         self.last_refresh = 0.0
+        self.last_manual = 0.0
+        self.spacing = SPACING
+        self.on_new_account = lambda: None
         self.logins = {}   # provider -> running login process info
 
     # ---------- account list ----------
     def accounts(self):
         with self.lock:
             rows = []
+            now = time.time()
             for account_id, m in self.meta["accounts"].items():
                 rows.append(Account(account_id, m["provider"], m.get("email") or m["identity"], 0, 0, 0, 0,
-                                    plan=m.get("plan", ""), email=m.get("email", ""), usage=m.get("usage") or [],
-                                    status=m.get("status", ""), updated_at=m.get("updatedAt", 0.0)))
+                                    plan=m.get("plan", ""), email=m.get("email", ""),
+                                    usage=project(m.get("usage") or [], now),
+                                    status=m.get("status", ""), updated_at=m.get("updatedAt", 0.0),
+                                    subscription=subscription_view(m), credits=m.get("credits")))
             order = {"claude": 0, "codex": 1}
             return sorted(rows, key=lambda a: (order.get(a.provider, 9), a.email or a.alias))
 
@@ -90,6 +107,7 @@ class LiveAccounts:
             self.meta["accounts"][account_id] = {"provider": provider, "identity": login.identity,
                                                  "addedAt": time.time(), "usage": []}
             self.notify("log", f"Added {provider.title()} account {login.email or login.identity}")
+            self.on_new_account()  # fetch its usage now rather than at the next scheduled check
         entry = self.meta["accounts"][account_id]
         entry.update(email=login.email or entry.get("email", ""), plan=login.plan or entry.get("plan", ""))
         self.vault.write_secret(account_id, login.secret)
@@ -98,15 +116,43 @@ class LiveAccounts:
         return account_id
 
     # ---------- usage ----------
-    def refresh(self, only=None):
-        """Fetch usage for every account (or one). Network calls happen outside the lock."""
+    def due(self, account_id, meta, is_active, now):
+        """Wall-clock time this account's usage should next be fetched."""
+        updated = meta.get("updatedAt", 0.0)
+        last = max(updated, meta.get("attemptedAt", 0.0))
+        if not last:
+            return 0.0                      # never fetched: now
+        if meta.get("status") or not updated:
+            return last + ACTIVE_INTERVAL   # failing: retry gently, never in a loop
+        if is_active:
+            usage = project(meta.get("usage") or [], now)
+            near = any(w["scope"] == "account" and w["used"] >= 90 for w in usage)
+            return updated + (URGENT_INTERVAL if near else ACTIVE_INTERVAL)
+        # Inactive: usage only changes when a window resets (or if used elsewhere).
+        resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
+        return min([updated + IDLE_INTERVAL] + resets)
+
+    def refresh(self, only=None, force=False, max_age=None):
+        """Fetch usage for accounts that are due (or all/one when forced). Network calls happen
+        outside the lock and are spaced out so bursts never hit the provider."""
         self.sync_live()
+        now, clock = time.time(), time.monotonic()
         with self.lock:
-            targets = [(i, dict(m), i == self.active.get(m["provider"])) for i, m in self.meta["accounts"].items()
-                       if (only is None or i == only)]
-        now = time.monotonic()
+            targets = []
+            for i, m in self.meta["accounts"].items():
+                if only is not None and i != only:
+                    continue
+                is_active = i == self.active.get(m["provider"])
+                if max_age is not None:
+                    due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
+                else:
+                    due = 0.0 if (force or only) else self.due(i, m, is_active, now)
+                if due <= now:
+                    targets.append((i, dict(m), is_active))
+        fetched = False
         for account_id, meta, is_active in targets:
-            if self.backoff.get(account_id, 0) > now:
+            until, failures = self.backoff.get(account_id, (0, 0))
+            if until > clock:
                 continue
             provider = self.providers.get(meta["provider"])
             try:
@@ -116,11 +162,16 @@ class LiveAccounts:
             if provider is None or secret is None:
                 self._set(account_id, status="Saved login missing; sign in again")
                 continue
+            if fetched:
+                time.sleep(self.spacing)
+            fetched = True
+            self._set(account_id, attemptedAt=time.time())
             try:
                 windows, plan, updated = provider.fetch(secret, allow_refresh=not is_active)
             except ProviderError as error:
-                if error.retry_after:
-                    self.backoff[account_id] = now + error.retry_after
+                if error.retry_after:  # rate limited: exponential backoff, honouring Retry-After
+                    wait = min(MAX_BACKOFF, max(error.retry_after, 300 * 2 ** failures))
+                    self.backoff[account_id] = (time.monotonic() + wait, failures + 1)
                 message = str(error)
                 if error.relogin and is_active:
                     message = f"Waiting for {meta['provider'].title()} to refresh its login"
@@ -129,13 +180,70 @@ class LiveAccounts:
             except Exception as error:  # a malformed response must not stop the loop
                 self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                 continue
+            self.backoff.pop(account_id, None)
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
-            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time())
+                secret = updated
+            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(),
+                      credits=getattr(provider, "last_credits", None))
+            self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
             self.save()
         self.notify("accounts", None)
+
+    def check_subscription(self, account_id, meta, provider, secret):
+        """Renewal / end date, at most once a day, never when a manual date is set."""
+        if meta.get("subscriptionManual") or time.time() - meta.get("subscriptionCheckedAt", 0) < SUBSCRIPTION_INTERVAL:
+            return
+        if not hasattr(provider, "subscription"):
+            return
+        time.sleep(self.spacing)
+        try:
+            at, ends, paths = provider.subscription(secret)
+        except ProviderError:
+            at, ends, paths = None, None, []
+        except Exception:
+            at, ends, paths = None, None, []
+        self._set(account_id, subscription={"at": at, "ends": ends} if at else None, subscriptionCheckedAt=time.time())
+        self.record_fields(meta["provider"], paths)
+
+    def record_fields(self, provider, paths):
+        """Keep the *names* of fields the account endpoints return (no values), so renewal
+        detection can be matched to what the provider actually sends."""
+        if not paths:
+            return
+        path = self.vault.root / "subscription-fields.json"
+        try:
+            known = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            known = {}
+        known[provider] = sorted(set(known.get(provider, [])) | set(paths))[:400]
+        try:
+            atomic_write(path, json.dumps(known, indent=2).encode())
+        except OSError:
+            pass
+
+    def set_subscription(self, account_id, at, ends):
+        """Manual renewal / end date from the full view; at=None clears it."""
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id)
+            if entry is None:
+                raise ValueError("Unknown account")
+            if at is None:
+                entry.pop("subscriptionManual", None)
+                entry["subscriptionCheckedAt"] = 0  # look it up again
+            else:
+                entry["subscriptionManual"] = {"at": float(at), "ends": bool(ends)}
+            self.save()
+        self.notify("accounts", None)
+
+    def next_delay(self):
+        """Seconds until the earliest account is due (bounded), so the loop sleeps in between."""
+        now = time.time()
+        with self.lock:
+            dues = [self.due(i, m, i == self.active.get(m["provider"]), now) for i, m in self.meta["accounts"].items()]
+        return max(20.0, min([ACTIVE_INTERVAL] + [d - now for d in dues]))
 
     def _set(self, account_id, **fields):
         with self.lock:
@@ -252,11 +360,25 @@ class LiveAccounts:
             shutil.rmtree(directory, ignore_errors=True)
             self.notify("accounts", None)
 
-    def next_delay(self):
-        for account in self.accounts():
-            if account.id in self.active.values() and (not account.eligible or 0 <= account.headroom <= 10):
-                return URGENT_INTERVAL
-        return NORMAL_INTERVAL
+def project(usage, now):
+    """Apply reset times that have passed since the last fetch, so the display is right
+    without calling the API. Only account-wide and model windows with a known reset."""
+    shown = []
+    for window in usage:
+        if window.get("resetsAt") and window["resetsAt"] <= now:
+            window = dict(window, used=0.0, resetsAt=None, projected=True)
+        shown.append(window)
+    return shown
+
+
+def subscription_view(meta):
+    manual = meta.get("subscriptionManual")
+    if manual:
+        return dict(manual, source="manual")
+    auto = meta.get("subscription")
+    if auto and auto.get("at") and auto["at"] > time.time() - 86400:
+        return dict(auto, source="auto")
+    return None
 
 
 class LiveRouter(Router):
@@ -290,11 +412,14 @@ class LiveGateway:
 
     def __init__(self, notify, vault=None, providers=None, background=True):
         self.manager = LiveAccounts(notify, vault, providers)
+        self.manager.on_new_account = lambda: self.wake.set() if hasattr(self, "wake") else None
         self.router = LiveRouter(self.manager)
         self.notify = notify
         self.quota_observed = False
         self.wake = threading.Event()
         self.stopped = False
+        self.force = False
+        self.poke_age = None
         self.manager.sync_live(force=True)
         if background:
             threading.Thread(target=self._loop, daemon=True, name="usage-refresh").start()
@@ -306,23 +431,32 @@ class LiveGateway:
             self.wake.clear()
             if self.stopped:
                 break
+            force, self.force = self.force, False
+            poke_age, self.poke_age = self.poke_age, None
             try:
-                self.manager.refresh()
+                self.manager.refresh(force=force, max_age=None if force else poke_age)
+                if not force and poke_age is not None:
+                    self.manager.refresh()  # anything simply due as well
                 self.manager.auto_swap()
             except Exception as error:
                 self.notify("log", f"Usage refresh failed: {error}")
             delay = self.manager.next_delay()
 
     def poke(self, max_age=FRESH_ENOUGH):
-        """Refresh soon if data is older than max_age seconds (panel/dashboard opened)."""
-        if time.monotonic() - self.manager.last_refresh > max_age:
-            self.wake.set()
+        """Panel or full view opened: fetch only accounts whose data is older than max_age
+        (inactive accounts use at least 15 minutes)."""
+        self.poke_age = max(FRESH_ENOUGH, max_age or FRESH_ENOUGH)
+        self.wake.set()
 
     def swap(self, account_id):
         self.manager.swap(account_id)
         return next(a for a in self.manager.accounts() if a.id == account_id)
 
     def reset(self):
+        """Refresh button: fetch everything now, at most every MANUAL_MIN_GAP seconds."""
+        if time.monotonic() - self.manager.last_manual >= MANUAL_MIN_GAP:
+            self.manager.last_manual = time.monotonic()
+            self.force = True
         self.wake.set()
 
     def apply_preferences(self):

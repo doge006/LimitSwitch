@@ -36,7 +36,34 @@ function absolute(ts) {
 const resetText = ts => ts ? `Resets ${absolute(ts)} · ${relative(ts)}` : 'Reset time not reported';
 const accountWindows = a => a.windows.filter(w => w.scope === 'account');
 const headroom = a => (a.headroom ?? -1) >= 0 ? a.headroom : 100;
-const renewText = ts => ts ? `Renews ${relative(ts)}` : '';
+function dateText(ts) {
+  return new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function daysLeft(ts) {
+  const d = Math.floor((ts * 1000 - Date.now()) / 86400000);
+  return d >= 1 ? `in ${d}d` : 'today';
+}
+// Subscription line: "Renews Oct 14 · in 18d" / "Ends Oct 14 · in 3d"; '' when unknown.
+function subscriptionText(account) {
+  const sub = account.subscription;
+  if (!sub || !sub.at || sub.at * 1000 < Date.now() - 86400000) return '';
+  return `${sub.ends ? 'Ends' : 'Renews'} ${dateText(sub.at)} · ${daysLeft(sub.at)}`;
+}
+function creditsText(account) {
+  const c = account.credits;
+  if (!c) return '';
+  if (c.kind === 'credits') {
+    if (c.unlimited) return 'Credits · unlimited';
+    if (typeof c.balance === 'number') return `Credits · ${c.balance.toLocaleString([], { maximumFractionDigits: 2 })} available`;
+    return c.enabled ? 'Credits · available' : '';
+  }
+  if (!c.enabled) return 'Extra usage · off';
+  if (typeof c.limit === 'number' && typeof c.used === 'number') {
+    const left = Math.max(0, c.limit - c.used);
+    return `Extra usage · ${left.toLocaleString()} of ${c.limit.toLocaleString()} left`;
+  }
+  return 'Extra usage · on';
+}
 function ago(ts) {
   const m = Math.floor((Date.now() / 1000 - ts) / 60);
   return m < 1 ? 'Updated just now' : m < 60 ? `Updated ${m}m ago` : `Updated ${Math.floor(m / 60)}h ago`;
@@ -119,7 +146,10 @@ function buildCard(account, index) {
   plan.hidden = !account.plan;
   line.append(plan);
   identity.append(line);
-  const side = node('div', 'card-side'), renew = node('span', 'renew num'), badge = node('span', 'badge', 'In use');
+  const side = node('div', 'card-side'), renew = node('button', 'renew num'), badge = node('span', 'badge', 'In use');
+  renew.type = 'button';
+  renew.title = 'Set the renewal or end date';
+  renew.addEventListener('click', event => { event.stopPropagation(); openSubscriptionEditor(account.id, renew); });
   side.append(renew, badge);
   head.append(avatar, identity, side);
 
@@ -142,6 +172,8 @@ function buildCard(account, index) {
   }
 
   if (!account.windows.length) list.append(node('div', 'window-empty', 'Usage not loaded yet'));
+  const credits = node('div', 'credits');
+  list.append(credits);
   const foot = node('div', 'card-foot'), hint = node('span', 'hint'), actions = node('div', 'card-actions');
   const swap = node('button', 'button swap'), label = node('span', 'label', 'Swap to this');
   swap.type = 'button';
@@ -157,7 +189,7 @@ function buildCard(account, index) {
   actions.append(remove, swap);
   foot.append(hint, actions);
   card.append(head, list, foot);
-  cards.set(account.id, { card, badge, renew, windows, swap, label, hint, remove, plan });
+  cards.set(account.id, { card, badge, renew, windows, swap, label, hint, remove, plan, credits });
   return card;
 }
 
@@ -224,7 +256,14 @@ function updateCards() {
     view.card.classList.toggle('active', account.active);
     view.card.classList.toggle('spent', !account.eligible);
     view.badge.textContent = account.eligible ? 'In use' : 'Limit reached';
-    view.renew.textContent = renewText(account.renewsAt);
+    const sub = subscriptionText(account);
+    view.renew.textContent = sub || (state.mode === 'live' ? 'Set renewal date' : '');
+    view.renew.classList.toggle('unset', !sub);
+    view.renew.classList.toggle('ends', !!account.subscription?.ends && !!sub);
+    view.renew.disabled = state.mode !== 'live';
+    const credit = creditsText(account);
+    view.credits.textContent = credit;
+    view.credits.hidden = !credit;
     view.plan.textContent = account.plan || '';
     view.plan.hidden = !account.plan;
     for (const w of account.windows) {
@@ -275,8 +314,8 @@ function updateTiles() {
     tweenNumber(view.pct, left);
     view.who.textContent = displayName(account);
     view.who.title = displayName(account);
-    view.meta.textContent = account.status || account.plan || '';
-    view.next.replaceChildren(...(account.renewsAt ? ['Renews ', node('b', 'num', relative(account.renewsAt).replace(/^in /, 'in '))] : []));
+    view.meta.textContent = account.status || [account.plan, subscriptionText(account)].filter(Boolean).join(' · ');
+    view.next.replaceChildren(...(account.renewsAt ? ['Usage resets ', node('b', 'num', relative(account.renewsAt))] : []));
   }
 }
 
@@ -347,6 +386,42 @@ function render(next) {
   updateTiles();
   updateLog();
 }
+
+// ---------- subscription date editor ----------
+function openSubscriptionEditor(id, anchor) {
+  const account = state.accounts.find(a => a.id === id);
+  if (!account || state.mode !== 'live') return;
+  const editor = $('sub-editor');
+  const sub = account.subscription;
+  const at = sub?.at ? new Date(sub.at * 1000) : new Date(Date.now() + 30 * 86400000);
+  $('sub-date').value = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+  $('sub-ends').checked = !!sub?.ends;
+  $('sub-renews').checked = !sub?.ends;
+  $('sub-clear').hidden = sub?.source !== 'manual';
+  $('sub-source').textContent = sub?.source === 'auto' ? 'Detected from your account. Change it if it is wrong.'
+    : sub?.source === 'manual' ? 'Set by you.' : 'Not reported by the provider. Enter it from your billing page.';
+  editor.dataset.id = id;
+  const r = anchor.getBoundingClientRect();
+  editor.style.top = `${r.bottom + window.scrollY + 6}px`;
+  editor.style.left = `${Math.max(12, Math.min(r.right + window.scrollX - 280, window.innerWidth - 292))}px`;
+  editor.hidden = false;
+  $('sub-date').focus();
+}
+function closeSubscriptionEditor() { $('sub-editor').hidden = true; }
+$('sub-editor').addEventListener('click', event => event.stopPropagation());
+$('sub-save').addEventListener('click', async () => {
+  const value = $('sub-date').value;
+  if (!value) return;
+  const [y, m, d] = value.split('-').map(Number);
+  await act('subscription', { id: $('sub-editor').dataset.id, at: new Date(y, m - 1, d, 12).getTime() / 1000, ends: $('sub-ends').checked });
+  closeSubscriptionEditor();
+});
+$('sub-clear').addEventListener('click', async () => {
+  await act('subscription', { id: $('sub-editor').dataset.id, at: null });
+  closeSubscriptionEditor();
+});
+$('sub-cancel').addEventListener('click', closeSubscriptionEditor);
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeSubscriptionEditor(); });
 
 // ---------- network ----------
 async function request(path, body) {
@@ -445,7 +520,7 @@ $('add').addEventListener('click', event => {
 for (const item of document.querySelectorAll('[data-add]')) {
   item.addEventListener('click', () => { $('add-menu').hidden = true; act('add', { provider: item.dataset.add }); });
 }
-document.addEventListener('click', () => { $('add-menu').hidden = true; });
+document.addEventListener('click', () => { $('add-menu').hidden = true; closeSubscriptionEditor(); });
 $('shutdown').addEventListener('click', async () => {
   try {
     await request('/api/shutdown', {});

@@ -29,7 +29,7 @@ SW_SHOWNA, VK_ESCAPE, ULW_ALPHA, TME_LEAVE = 8, 0x1B, 0x2, 0x2
 IDC_ARROW, IDC_HAND = 32512, 32649
 MONITOR_DEFAULTTONEAREST = 2
 CLASS_NAME = "AccountSwitcherFlyout"
-TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING = 1, 2, 3
+TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX = 1, 2, 3, 4
 log = logging.getLogger("account_switcher.flyout")
 
 
@@ -227,10 +227,45 @@ class Popup:
         self.x = self.y = 0
         self.slide = (0, 1)
         self.scale = 1.0
+        self.fx, self.fx_anims = {}, {}   # animated values and their running transitions
 
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
     dismiss_on_deactivate = True
     minute_ticks = False
+    FX_SECONDS = {"hover": 0.12, "toggle": 0.18, "active": 0.24, "bar": 0.45}
+
+    def fx_targets(self):
+        return {("hover", self.hover): 1.0} if self.hover else {}
+
+    def retarget(self):
+        """Start short ease-out transitions toward the new resting values."""
+        goal, now = self.fx_targets(), time.perf_counter()
+        for key in set(goal) | {k for k in self.fx if k[0] == "hover"}:
+            target = goal.get(key, 0.0)
+            current = self.fx.get(key)
+            if current is None:
+                if key[0] != "hover":
+                    self.fx[key] = target  # new item: appear at its value, no animation
+                    continue
+                current = self.fx[key] = 0.0
+            running = self.fx_anims.get(key)
+            if (running[1] if running else current) != target:
+                self.fx_anims[key] = (current, target, now, self.FX_SECONDS[key[0]])
+        if self.fx_anims and self.hwnd:
+            user32.SetTimer(self.hwnd, TIMER_FX, 15, None)
+
+    def fx_step(self):
+        now = time.perf_counter()
+        for key, (start, end, began, duration) in list(self.fx_anims.items()):
+            progress = min(1.0, (now - began) / duration)
+            self.fx[key] = start + (end - start) * (1 - (1 - progress) ** 3)
+            if progress >= 1:
+                del self.fx_anims[key]
+                if key[0] == "hover" and end == 0.0:
+                    self.fx.pop(key, None)
+        if not self.fx_anims:
+            user32.KillTimer(self.hwnd, TIMER_FX)  # nothing moving: no timer at all
+        self.redraw(retarget=False)
 
     def toggle(self):
         if self.hwnd and not self.closing:
@@ -244,6 +279,8 @@ class Popup:
         self._register()
         self.hover = self.pressed = None
         self.prepare()
+        self.fx = {k: v for k, v in self.fx_targets().items() if k[0] != "hover"}
+        self.fx_anims = {}
         image, self.hits = self.render(None)
         self.size = image.size
         self.x, self.y, self.slide = self.position(*image.size)
@@ -258,6 +295,7 @@ class Popup:
             log.error("CreateWindowExW failed: %s", ctypes.get_last_error())
             return
         Popup._windows[self.hwnd] = self
+        self.tray.popup_visible(True)
         self.closing = False
         self.opened_at = time.monotonic()
         self._push(image, 0)
@@ -287,9 +325,11 @@ class Popup:
             user32.PostMessageW(self.hwnd, WM_APP_REFRESH, 0, 0)
 
     # ---------- drawing ----------
-    def redraw(self):
+    def redraw(self, retarget=True):
         if not self.hwnd or self.closing:
             return
+        if retarget:
+            self.retarget()
         image, self.hits = self.render(self.hover)
         if image.size != self.size:  # height changed: keep the edge next to the taskbar fixed
             dy = image.size[1] - self.size[1]
@@ -361,6 +401,8 @@ class Popup:
                 self._tick()
             elif wparam == TIMER_MINUTE:
                 self.redraw()
+            elif wparam == TIMER_FX:
+                self.fx_step()
             elif wparam == TIMER_PENDING:
                 user32.KillTimer(hwnd, TIMER_PENDING)
                 self.pending_timeout()
@@ -428,10 +470,13 @@ class Popup:
         if self.hwnd:
             hwnd, self.hwnd = self.hwnd, None
             Popup._windows.pop(hwnd, None)
-            for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING):
+            for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX):
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
+            if not Popup._windows:
+                self.tray.popup_visible(False)
         self.anim, self.tracking, self.closing = None, False, False
+        self.fx_anims = {}
 
     @classmethod
     def _register(cls):
@@ -482,19 +527,20 @@ class Flyout(Popup):
             return (*self.pinned_at, (0, 0))
         return place_above(self.anchor, self.monitor, self.work, width, height, self.scale)
 
+    def fx_targets(self):
+        return fr.targets(self.tray.state, self.hover)
+
     def render(self, hover):
         state = self.tray.state
         if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
             self.pending = None  # the switch landed
-        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned)
+        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx)
 
     def drag_region(self, x, y):
         return self.pinned and y < fr.header_height()
 
     def toggle(self):
-        if self.pinned and self.hwnd:
-            user32.SetForegroundWindow(self.hwnd)  # a pinned panel just comes to the front
-            return
+        # Clicking the tray icon always closes an open panel, pinned or not.
         super().toggle()
 
     def close(self):
@@ -564,7 +610,7 @@ class TrayMenu(Popup):
         return place_menu(self.point, self.monitor, self.work, width, height, self.scale)
 
     def render(self, hover):
-        return fr.render_menu(self.items(), hover, self.scale)
+        return fr.render_menu(self.items(), hover, self.scale, fx=self.fx)
 
     def activate(self, action):
         tray = self.tray

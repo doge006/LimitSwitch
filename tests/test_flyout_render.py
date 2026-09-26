@@ -60,13 +60,26 @@ class FlyoutRenderTests(unittest.TestCase):
         normal, _ = fr.render(state)
         self.assertEqual(taller.height - normal.height, fr.ROW_H + 2)
 
-    def test_names_are_emails_and_renewal_is_shown(self):
+    def test_names_are_emails_resets_and_subscription(self):
         layout, _ = fr.build(self.state)
         texts = [t[2] for t in layout.texts]
         self.assertIn("personal@example.com", texts)
         self.assertNotIn("Personal", texts)
-        self.assertTrue(any(t.endswith("m") and t[0].isdigit() for t in texts))  # e.g. "2h 0m"
-        self.assertTrue(any(op[0] == "clock" for op in layout.shapes))
+        self.assertTrue(any(t.startswith("in ") and t.endswith("m") for t in texts))  # reset timers, e.g. "in 2h 0m"
+        self.assertFalse(any(t.startswith(("Renews", "Ends")) for t in texts))     # unknown subscription: nothing
+        state = self.controller.snapshot()
+        state["accounts"][0]["subscription"] = {"at": fr.time.time() + 12.5 * 86400, "ends": False}
+        state["accounts"][1]["subscription"] = {"at": fr.time.time() + 3.2 * 86400, "ends": True}
+        texts = [t[2] for t in fr.build(state)[0].texts]
+        self.assertIn("Renews 12d", texts)
+        self.assertIn("Ends 3d", texts)
+
+    def test_animation_values_change_the_frame(self):
+        rest, _ = fr.render(self.state)
+        mid, _ = fr.render(self.state, fx={("toggle", "afk"): 0.5, ("hover", "swap:claude-b"): 0.5})
+        self.assertEqual(rest.size, mid.size)
+        self.assertNotEqual(rest.tobytes(), mid.tobytes())
+        self.assertEqual(fr.targets(self.state)[("toggle", "autoSwap")], 1.0)
 
     def test_pending_switch_and_status_notes(self):
         layout, _ = fr.build(self.state, pending="claude-b")
