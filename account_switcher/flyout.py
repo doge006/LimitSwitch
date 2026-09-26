@@ -171,19 +171,36 @@ class OutsideClicks:
         return user32.CallNextHookEx(None, code, wparam, lparam)
 
 
-# Windows' own hidden-icons popup (the ^ next to the clock): Windows 11 / Windows 10.
-OVERFLOW_CLASSES = ("TopLevelWindowForOverflowXamlIsland", "NotifyIconOverflowWindow")
-_sig(user32.FindWindowW, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
-_sig(user32.IsWindowVisible, wintypes.BOOL, wintypes.HWND)
+_sig(user32.GetForegroundWindow, wintypes.HWND)
+_sig(user32.GetWindowThreadProcessId, wintypes.DWORD, wintypes.HWND, ctypes.c_void_p)
+_sig(user32.AttachThreadInput, wintypes.BOOL, wintypes.DWORD, wintypes.DWORD, wintypes.BOOL)
+_sig(user32.BringWindowToTop, wintypes.BOOL, wintypes.HWND)
+_sig(user32.SetFocus, wintypes.HWND, wintypes.HWND)
+_sig(kernel32.GetCurrentThreadId, wintypes.DWORD)
 
 
-def dismiss_overflow():
-    """If our icon was clicked inside Windows' hidden-icons popup, close that popup so it
-    doesn't sit behind our panel and flash back to the front when the panel closes."""
-    for name in OVERFLOW_CLASSES:
-        hwnd = user32.FindWindowW(name, None)
-        if hwnd and user32.IsWindowVisible(hwnd):
-            user32.ShowWindow(hwnd, 0)  # SW_HIDE
+def force_foreground(hwnd):
+    """Make our panel the real foreground window.
+
+    Windows often refuses SetForegroundWindow to a tray app (the click went to Explorer).
+    When it does, Windows' own hidden-icons popup keeps focus, stays open behind us and
+    flashes back on close. Briefly sharing input with the current foreground thread is the
+    standard way around that; once we are foreground, Windows closes its popup itself.
+    """
+    if user32.SetForegroundWindow(hwnd) and user32.GetForegroundWindow() == hwnd:
+        return True
+    foreground = user32.GetForegroundWindow()
+    theirs = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+    ours = kernel32.GetCurrentThreadId()
+    attached = bool(theirs and theirs != ours and user32.AttachThreadInput(ours, theirs, True))
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetFocus(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(ours, theirs, False)
+    return user32.GetForegroundWindow() == hwnd
 
 
 def in_rect(rect, point):
@@ -299,6 +316,7 @@ class Popup:
         self.redraw(retarget=False)
 
     opener = "left"          # mouse button on the tray icon that opens this popup
+    take_focus = True        # the panel takes focus; the right-click menu does not (like Steam's)
     icon_box = None          # screen rect of the tray icon (or around the click that opened us)
     suppress_until = 0.0     # ignore the tray's own notification for a press we already handled
 
@@ -331,7 +349,6 @@ class Popup:
         self._register()
         self.hover = self.pressed = None
         self.prepare()
-        dismiss_overflow()
         self.fx = {k: v for k, v in self.fx_targets().items() if k[0] != "hover"}
         self.fx_anims = {}
         image, self.hits = self.render(None)
@@ -353,7 +370,8 @@ class Popup:
         self.opened_at = time.monotonic()
         self._push(image, 0)
         user32.ShowWindow(self.hwnd, SW_SHOWNA)
-        user32.SetForegroundWindow(self.hwnd)  # so clicking elsewhere deactivates and closes it
+        if self.take_focus:
+            force_foreground(self.hwnd)  # so Windows' own tray popup closes, as for any app
         OutsideClicks.start()
         if self.minute_ticks:
             user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
@@ -627,7 +645,7 @@ class Flyout(Popup):
                 self.x, self.y, self.slide = place_above(self.anchor, self.monitor, self.work, *image.size, self.scale)
                 self.size = image.size
                 self._push(image, self.alpha)
-                user32.SetForegroundWindow(self.hwnd)
+                force_foreground(self.hwnd)
             else:
                 self.redraw()
         elif action == "quit":
@@ -664,6 +682,7 @@ class TrayMenu(Popup):
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
     opener = "right"
+    take_focus = False       # outside clicks are caught by the mouse watcher instead
 
     def prepare(self):
         self.point = cursor()
@@ -717,14 +736,11 @@ def tray_icon_class():
                 # is really active (and the hidden-icons popup gets out of the way).
                 flyout = self.popups[0]
                 if flyout.hwnd and not flyout.closing:
-                    dismiss_overflow()
-                    user32.SetForegroundWindow(flyout.hwnd)
+                    force_foreground(flyout.hwnd)
             elif self.popups and lparam == 0x0205:  # WM_RBUTTONUP
                 if not self.popups[0].pinned:
                     self.popups[0].close()
-                self.popups[1].toggle()
-                if self.popups[1].hwnd:
-                    user32.SetForegroundWindow(self.popups[1].hwnd)
+                self.popups[1].toggle()  # the menu leaves Windows' tray popup alone
             else:
                 super()._on_notify(wparam, lparam)
 

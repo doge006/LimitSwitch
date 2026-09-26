@@ -359,6 +359,43 @@ class LiveTests(unittest.TestCase):
         fields = json.loads((self.vault.root / "subscription-fields.json").read_text())
         self.assertIn("rate_limit.available_resets", fields["codex-usage"])
 
+    def test_real_response_shapes(self):
+        """Shapes from the user's subscription-fields.json (names only, values made up)."""
+        from account_switcher.providers import next_monthly
+        m = self.manager()
+        m.sync_live()
+        start = time.time() - (40 * 86400)
+        self.api.claude_profile["at-a"] = {"account": {"has_claude_max": True},
+                                          "organization": {"subscription_status": "active", "subscription_created_at": start}}
+        self.api.codex_usage["at-x"] = dict(codex_usage(5, 5), email="x@example.com", user_id="u-1",
+                                            rate_limit_reset_credits={"available_count": 1, "applicable_available_count": 1})
+        self.api.codex_check["at-x"] = {"accounts": {"acct-x": {"entitlement": {"renews_at": None, "cancels_at": time.time() + 8 * 86400,
+                                                                               "expires_at": time.time() + 8 * 86400}}}}
+        m.refresh(force=True)
+        a, x = self.by_email(m, "a@example.com"), self.by_email(m, "x@example.com")
+        self.assertEqual(a.subscription["ends"], False)
+        self.assertTrue(a.subscription["estimated"])
+        self.assertAlmostEqual(a.subscription["at"], next_monthly(start), delta=1)
+        self.assertGreater(a.subscription["at"], time.time())
+        self.assertLess(a.subscription["at"], time.time() + 32 * 86400)
+        self.assertEqual(x.subscription["ends"], True)
+        self.assertEqual(x.credits["resets"], 1)
+        values = json.loads((self.vault.root / "usage-values.json").read_text())
+        self.assertNotIn("email", values["codex-usage"])
+        self.assertNotIn("user_id", values["codex-usage"])
+        # A cancelled Claude subscription, picked up because the detection logic changed.
+        self.api.claude_profile["at-a"]["organization"]["subscription_status"] = "canceled"
+        m.meta["accounts"][a.id]["subscriptionLogic"] = 1
+        m.refresh(force=True)
+        self.assertEqual(self.by_email(m, "a@example.com").subscription["ends"], True)
+
+    def test_next_monthly_handles_month_ends(self):
+        from datetime import datetime, timezone
+        from account_switcher.providers import next_monthly
+        start = datetime(2026, 1, 31, 12, tzinfo=timezone.utc).timestamp()
+        now = datetime(2026, 2, 10, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(datetime.fromtimestamp(next_monthly(start, now), timezone.utc).date().isoformat(), "2026-02-28")
+
 
 if __name__ == "__main__":
     unittest.main()

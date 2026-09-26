@@ -31,9 +31,10 @@ python -m pip install -r requirements-native.txt
   - A 429 backs off exponentially, from 5 minutes up to an hour.
 - **Subscription:** "Renews Oct 14" or "Ends Oct 14" shows when a subscription renews or has been cancelled.
   - Codex: the paid-through date comes from its login token; cancellation is read best-effort from ChatGPT's account check.
-  - Claude: Claude's account profile is checked for renewal fields.
+  - Claude: its profile reports only when the subscription started and whether it's active or cancelled. The renewal is estimated as the next monthly anniversary and shown with a ~ (e.g. "Renews ~Oct 14").
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
+- **Usage limit resets:** banked resets are shown when available (Codex reports them). Claude's usage response names its features with code words, so the app also keeps their plain values (flags and counts, no emails or IDs) in `usage-values.json` to identify Claude's free resets.
 - **Auto swap:** when the account in use hits a limit, Auto swap moves to the account with the most headroom and shows a notification. AFK continuation of an interrupted session is still demo-only (see below).
 - **Storage:** saved logins are encrypted with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\AccountSwitcher`. Nothing is sent anywhere except the providers' own usage and token endpoints.
 - **Token ownership:** each account should be managed from here only. If the same account is also signed in elsewhere and refreshes its token there, this copy expires and shows "Sign in again". The in-use account's token is never refreshed by this app; that stays with Claude Code / Codex.

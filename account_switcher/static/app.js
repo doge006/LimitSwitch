@@ -47,12 +47,13 @@ function daysLeft(ts) {
 function subscriptionText(account) {
   const sub = account.subscription;
   if (!sub || !sub.at || sub.at * 1000 < Date.now() - 86400000) return '';
-  return `${sub.ends ? 'Ends' : 'Renews'} ${dateText(sub.at)} · ${daysLeft(sub.at)}`;
+  const est = sub.estimated ? '~' : '';
+  return `${sub.ends ? 'Ends' : 'Renews'} ${est}${dateText(sub.at)} · ${daysLeft(sub.at)}`;
 }
 function creditsText(account) {
   const c = account.credits;
   if (!c) return '';
-  const resets = typeof c.resets === 'number' ? `Banked resets · ${c.resets}` : '';
+  const resets = typeof c.resets === 'number' ? `Usage limit resets · ${c.resets} available` : '';
   const main = creditsMain(c);
   return [main, resets].filter(Boolean).join('   ');
 }
