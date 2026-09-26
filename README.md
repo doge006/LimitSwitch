@@ -49,9 +49,9 @@ python -m pip install -r requirements-native.txt
   - *Codex:* the request that hit the limit is sent again on the next account, so the session never sees the error. If ChatGPT's response headers already showed the account used up, a new turn simply starts on the next account.
   - *Claude:* Claude Code shows its limit message. The hook below switches accounts right away, so your next message uses the new account; with AFK on, it also continues by itself.
   - *Claude threads:* nothing in them is tied to an account, so they carry over whole.
-  - *Codex threads:* ChatGPT encrypts two things for the account that made them, which another account can't read. The router carries both across:
-    - *Compaction checkpoints* (the summary Codex keeps instead of old history): right after a compaction, the same account writes the checkpoint out as plain text. The app keeps that text encrypted, and it's what another account receives, in the form Codex uses for its own plain-text checkpoints. Until it exists, the thread stays on the checkpoint's account while that account has quota.
-    - *Hidden reasoning:* another account receives the plain-text summary ChatGPT returned with it. This is the only part that changes form, and only when a thread moves.
+  - *Codex threads:* ChatGPT encrypts two things for the account that made them, which another account can't read. The app makes no extra requests for this:
+    - *Hidden reasoning:* another account receives the plain-text summary ChatGPT returned with it.
+    - *Compaction checkpoints* (the summary Codex keeps instead of old history): the thread stays on the checkpoint's account while that account has quota. Once it's used up, the thread moves on without that older summary; the recent conversation is kept.
 - **AFK:** while AFK is on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
   - The app adds a `StopFailure` hook to `~/.claude/settings.json` while Auto swap or AFK is on. Only its own entry is added, and it's removed when both are off.
   - When the hook fires, the app switches to an account with room (Auto swap) and Claude Code is told to continue where it left off.

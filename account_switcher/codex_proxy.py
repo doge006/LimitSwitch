@@ -4,26 +4,22 @@ forwarded to ChatGPT with the login of the account selected in the app.
 A switch applies to the very next request of every open session, and a request that hits a
 usage limit is sent again on another account, so the session never sees the error.
 
-Keeping a thread whole across accounts. Codex replays items the service encrypted for the
-account that produced them; another account cannot read them. So:
-- Compaction checkpoints (the summary Codex keeps instead of old history) are written out
-  as plain text by the account that made them, right after it made them. When the thread
-  moves to another account, the checkpoint is replaced by that text, in the same form Codex
-  uses for its own plain-text checkpoints. Until the text exists, the thread's requests stay
-  on the checkpoint's account while it has quota.
+Across accounts. Codex replays items the service encrypted for the account that produced
+them; another account cannot read them. No extra requests are made for this:
 - Hidden reasoning is replaced by the plain-text summary the service returned with it.
-- Planned switches (an account close to its limit) happen when a new turn starts, never in
-  the middle of one; usage comes live from the service's own response headers.
+- A compaction checkpoint (the summary Codex keeps instead of old history) keeps its thread
+  on the checkpoint's account while that account can take requests; once it is used up the
+  thread moves on without the checkpoint (the visible recent conversation is kept).
+- A used-up account is left when a new turn starts, from the service's usage headers.
 The request path carries a random secret, so other local programs cannot borrow the logins.
 Codex's WebSocket attempt gets 426, which makes it use plain HTTP at once.
-Nothing is logged. Fingerprints of encrypted items and the checkpoint texts are kept (the
-texts encrypted, in the app's store) so threads keep working across app restarts.
+Nothing is logged. Fingerprints of encrypted items (which account made which) are kept, in
+the app's encrypted store, so threads keep working across app restarts.
 """
 from collections import OrderedDict
 from hashlib import blake2b
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import queue
 import secrets
 import threading
 import time
@@ -46,12 +42,6 @@ SUMMARY_PREFIX = ("Another language model started to solve this problem and prod
                   "Use this to build on the work that has already been done and avoid duplicating work. Here is the "
                   "summary produced by the other language model, use the information in this summary to assist with "
                   "your own analysis:")
-WRITE_OUT = ("Your context includes a compacted checkpoint of the earlier part of this session. Write that checkpoint "
-             "out in full as a plain-text handoff, so the same work can continue in a fresh context without it. "
-             "Include everything it holds: the user's requests, preferences and constraints; progress so far and the "
-             "key decisions and why; files, commands and code involved; the current state; errors seen; and what "
-             "remains to be done. Do not call any tools; output only the handoff.")
-
 
 def fingerprint(value):
     return blake2b(value.encode() if isinstance(value, str) else value, digest_size=12).hexdigest()
@@ -213,7 +203,7 @@ class CodexRouter:
             if item.get("type") in CHECKPOINTS and on_checkpoint and self.state.text(item["encrypted_content"]) is None:
                 on_checkpoint(item)
 
-    def prepare(self, data, target, drop_unknown=False):
+    def prepare(self, data, target, drop_unknown=False, exclude=()):
         """(input for `target`, account the request must go to instead or None).
 
         Items `target` cannot read are replaced by their plain-text versions. A checkpoint
@@ -238,8 +228,9 @@ class CodexRouter:
                 text = self.state.text(values[0])
                 if text is None:
                     owner = foreign[0] if foreign else None
-                    if owner is not None and self.accounts.usable(owner):
+                    if owner is not None and owner not in exclude and self.accounts.usable(owner):
                         return data, owner  # stay with the account that can read it
+                    changed = True  # nobody left who can read it: continue without it
                     continue
                 prepared.append(checkpoint_message(text))
             elif kind == "reasoning":
@@ -261,8 +252,6 @@ class CodexProxy:
         self.secret = secret or secrets.token_urlsafe(18)
         self.server = None
         self.opener = build_opener(ProxyHandler())  # honours the system proxy settings
-        self.jobs = queue.Queue()
-        self.can_switch = lambda: True  # writing checkpoints out only matters with 2+ accounts
 
     @property
     def base_url(self):
@@ -293,11 +282,9 @@ class CodexProxy:
         self.server.daemon_threads = True
         self.port = self.server.server_port
         threading.Thread(target=self.server.serve_forever, daemon=True, name="codex-router").start()
-        threading.Thread(target=self._write_out_loop, daemon=True, name="codex-checkpoints").start()
         return self.base_url
 
     def close(self):
-        self.jobs.put(None)
         self.router.state.flush()
         if self.server:
             self.server.shutdown()
@@ -335,7 +322,7 @@ class CodexProxy:
         while True:
             target, payload = account, body
             if data is not None:
-                prepared, stay = self.router.prepare(data, account, drop_unknown)
+                prepared, stay = self.router.prepare(data, account, drop_unknown, exclude=tried)
                 if stay is not None:
                     target, prepared = stay, data
                 if prepared is not data:
@@ -433,9 +420,6 @@ class CodexProxy:
         h.close_connection = True
         pending = b""
         on_checkpoint = None
-        if account is not None and isinstance(data, dict) and self.can_switch():
-            def on_checkpoint(item, account=account):
-                self.jobs.put((account, item, data, request_headers))
         try:
             while True:
                 chunk = response.read1(65536) if hasattr(response, "read1") else response.read(65536)
@@ -465,58 +449,3 @@ class CodexProxy:
             self.router.record(account, json.loads(payload), on_checkpoint)
         except ValueError:
             pass
-
-    # ---------- checkpoints written out by the account that made them ----------
-    def _write_out_loop(self):
-        while True:
-            job = self.jobs.get()
-            if job is None:
-                return
-            for attempt in range(3):
-                try:
-                    if self.write_out(*job):
-                        break
-                except Exception:
-                    pass
-                time.sleep(5 * (attempt + 1))
-
-    def write_out(self, account, item, request, request_headers):
-        """Ask the account that made a checkpoint to write it out as plain text. The request
-        is Codex's own compaction request (same model, instructions and settings, which the
-        service accepted) with only the input changed."""
-        if self.router.state.text(item["encrypted_content"]) is not None:
-            return True
-        token, workspace = self.accounts.credentials(account)
-        headers = {k: v for k, v in request_headers.items() if k.lower() not in HOP_BY_HOP}
-        headers.update({"Authorization": "Bearer " + token, "Content-Type": "application/json",
-                        "Accept": "text/event-stream", "Accept-Encoding": "identity"})
-        if workspace:
-            headers["ChatGPT-Account-Id"] = workspace
-        body = {k: v for k, v in request.items() if k not in ("previous_response_id", "input")}
-        body.update(store=False, stream=True,
-                    input=[item, {"type": "message", "role": "user", "content": [{"type": "input_text", "text": WRITE_OUT}]}])
-        response, status = self.open("POST", "/backend-api/codex/responses", headers, json.dumps(body).encode())
-        if response is None or status != 200:
-            if response is not None:
-                response.close()
-            return False
-        parts, done = [], None
-        with response:
-            for raw in response:
-                if not raw.startswith(b"data:"):
-                    continue
-                try:
-                    event = json.loads(raw[5:])
-                except ValueError:
-                    continue
-                if event.get("type") == "response.output_text.delta":
-                    parts.append(event.get("delta", ""))
-                elif event.get("type") == "response.output_item.done":
-                    item_out = event.get("item") or {}
-                    if item_out.get("type") == "message":
-                        done = "".join(c.get("text", "") for c in item_out.get("content") or [] if isinstance(c, dict))
-        text = (done or "".join(parts)).strip()
-        if not text:
-            return False
-        self.router.state.write_out(item["encrypted_content"], text)
-        return True

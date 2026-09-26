@@ -19,7 +19,7 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
   - The router adds the chosen account's token and workspace header, so switching applies to every running session's next request.
   - On `usage_limit_reached` it retries the same request on the account with the most headroom (Auto swap).
   - Encrypted items are tied to the account that made them, so the router carries them across:
-    - *Compaction checkpoints:* written out as plain text by their own account right after compaction (kept DPAPI-encrypted), and substituted in Codex's own plain-text checkpoint form. Until then, a thread with an untranslated checkpoint stays on that account while it has quota.
+    - *Compaction checkpoints:* a thread holding one stays on that account while it has quota; after that the checkpoint is left out. No extra requests are ever made.
     - *Reasoning:* replaced by its plain-text summary.
     - *Anything else the service rejects:* one retry without unknown items.
   - Accounts are used to 100%. A request that hits the limit is retried on the next account. If the `x-codex-*-used-percent` response headers already show the account used up, the next turn starts on the next account instead.
@@ -35,7 +35,7 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 ## Limits
 
-- Hidden reasoning can only cross accounts as the plain-text summary ChatGPT returns with it (it's encrypted per account).
+- Hidden reasoning can only cross accounts as the plain-text summary ChatGPT returns with it (it's encrypted per account). A compaction summary can't cross at all: a thread that moves after its account is used up loses that older summary (recent messages stay).
 - If every account of a provider is out of quota:
   - *Codex:* gets the usage-limit error as usual.
   - *Claude Code:* the AFK hook waits for the earliest reset (up to 6 hours) and then continues.
@@ -53,7 +53,6 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
   - its WebSocket attempt got 426 and it used HTTPS without a warning;
   - a usage limit on account x was retried on y, and `codex exec` printed y's answer with exit 0;
   - after switching back to x, `codex exec resume` replayed y's encrypted reasoning; the router sent its summary instead, and x answered;
-  - with a tiny auto-compact limit, Codex compacted on x, x wrote the checkpoint out, and after a switch y received the thread with the plain-text checkpoint and answered.
 - Real Claude Code 2.1.283 against a fake Anthropic API:
   - a usage limit fired `StopFailure` with `rate_limit`;
   - the `asyncRewake` hook woke the session and a new request went out.
