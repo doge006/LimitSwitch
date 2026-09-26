@@ -52,6 +52,12 @@ function subscriptionText(account) {
 function creditsText(account) {
   const c = account.credits;
   if (!c) return '';
+  const resets = typeof c.resets === 'number' ? `Banked resets · ${c.resets}` : '';
+  const main = creditsMain(c);
+  return [main, resets].filter(Boolean).join('   ');
+}
+function creditsMain(c) {
+  if (c.kind === 'none') return '';
   if (c.kind === 'credits') {
     if (c.unlimited) return 'Credits · unlimited';
     if (typeof c.balance === 'number') return `Credits · ${c.balance.toLocaleString([], { maximumFractionDigits: 2 })} available`;
@@ -287,9 +293,7 @@ function updateCards() {
     const problem = account.status;
     view.hint.classList.toggle('warn', !!problem);
     view.hint.textContent = problem
-      || (account.active ? 'New sessions use this account'
-        : !account.eligible ? 'Waiting for reset'
-        : account.headroom >= 0 ? `${Math.round(account.headroom)}% headroom` : 'Usage not loaded yet');
+      || (account.active ? 'New sessions use this account' : !account.eligible ? 'Waiting for reset' : '');
     if (!problem && state.mode === 'live' && account.updated_at) view.hint.title = ago(account.updated_at);
   }
 }
@@ -356,9 +360,6 @@ function render(next) {
   $('lab').hidden = live;
   $('reset').title = $('reset').ariaLabel = live ? 'Refresh usage' : 'Reset sample accounts';
   $('add').hidden = !live;
-  $('footnote').textContent = live ? 'Logins are saved encrypted on this PC only.' : 'Sample data. Start without --demo to use your real accounts.';
-  $('connection').textContent = 'Connected to local server';
-  $('connection-dot').classList.add('ready');
   if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
   $('auto-swap').checked = pendingPrefs?.autoSwap ?? state.autoSwap;
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
@@ -457,7 +458,6 @@ async function act(action, body = {}, el = null) {
 async function observe() {
   if (!token) {
     toast('Open the dashboard from the app to get its private local link.', 'error');
-    $('connection').textContent = 'Launch link needed';
     return;
   }
   let failures = 0;
@@ -470,10 +470,7 @@ async function observe() {
       failures = 0;
     } catch {
       if (stopped) return;
-      $('connection-dot').classList.remove('ready');
-      $('connection').textContent = 'Reconnecting…';
       if (++failures >= 3) {
-        $('connection').textContent = 'Disconnected';
         toast('The local server has stopped. Launch the app again to reconnect.', 'error');
         break;
       }
@@ -521,18 +518,6 @@ for (const item of document.querySelectorAll('[data-add]')) {
   item.addEventListener('click', () => { $('add-menu').hidden = true; act('add', { provider: item.dataset.add }); });
 }
 document.addEventListener('click', () => { $('add-menu').hidden = true; closeSubscriptionEditor(); });
-$('shutdown').addEventListener('click', async () => {
-  try {
-    await request('/api/shutdown', {});
-    stopped = true;
-    $('connection').textContent = 'Shut down';
-    $('connection-dot').classList.remove('ready');
-    $('status').textContent = 'Stopping local processes';
-    document.querySelectorAll('button,input,select').forEach(n => { n.disabled = true; });
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-});
 
 scheduleMinute();
 observe();

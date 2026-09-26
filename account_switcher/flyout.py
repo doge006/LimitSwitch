@@ -119,6 +119,77 @@ except (AttributeError, OSError):
     shcore = None
 
 
+# ---------- outside-click watcher (only while a popup is open) ----------
+WH_MOUSE_LL = 14
+PRESSES = {0x0201: "left", 0x0204: "right", 0x0207: "middle"}
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+_sig(user32.SetWindowsHookExW, H, ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD)
+_sig(user32.UnhookWindowsHookEx, wintypes.BOOL, H)
+_sig(user32.CallNextHookEx, LRESULT, H, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+
+class OutsideClicks:
+    """Low-level mouse hook, installed only while a popup is open: a press anywhere outside
+    the popup (the tray icon included) closes it immediately, without waiting for focus
+    changes or for the tray's own click notification, which can arrive late."""
+    hook = None
+    proc = None
+
+    @classmethod
+    def start(cls):
+        if cls.hook:
+            return
+        cls.proc = HOOKPROC(cls._on_mouse)
+        cls.hook = user32.SetWindowsHookExW(WH_MOUSE_LL, cls.proc, kernel32.GetModuleHandleW(None), 0)
+        if not cls.hook:
+            log.warning("mouse hook unavailable: %s", ctypes.get_last_error())
+
+    @classmethod
+    def stop(cls):
+        if cls.hook:
+            user32.UnhookWindowsHookEx(cls.hook)
+            cls.hook = None
+
+    @classmethod
+    def _on_mouse(cls, code, wparam, lparam):
+        try:
+            if code >= 0 and wparam in PRESSES:
+                info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                point = (info.pt.x, info.pt.y)
+                for popup in list(Popup._windows.values()):
+                    if not popup.contains(point):
+                        popup.outside_press(point, PRESSES[wparam])
+        except Exception:
+            log.exception("outside-click check failed")
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+
+# Windows' own hidden-icons popup (the ^ next to the clock): Windows 11 / Windows 10.
+OVERFLOW_CLASSES = ("TopLevelWindowForOverflowXamlIsland", "NotifyIconOverflowWindow")
+_sig(user32.FindWindowW, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
+_sig(user32.IsWindowVisible, wintypes.BOOL, wintypes.HWND)
+
+
+def dismiss_overflow():
+    """If our icon was clicked inside Windows' hidden-icons popup, close that popup so it
+    doesn't sit behind our panel and flash back to the front when the panel closes."""
+    for name in OVERFLOW_CLASSES:
+        hwnd = user32.FindWindowW(name, None)
+        if hwnd and user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 0)  # SW_HIDE
+
+
+def in_rect(rect, point):
+    return rect is not None and rect[0] <= point[0] < rect[2] and rect[1] <= point[1] < rect[3]
+
+
 def enable_dpi_awareness():
     """Per-monitor DPI awareness so the flyout is drawn sharp at 125/150/200 %."""
     try:
@@ -227,7 +298,28 @@ class Popup:
             user32.KillTimer(self.hwnd, TIMER_FX)  # nothing moving: no timer at all
         self.redraw(retarget=False)
 
+    opener = "left"          # mouse button on the tray icon that opens this popup
+    icon_box = None          # screen rect of the tray icon (or around the click that opened us)
+    suppress_until = 0.0     # ignore the tray's own notification for a press we already handled
+
+    def contains(self, point):
+        """Is a screen point on the visible panel (not its shadow)?"""
+        x = (point[0] - self.x) / self.scale
+        y = (point[1] - self.y) / self.scale
+        return panel_contains(x, y, self.size[0] / self.scale, self.size[1] / self.scale)
+
+    def outside_press(self, point, button):
+        on_icon = in_rect(self.icon_box, point)
+        if on_icon and button == self.opener:
+            self.suppress_until = time.monotonic() + 2.5  # its notification may come late
+        if self.closing or (getattr(self, "pinned", False) and not on_icon):
+            return
+        self.close()
+
     def toggle(self):
+        if time.monotonic() < self.suppress_until:
+            self.suppress_until = 0.0  # this is the notification for the press that closed us
+            return
         if self.hwnd and not self.closing:
             self.close()
         elif time.monotonic() - self.closed_at > 0.3:  # ignore the click that just dismissed it
@@ -239,6 +331,7 @@ class Popup:
         self._register()
         self.hover = self.pressed = None
         self.prepare()
+        dismiss_overflow()
         self.fx = {k: v for k, v in self.fx_targets().items() if k[0] != "hover"}
         self.fx_anims = {}
         image, self.hits = self.render(None)
@@ -261,6 +354,7 @@ class Popup:
         self._push(image, 0)
         user32.ShowWindow(self.hwnd, SW_SHOWNA)
         user32.SetForegroundWindow(self.hwnd)  # so clicking elsewhere deactivates and closes it
+        OutsideClicks.start()
         if self.minute_ticks:
             user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self._animate(0.0, 1.0, 0.17)
@@ -438,6 +532,7 @@ class Popup:
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
             if not Popup._windows:
+                OutsideClicks.stop()
                 self.tray.popup_visible(False)
         self.anim, self.tracking, self.closing = None, False, False
         self.fx_anims = {}
@@ -484,6 +579,8 @@ class Flyout(Popup):
         self.tray.poke()  # fetch fresh usage if the numbers are older than a minute
         rect = icon_rect(getattr(self.tray, "icon", None))
         self.anchor = ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) if rect else cursor()
+        ax, ay = self.anchor
+        self.icon_box = (rect.left, rect.top, rect.right, rect.bottom) if rect else (ax - 20, ay - 20, ax + 20, ay + 20)
         self.monitor, self.work, self.scale = monitor_at(*self.anchor)
 
     def position(self, width, height):
@@ -566,9 +663,14 @@ class TrayMenu(Popup):
                      {"action": "add:codex", "label": "Add Codex account"}]
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
+    opener = "right"
+
     def prepare(self):
         self.point = cursor()
         self.monitor, self.work, self.scale = monitor_at(*self.point)
+        rect = icon_rect(getattr(self.tray, "icon", None))
+        px, py = self.point
+        self.icon_box = (rect.left, rect.top, rect.right, rect.bottom) if rect else (px - 20, py - 20, px + 20, py + 20)
 
     def position(self, width, height):
         return place_menu(self.point, self.monitor, self.work, width, height, self.scale)
@@ -611,11 +713,18 @@ def tray_icon_class():
                 self.popups[1].close()
                 self.popups[0].toggle()
             elif self.popups and lparam in (WM_LBUTTONUP, 0x0203):  # release / double-click: handled on press
-                pass
+                # Windows grants foreground rights on the release; claim them now so the panel
+                # is really active (and the hidden-icons popup gets out of the way).
+                flyout = self.popups[0]
+                if flyout.hwnd and not flyout.closing:
+                    dismiss_overflow()
+                    user32.SetForegroundWindow(flyout.hwnd)
             elif self.popups and lparam == 0x0205:  # WM_RBUTTONUP
                 if not self.popups[0].pinned:
                     self.popups[0].close()
                 self.popups[1].toggle()
+                if self.popups[1].hwnd:
+                    user32.SetForegroundWindow(self.popups[1].hwnd)
             else:
                 super()._on_notify(wparam, lparam)
 

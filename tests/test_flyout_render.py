@@ -104,6 +104,16 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertEqual([a for _, a in hits], ["panel", "toggle:afk"])
         self.assertEqual(image.getpixel((0, 0))[3], 0)
 
+    def test_limit_reached_row_is_greyed_out(self):
+        state = self.controller.snapshot()
+        normal, _ = fr.render(state)
+        state["accounts"][1]["eligible"] = False
+        greyed, _ = fr.render(state)
+        # The row's text gets darker: compare the brightest pixel in that row's name area.
+        row = (fr.MARGIN + 20, fr.MARGIN + 54 + 30 + fr.ROW_H + 8, fr.MARGIN + 200, fr.MARGIN + 54 + 30 + fr.ROW_H + 26)
+        bright = lambda img: max(sum(p[:3]) for p in img.crop(row).getdata())
+        self.assertLess(bright(greyed), bright(normal) * 0.7)
+
 
 if __name__ == "__main__":
     unittest.main()

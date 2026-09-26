@@ -193,6 +193,21 @@ def targets(state, hover=None):
     return fx
 
 
+DIM = 0.45
+
+
+def dim_row(layout, marks):
+    """Fade everything drawn for one row (limit reached)."""
+    shapes, texts, _ = marks
+    for i in range(shapes, len(layout.shapes)):
+        op = list(layout.shapes[i])
+        op[-1] = fade(op[-1], DIM)
+        layout.shapes[i] = tuple(op)
+    for i in range(texts, len(layout.texts)):
+        x, y, value, size, bold, fill, anchor = layout.texts[i]
+        layout.texts[i] = (x, y, value, size, bold, fade(fill, DIM), anchor)
+
+
 def build(state, hover=None, pending=None, pinned=False, fx=None):
     """Lay out the flyout. Returns (layout, panel_height). Coordinates exclude MARGIN.
 
@@ -243,6 +258,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
         for account in accounts:
             key = "swap:" + account["id"]
             top = y
+            marks = (len(L.shapes), len(L.texts), len(L.images))
             switchable = account["eligible"] and not account["active"] and not busy and not pending
             act = fx.get(("active", account["id"]), 0.0)
             hov = h(key) if switchable else 0.0
@@ -312,6 +328,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None):
                         L.text(bar_x, ly + 14, "in " + until(window["resetsAt"]), 10, FAINT)
             if switchable:
                 L.hit(8, top, W - 16, ROW_H, key)
+            if not account["eligible"]:
+                dim_row(L, marks)  # greyed out, like the full view
             y += ROW_H + 2
 
     # Footer: switches and quit, PowerToys-style strip.
@@ -423,6 +441,10 @@ def paint(layout, width, height, scale):
         panel.paste(icon, (round((M + x) * scale), round((M + y) * scale)), icon)
     draw = ImageDraw.Draw(panel, "RGBA")
     for x, y, value, size, bold, fill, anchor in layout.texts:
+        if len(fill) == 4 and fill[3] < 255:
+            # Pillow ignores the ink's alpha for text, so fade by mixing with the panel colour.
+            t = fill[3] / 255
+            fill = tuple(round(BG[i] * (1 - t) + fill[i] * t) for i in range(3)) + (255,)
         draw.text(((M + x) * scale, (M + y) * scale), value, font=font(size, bold, scale), fill=fill, anchor=anchor)
     panel = panel.convert("RGBA")
     panel.putalpha(mask)

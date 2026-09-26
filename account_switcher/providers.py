@@ -142,6 +142,32 @@ def subscription_from(data):
     return found, ends
 
 
+def banked_resets(body):
+    """A count of saved/banked limit resets, if the usage response reports one (best effort)."""
+    found = None
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                k = str(key).lower()
+                is_count = isinstance(value, int) and not isinstance(value, bool)
+                if is_count and "reset" in k and any(w in k for w in ("bank", "available", "remaining", "count", "saved", "credit")):
+                    found = value if found is None else max(found, value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
+def with_resets(credits, body):
+    resets = banked_resets(body)
+    if resets is None:
+        return credits
+    return dict(credits or {"kind": "none", "enabled": False}, resets=resets)
+
+
 def _plan_name(raw):
     names = {"max": "Max", "pro": "Pro", "plus": "Plus", "team": "Team", "enterprise": "Enterprise",
              "business": "Business", "free": "Free", "prolite": "Pro Lite", "edu": "Edu"}
@@ -219,7 +245,8 @@ class Claude:
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
                                                   "User-Agent": "account-switcher"})
-        self.last_credits = self.credits(body or {})
+        self.last_credits = with_resets(self.credits(body or {}), body or {})
+        self.last_fields = key_paths(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
 
     def refresh(self, secret):
@@ -346,7 +373,8 @@ class Codex:
             body = self._usage(tokens)
         claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}
         plan = _plan_name(body.get("plan_type") or claims.get("chatgpt_plan_type"))
-        self.last_credits = self.credits(body)
+        self.last_credits = with_resets(self.credits(body), body)
+        self.last_fields = key_paths(body)
         return self.windows(body), plan, updated
 
     @staticmethod
@@ -421,7 +449,9 @@ class Codex:
             accounts = (body or {}).get("accounts") if isinstance(body, dict) else None
             account = accounts.get(tokens.get("account_id") or "") if isinstance(accounts, dict) else None
             source = account if isinstance(account, dict) else (body or {})
-            api_at, ends = subscription_from(source.get("entitlement", source) if isinstance(source, dict) else {})
+            # Read the whole account entry: the period end sits in "entitlement" but the
+            # renew/cancel flag can live beside it (e.g. last_active_subscription.will_renew).
+            api_at, ends = subscription_from(source if isinstance(source, dict) else {})
             at = api_at or at
             paths += key_paths(body or {})
         except ProviderError:
