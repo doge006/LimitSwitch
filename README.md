@@ -25,6 +25,18 @@ For the default recovery experiment, install Claude Code and build the proxy usi
 
 The proxy and client start only on Run and stop on Stop. The fixture uses dummy accounts and local upstreams, with coding tools disabled. It never loads existing client credentials. `--simulator` bypasses the compiled proxy; running its recovery experiment still requires the Claude CLI.
 
+## Updating from GitHub
+
+Double-click `Update.cmd` (or run it from a terminal) to download the latest version into this folder. It runs once and exits: it fetches from GitHub, fast-forwards the checkout, reinstalls Python requirements if they changed, and, if Account Switcher is running, closes it cleanly and starts it again on the new version.
+
+```powershell
+.\Update.cmd                                           # update the current branch
+.\Update.cmd -Branch claude/pensive-brahmagupta-cufhuf # switch to and update another branch
+.\Update.cmd -Force                                    # update even with local edits (saved to git stash / a backup branch first)
+```
+
+It needs git (`winget install --id Git.Git -e`). A folder downloaded as a ZIP is converted into a git checkout on first run; git-ignored files such as the built proxy are kept. Nothing is installed as a service or scheduled.
+
 ## Cloud sessions / Linux
 
 This repository contains both modified upstream sources as ordinary folders. No submodules or private machine paths are required for core/Web development.
@@ -51,6 +63,8 @@ The latest UI pass passed 25 tests, native smoke checks and programmatic popup r
 The Claude fixture demonstrates terminal quota failure followed by opt-in Continue within the same session. It does not guarantee word-exact continuation, and Claude may omit incomplete assistant output. The reserve account is deliberately failed and restored in the fixture to let native retries settle.
 
 A 10-second idle sample with both native views open measured 58.82 MiB working set, 32.82 MiB private memory and 0 CPU seconds. Browser/client/proxy costs are separate. GPU use is unmeasured. The original 30 MB target remains unmet.
+
+See `docs/REVIEW.md` for the latest review and priorities.
 
 ## Source map
 

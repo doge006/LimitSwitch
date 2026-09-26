@@ -1,5 +1,5 @@
 import unittest
-from account_switcher.core import Recovery, Router, demo_accounts
+from account_switcher.core import Account, Recovery, Router, demo_accounts
 
 
 class RoutingTests(unittest.TestCase):
@@ -25,6 +25,20 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNone(router.fallback("claude"))
         with self.assertRaises(ValueError):
             router.swap("claude-a")
+
+
+    def test_fallback_prefers_most_headroom(self):
+        router = Router(demo_accounts() + [
+            Account(
+                "claude-c", "claude", "Claude · Third", 95, 10, 0, 0)])
+        router.exhaust(router.current("claude"))
+        self.assertEqual(router.fallback("claude").id, "claude-b")
+
+    def test_windows_include_model_caps(self):
+        account = demo_accounts()[0]
+        labels = [w["label"] for w in account.windows()]
+        self.assertEqual(labels[:2], ["5-hour", "Weekly"])
+        self.assertIn("Weekly · Fable", labels)
 
 
 class RecoveryTests(unittest.TestCase):

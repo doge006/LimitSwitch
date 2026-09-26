@@ -24,6 +24,7 @@ class Controller:
         self.operations = threading.Lock()
         self.revision = 0
         self.log = deque(maxlen=150)
+        self.log_total = 0
         self.output = ""
         self.status = "Ready"
         self.pending = False
@@ -35,27 +36,36 @@ class Controller:
         # Listing accounts and keeping a tray icon available should not start
         # the Go proxy or an official client. Start inference only on Run.
         self.url = None
+        # Callables invoked (from any thread) after every state change, so
+        # native views can redraw on demand instead of polling.
+        self.listeners = []
 
     def notify(self, kind, value):
         with self.condition:
             if kind == "log":
-                self.log.append(str(value))
+                self.log_total += 1
+                self.log.append({"id": self.log_total, "at": time.time(), "text": str(value)})
             elif kind == "text":
                 self.output = (self.output + str(value))[-24000:]
             elif kind == "state":
                 self.status = value
             elif kind == "result":
-                self.log.append(f"Turn {'failed' if value['failed'] else 'completed'} · session {str(value['session_id'])[:8]}")
+                self.log_total += 1
+                self.log.append({"id": self.log_total, "at": time.time(),
+                                 "text": f"Turn {'failed' if value['failed'] else 'completed'} · session {str(value['session_id'])[:8]}"})
                 if value["failed"]:
                     self.output = (self.output + "\n\n[Response interrupted. Waiting for recovery.]\n\n")[-24000:]
             self.revision += 1
             self.condition.notify_all()
+        for listener in list(self.listeners):
+            listener()
 
     def snapshot(self):
         with self.condition:
             return {
                 "revision": self.revision,
-                "accounts": [dict(asdict(a), active=self.gateway.router.active[a.provider] == a.id, eligible=a.eligible) for a in self.gateway.router.accounts],
+                "accounts": [dict(asdict(a), active=self.gateway.router.active[a.provider] == a.id,
+                                  eligible=a.eligible, windows=a.windows()) for a in self.gateway.router.accounts],
                 "autoSwap": self.gateway.router.auto_swap, "afk": self.afk,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
@@ -147,6 +157,8 @@ class Controller:
         with self.condition:
             self.closed = True
             self.condition.notify_all()
+        for listener in list(self.listeners):
+            listener()
         with self.operations:
             self.stop_session()
             self.gateway.close()
@@ -254,15 +266,36 @@ def make_server(controller, port=0, idle_seconds=90):
     return server
 
 
+def write_url_file(path, url):
+    """Record the tokenised launch URL so a local script can request a clean shutdown."""
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(url, encoding="utf-8")
+
+
+def clear_url_file(path, url):
+    """Remove the launch URL on exit, unless a newer instance has replaced it."""
+    try:
+        target = Path(path) if path else None
+        if target and target.read_text(encoding="utf-8") == url:
+            target.unlink()
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--simulator", action="store_true", help="Use lightweight routing simulation instead of the compiled proxy")
     parser.add_argument("--idle-seconds", type=int, default=90)
+    parser.add_argument("--url-file", help="Write the private launch URL here (used by the update script)")
     args = parser.parse_args()
     controller = Controller(args.simulator)
     server = make_server(controller, args.port, args.idle_seconds)
+    write_url_file(args.url_file, server.launch_url)
     print(server.launch_url, flush=True)
     if not args.no_browser:
         webbrowser.open(server.launch_url)
@@ -273,6 +306,7 @@ def main():
     finally:
         controller.close()
         server.server_close()
+        clear_url_file(args.url_file, server.launch_url)
 
 
 if __name__ == "__main__":
