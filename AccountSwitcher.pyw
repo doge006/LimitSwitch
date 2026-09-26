@@ -28,6 +28,11 @@ def report(text):
                        check=False)
 
 
+if sys.platform != "win32" and sys.stderr is not None:
+    import faulthandler
+    import signal
+    faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1: where is it stuck?
+
 try:
     from account_switcher.tray import main
     main(["--quiet", "--url-file", os.path.join(root, ".runtime", "tray.url"), *sys.argv[1:]])

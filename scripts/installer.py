@@ -240,6 +240,17 @@ def started(seconds=20):
     return False
 
 
+def dump_stuck():
+    """A copy that is running but never got ready: have it write where it is stuck to app.log."""
+    if WINDOWS:
+        return
+    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw"], capture_output=True, text=True)
+    for pid in done.stdout.split():
+        subprocess.run(["kill", "-USR1", pid], check=False)
+        say(f"(still running as process {pid}; its stack follows)", "warn")
+    time.sleep(1)
+
+
 def start():
     if MAC:
         subprocess.run(["open", str(MAC_APP)], check=False)
@@ -279,8 +290,9 @@ def main(argv=None):
         windows_shortcut() if WINDOWS else mac_app()
         if not args.no_launch:
             start()
-            if not started():
+            if not started(45 if MAC else 20):
                 say("Account Switcher didn't start. The error:", "error")
+                dump_stuck()
                 try:
                     print("\n".join(log_path().read_text(encoding="utf-8").splitlines()[-25:]))
                 except OSError:
