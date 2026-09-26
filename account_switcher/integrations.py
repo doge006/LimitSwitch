@@ -289,8 +289,11 @@ def _set_launch_agent(enabled):
     script = Path(__file__).resolve().parent.parent / "AccountSwitcher.pyw"
     arguments = [str(python), str(script)]
     app = os.environ.get("ACCOUNT_SWITCHER_APP")
-    if app and (Path(app) / "Contents" / "MacOS" / "AccountSwitcher").exists():
-        arguments = [str(Path(app) / "Contents" / "MacOS" / "AccountSwitcher"), "--at-login"]  # as the app
+    if app:  # started as the app: log in as the app (its launcher, quietly)
+        for name in ("Account Switcher", "AccountSwitcher"):
+            if (Path(app) / "Contents" / "MacOS" / name).exists():
+                arguments = [str(Path(app) / "Contents" / "MacOS" / name), "--at-login"]
+                break
     plist = {"Label": LAUNCH_AGENT, "ProgramArguments": arguments, "RunAtLoad": True,
              "ProcessType": "Interactive", "WorkingDirectory": str(script.parent)}
     from .vault import data_dir

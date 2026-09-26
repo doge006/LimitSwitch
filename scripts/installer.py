@@ -159,47 +159,68 @@ def mac_app():
     build_mac_app(MAC_APP)
 
 
-def framework_interpreter():
-    """Python's app binary (Python.app/Contents/MacOS/Python) behind .venv, on the framework
-    builds from python.org and Homebrew; None on other builds."""
-    if not venv_python().exists():
-        return None
-    done = subprocess.run([str(venv_python()), "-c", "import os, sys; print(os.path.join(sys.base_prefix, "
-                           "'Resources', 'Python.app', 'Contents', 'MacOS', 'Python'))"], capture_output=True, text=True)
-    path = Path(done.stdout.strip()) if done.returncode == 0 else None
-    return path if path and path.is_file() else None
+def compile_launcher(target):
+    """Build the app's own executable (scripts/mac_launcher.c), which runs Python inside its
+    process. Needs clang (Apple's command line tools) and a Python with its headers, as
+    python.org and Homebrew have. Returns False when it can't be built."""
+    clang = shutil.which("clang")
+    if not clang or not venv_python().exists():
+        return False
+    query = ("import json, os, sys, sysconfig; v = sysconfig.get_config_var; framework = os.path.join(sys.base_prefix, 'Python'); "
+             "print(json.dumps({'include': sysconfig.get_path('include'), 'lib': framework if os.path.isfile(framework) "
+             "else os.path.join(v('LIBDIR') or '', 'libpython' + (v('LDVERSION') or '') + '.dylib')}))")
+    done = subprocess.run([str(venv_python()), "-c", query], capture_output=True, text=True)
+    try:
+        paths = json.loads(done.stdout)
+    except ValueError:
+        return False
+    if not (Path(paths["include"]) / "Python.h").exists() or not Path(paths["lib"]).is_file():
+        return False
+
+    def text(value):
+        return json.dumps(str(value))  # a C string literal
+
+    build = subprocess.run([clang, "-O2", "-Wall", "-o", str(target), str(ROOT / "scripts" / "mac_launcher.c"),
+                            "-I", paths["include"], paths["lib"],
+                            f"-DACCOUNT_SWITCHER_VENV_PYTHON={text(venv_python())}",
+                            f"-DACCOUNT_SWITCHER_SCRIPT={text(ROOT / 'AccountSwitcher.pyw')}",
+                            f"-DACCOUNT_SWITCHER_LOG={text(log_path())}"], capture_output=True, text=True)
+    if build.returncode != 0:
+        say("Couldn't build the app launcher (using a script instead):\n" + (build.stderr or "").strip()[-600:], "warn")
+        return False
+    return True
 
 
 def build_mac_app(app):
     contents = app / "Contents"
-    (contents / "MacOS").mkdir(parents=True, exist_ok=True)
+    macos = contents / "MacOS"
+    macos.mkdir(parents=True, exist_ok=True)
     (contents / "Resources").mkdir(parents=True, exist_ok=True)
+    log_path().parent.mkdir(parents=True, exist_ok=True)
+    # macOS 26 gives menu bar space only when the running program is the bundle's own
+    # executable: a script that replaces itself with Python gets an icon of height 0. So the
+    # executable is a small native launcher running Python in-process (as py2app apps do).
+    native = macos / "Account Switcher"
+    built = compile_launcher(native)
+    if not built and native.exists():
+        native.unlink()
     plist = {"CFBundleName": APP_NAME, "CFBundleDisplayName": APP_NAME, "CFBundleIdentifier": "com.accountswitcher.app",
-             "CFBundleExecutable": "AccountSwitcher", "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
-             "CFBundleShortVersionString": "1.0", "LSUIElement": True, "LSMinimumSystemVersion": "11.0",
-             "NSHighResolutionCapable": True,
-             # The launcher is a script, which macOS would otherwise run under Rosetta on Apple
-             # silicon, and the .venv's native libraries can't load there.
+             "CFBundleExecutable": native.name if built else "AccountSwitcher", "CFBundleIconFile": "AppIcon",
+             "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0", "LSUIElement": True,
+             "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
+             # Never Rosetta on Apple silicon: the .venv's native libraries can't load there.
              "LSArchitecturePriority": ["arm64", "x86_64"], "LSRequiresNativeExecution": True}
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
-    macos = contents / "MacOS"
-    # The process should be Account Switcher itself, not "Python": macOS 26 only gives menu bar
-    # space to an app it can identify (and it names the app in Activity Monitor, the Dock and
-    # the menu bar settings). So the bundle carries its own copy of Python's small app binary,
-    # which runs the .venv through __PYVENV_LAUNCHER__, the way Python's own launcher does.
-    interpreter = framework_interpreter()
-    binary = macos / "Account Switcher"
-    if interpreter:
-        shutil.copy2(interpreter, binary)
-    elif binary.exists():
-        binary.unlink()
+    # The script: the login item's entry point, and the app itself when the launcher couldn't
+    # be built. It starts Python as a child process rather than replacing itself with it,
+    # which macOS 26 would again leave without a menu bar icon.
     launcher = macos / "AccountSwitcher"
     log = log_path()
-    run = '"$HERE/Account Switcher"' if interpreter else '"$PY"'
     launcher.write_text(f"""#!/bin/sh
-# Starts Account Switcher from its folder. Anything it prints goes to app.log.
+# Starts Account Switcher. Anything it prints goes to app.log.
 # Opened by the user it shows its window; --at-login (the login item) starts it quietly.
 HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$HERE/Account Switcher" ]; then exec "$HERE/Account Switcher" "$@"; fi
 PY="{venv_python()}"
 LOG="{log}"
 SHOW=--show
@@ -208,13 +229,10 @@ if [ ! -x "$PY" ]; then
   /usr/bin/osascript -e 'display alert "Account Switcher did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
   exit 1
 fi
-mkdir -p "$(dirname "$LOG")"
-export __PYVENV_LAUNCHER__="$PY"
 export ACCOUNT_SWITCHER_APP="$(cd "$HERE/../.." && pwd)"
-if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
-  exec /usr/bin/arch -arm64 {run} "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
-fi
-exec {run} "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
+ARCH=""
+if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then ARCH="/usr/bin/arch -arm64"; fi
+$ARCH "$PY" "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
