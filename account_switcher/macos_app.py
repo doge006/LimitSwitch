@@ -19,7 +19,8 @@ from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSMinYEdge, NSOffState, NSOnState,
                     NSPopover, NSPopoverBehaviorTransient, NSStatusBar, NSVariableStatusItemLength, NSViewController,
                     NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskFullSizeContentView,
-                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
+                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled,
+                    NSWindowOcclusionStateVisible)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
 from WebKit import WKWebView, WKWebViewConfiguration
@@ -118,10 +119,24 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.popover.setAnimates_(True)
         self.popover.setDelegate_(self)
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the dashboard's Quit
+        self.server.show = lambda: AppHelper.callAfter(self.showFullView_, None)  # opened again (Spotlight, Finder)
         self.refresh()
         threading.Thread(target=self.watch, daemon=True).start()
         if self.open_now:
             self.showFullView_(None)
+        AppHelper.callLater(3, self.check_icon)
+
+    @objc.python_method
+    def check_icon(self):
+        """With a full menu bar (the notch on MacBooks), macOS hides status items that don't fit,
+        without telling the app. Then open the window instead, so the app isn't invisible."""
+        window = self.item.button().window()
+        if (window is None or not NSMenu.menuBarVisible()  # an auto-hidden menu bar hides it too
+                or window.occlusionState() & NSWindowOcclusionStateVisible):
+            return
+        self.showFullView_(None)
+        notify(APP, "The menu bar is full, so macOS is hiding the icon. Quit another menu bar app, "
+                    "or hold ⌘ and drag icons to make room.")
 
     def popoverShouldDetach_(self, _popover):
         return True  # drag it off the menu bar to keep it open as a floating panel

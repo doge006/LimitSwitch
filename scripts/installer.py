@@ -171,7 +171,7 @@ def build_mac_app(app):
     launcher = contents / "MacOS" / "AccountSwitcher"
     log = log_path()
     launcher.write_text(f"""#!/bin/sh
-# Starts Account Switcher from its folder. Anything it prints goes to app.log.
+# Starts Account Switcher from its folder (--show: opened by the user, so show the window). Anything it prints goes to app.log.
 PY="{venv_python()}"
 LOG="{log}"
 if [ ! -x "$PY" ]; then
@@ -179,7 +179,7 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 mkdir -p "$(dirname "$LOG")"
-exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" "$@" >>"$LOG" 2>&1
+exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"

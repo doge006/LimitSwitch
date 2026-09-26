@@ -318,6 +318,12 @@ def make_server(controller, port=0, idle_seconds=90):
                     # A host (the tray) can supply its own quit; otherwise stop serving.
                     threading.Thread(target=getattr(self.server, "quit", self.server.shutdown), daemon=True).start()
                     return
+                if self.path == "/api/show":  # the app was opened again: the host shows its window
+                    show = getattr(self.server, "show", None)
+                    if show:
+                        show()
+                    self.respond(200, {"shown": bool(show)})
+                    return
                 if not self.path.startswith("/api/"):
                     raise ValueError("Unknown route")
                 controller.action(self.path[5:], body)
