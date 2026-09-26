@@ -127,10 +127,10 @@ class Controller:
                 if self.session and (self.session.busy or self.session.recovering) and action not in {"stop"}:
                     raise RuntimeError("Wait for the current turn to settle or stop it")
                 if action == "preferences":
-                    if self.live:
-                        self.gateway.set_afk(body["afk"])
-                    self.afk = body["afk"]
                     self.gateway.router.auto_swap = body["autoSwap"]
+                    if self.live:
+                        self.gateway.set_afk(body["afk"])  # also updates the Claude hook
+                    self.afk = body["afk"]
                     if self.session:
                         self.session.recovery.enable(self.afk)
                     if hasattr(self.gateway, "apply_preferences"):
