@@ -713,11 +713,7 @@ class TrayMenu(Popup):
                 {"action": "full", "label": "Full view"},
                 "-",
                 {"action": "toggle:autoSwap", "label": "Auto swap", "checked": state["autoSwap"], "enabled": not state["busy"]},
-                {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]},
-                {"action": "refresh", "label": "Refresh usage"}]
-        if state.get("mode") == "live":
-            rows += ["-", {"action": "add:claude", "label": "Add Claude account"},
-                     {"action": "add:codex", "label": "Add Codex account"}]
+                {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]}]
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
     opener = "right"
@@ -738,6 +734,14 @@ class TrayMenu(Popup):
 
     def activate(self, action):
         tray = self.tray
+        if action.startswith("toggle:"):  # toggles keep the menu open, showing the new state
+            key = action[7:]
+            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
+            prefs[key] = not prefs[key]
+            tray.act("preferences", prefs)
+            tray.state = tray.controller.snapshot()
+            self.redraw()
+            return
         self.close()
         if action == "panel":
             tray.flyout.open()
@@ -746,15 +750,6 @@ class TrayMenu(Popup):
         elif action == "quit":
             self._destroy()
             tray.quit()
-        elif action == "refresh":
-            tray.act("reset", {})
-        elif action.startswith("toggle:"):
-            key = action[7:]
-            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
-            prefs[key] = not prefs[key]
-            tray.act("preferences", prefs)
-        elif action.startswith("add:"):
-            tray.act("add", {"provider": action[4:]})
 
 
 def tray_icon_class():

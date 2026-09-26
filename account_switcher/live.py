@@ -188,7 +188,6 @@ class LiveAccounts:
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
-            self.record_values(meta["provider"] + "-usage", getattr(provider, "last_scalars", None))
             self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
@@ -227,21 +226,6 @@ class LiveAccounts:
         known[provider] = sorted(set(known.get(provider, [])) | set(paths))[:400]
         try:
             atomic_write(path, json.dumps(known, indent=2).encode())
-        except OSError:
-            pass
-
-    def record_values(self, name, values):
-        """Plain values of code-named usage fields (flags/counts only) for identifying features."""
-        if not values:
-            return
-        path = self.vault.root / "usage-values.json"
-        try:
-            known = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            known = {}
-        known[name] = values
-        try:
-            atomic_write(path, json.dumps(known, indent=2, default=str).encode())
         except OSError:
             pass
 

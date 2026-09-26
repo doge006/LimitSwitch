@@ -380,9 +380,6 @@ class LiveTests(unittest.TestCase):
         self.assertLess(a.subscription["at"], time.time() + 32 * 86400)
         self.assertEqual(x.subscription["ends"], True)
         self.assertEqual(x.credits["resets"], 1)
-        values = json.loads((self.vault.root / "usage-values.json").read_text())
-        self.assertNotIn("email", values["codex-usage"])
-        self.assertNotIn("user_id", values["codex-usage"])
         # A cancelled Claude subscription, picked up because the detection logic changed.
         self.api.claude_profile["at-a"]["organization"]["subscription_status"] = "canceled"
         m.meta["accounts"][a.id]["subscriptionLogic"] = 1
