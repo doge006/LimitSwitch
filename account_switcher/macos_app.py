@@ -137,10 +137,12 @@ class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
         except (RuntimeError, ValueError):
             pass
 
+    @objc.python_method
     def resize_panel(self, height):
         if height > 0:
             self.popover.setContentSize_(NSMakeSize(PANEL_WIDTH, min(height, 760)))
 
+    @objc.python_method
     def build_menu(self):
         state = self.controller.snapshot()
         menu = NSMenu.alloc().init()
@@ -169,6 +171,7 @@ class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
     def toggleAfk_(self, _sender):
         self.set_pref("afk")
 
+    @objc.python_method
     def set_pref(self, key):
         state = self.controller.snapshot()
         prefs = {"autoSwap": state["autoSwap"], "afk": state["afk"]}
@@ -197,6 +200,7 @@ class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
         self.full_window.makeKeyAndOrderFront_(None)
 
     # ---------- state ----------
+    @objc.python_method
     def refresh(self):
         state = self.state = self.controller.snapshot()
         level = tray_level(state)
@@ -211,6 +215,7 @@ class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
         self.item.button().setToolTip_(tooltip(state))
         self.announce_failovers(state)
 
+    @objc.python_method
     def announce_failovers(self, state):
         for account in active_accounts(state):
             provider, previous = account["provider"], self.last_active.get(account["provider"])
@@ -224,6 +229,7 @@ class MenuBarApp(NSObject, protocols=[objc.protocolNamed("NSPopoverDelegate")]):
             reason = f"{short_name(old)} hit its limit. " if old and not old["eligible"] else ""
             notify(f"{dict(PROVIDERS)[provider]} switched accounts", f"{reason}Now using {short_name(account)}.")
 
+    @objc.python_method
     def watch(self):
         """Block until the controller changes, then refresh on the main thread."""
         seen = self.state["revision"]

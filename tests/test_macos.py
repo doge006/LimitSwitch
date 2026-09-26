@@ -113,3 +113,21 @@ class MacVaultCipherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MacAppShapeTests(unittest.TestCase):
+    """PyObjC can't be imported here, so check the rule that made the app exit at launch:
+    a method on an Objective-C class becomes a selector, one argument per underscore,
+    unless it is marked @objc.python_method."""
+
+    def test_objc_method_names_match_their_arguments(self):
+        import ast
+        tree = ast.parse((Path(__file__).resolve().parent.parent / "account_switcher" / "macos_app.py").read_text())
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            if not any(getattr(b, "id", "") == "NSObject" for b in cls.bases):
+                continue
+            for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef)):
+                if any("python_method" in ast.dump(d) for d in fn.decorator_list):
+                    continue
+                args = len(fn.args.args) - 1
+                self.assertEqual(fn.name.count("_"), args, f"{cls.name}.{fn.name}: {args} argument(s)")
