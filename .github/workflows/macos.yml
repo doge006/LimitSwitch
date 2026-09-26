@@ -29,58 +29,6 @@ jobs:
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
           /tmp/probe/bin/python .github/mac_smoke.py
-      - name: Control (a minimal native menu bar app)
-        if: always()
-        run: |
-          app=/tmp/StatusProbe.app; mkdir -p $app/Contents/MacOS
-          swiftc -O .github/probe/StatusProbe.swift -o $app/Contents/MacOS/StatusProbe
-          /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.example.statusprobe" -c "Add :CFBundleExecutable string StatusProbe" -c "Add :LSUIElement bool true" $app/Contents/Info.plist
-          codesign --force --sign - $app
-          open -W -o /tmp/probe.out $app &
-          sleep 6
-          cat /tmp/probe.out || true
-          mkdir -p shots; screencapture -x shots/5-probe.png
-          pkill StatusProbe || true
-      - name: Does a script launcher break the menu bar icon? (Swift control)
-        if: always()
-        run: |
-          for mode in exec child; do
-            app=/tmp/Probe-$mode.app; mkdir -p $app/Contents/MacOS
-            swiftc -O .github/probe/StatusProbe.swift -o $app/Contents/MacOS/StatusProbe
-            printf '#!/bin/sh\n' > $app/Contents/MacOS/launch
-            if [ $mode = exec ]; then echo 'exec "$(dirname "$0")/StatusProbe"' >> $app/Contents/MacOS/launch
-            else echo '"$(dirname "$0")/StatusProbe"' >> $app/Contents/MacOS/launch; fi
-            chmod +x $app/Contents/MacOS/launch
-            /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.example.probe$mode" -c "Add :CFBundleExecutable string launch" -c "Add :LSUIElement bool true" $app/Contents/Info.plist
-            codesign --force --deep --sign - $app
-            open -o /tmp/probe-$mode.out $app
-            sleep 6
-            echo "$mode: $(cat /tmp/probe-$mode.out)"
-            screencapture -x shots/6-probe-$mode.png
-            pkill StatusProbe || true
-            sleep 1
-          done
-      - name: The real app started from the shell
-        if: always()
-        run: |
-          LOG="$HOME/Library/Application Support/AccountSwitcher/app.log"
-          : > "$LOG"
-          ACCOUNT_SWITCHER_DEBUG=1 .venv/bin/python3 AccountSwitcher.pyw --show 2>>"$LOG" &
-          sleep 12
-          cat "$LOG"
-          python3 - <<'PY'
-          import json
-          from urllib.request import ProxyHandler, Request, build_opener
-          base, token = open(".runtime/tray.url").read().strip().split("/#token=")
-          build_opener(ProxyHandler({})).open(Request(base + "/api/shutdown", b"{}", {"Authorization": "Bearer " + token, "Content-Type": "application/json"}), timeout=5)
-          PY
-          sleep 3
-      - name: Menu bar details
-        if: always()
-        run: |
-          defaults read org.python.python 2>/dev/null | grep -i -A2 statusitem || true
-          defaults read com.apple.controlcenter 2>/dev/null | head -40 || true
-          ls ~/Library/Group\ Containers/group.com.apple.controlcenter* 2>/dev/null || true
       - name: Keep screenshots
         if: always()
         run: |

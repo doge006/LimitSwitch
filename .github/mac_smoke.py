@@ -87,6 +87,10 @@ check(names.endswith("Account Switcher"), "the process is Account Switcher, not 
 opened_by_install = [w for w in found if w["layer"] == 0 and w["onscreen"]]
 check(bool(opened_by_install), "opening the app shows its window")
 
+if not status and size:  # macOS 26: take the place from the app's own report (AppKit y is from the bottom)
+    screen_h = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.height
+    x, y, w, h = (float(size.group(i)) for i in range(1, 5))
+    status = [{"x": x, "y": screen_h - y - h, "w": w, "h": h}]
 if status:
     item = status[0]
     shot("2-menubar.png", (max(0, int(item["x"]) - 300), 0, 600, 40))
