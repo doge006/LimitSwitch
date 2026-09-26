@@ -250,17 +250,18 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(sent[0], {"type": "message", "role": "assistant",
                                    "content": [{"type": "output_text", "text": reasoning["summary"][0]["text"]}]})
 
-    def test_planned_switch_waits_for_the_next_turn(self):
-        self.upstream.usage["at-x"] = 97
-        post(self.url, {"input": [{"type": "message", "role": "user", "content": "task"}]})  # reports 97%
-        self.assertEqual(self.manager.active["codex"], self.x)
-        mid_turn = [{"type": "message", "role": "user", "content": "task"},
-                    {"type": "function_call", "call_id": "c", "name": "shell", "arguments": "{}"},
-                    {"type": "function_call_output", "call_id": "c", "output": "ok"}]
-        post(self.url, {"input": mid_turn})
-        self.assertEqual(self.upstream.seen[-1]["token"], "at-x")  # never in the middle of a turn
+    def test_uses_the_account_fully_and_moves_between_turns(self):
+        self.upstream.usage["at-x"] = 99
+        start = [{"type": "message", "role": "user", "content": "task"}]
+        post(self.url, {"input": start})
+        post(self.url, {"input": start + [{"type": "message", "role": "user", "content": "next"}]})
+        self.assertEqual(self.upstream.seen[-1]["token"], "at-x")  # 99%: keep using it
+        self.upstream.usage["at-x"] = 100
+        mid_turn = start + [{"type": "function_call", "call_id": "c", "name": "shell", "arguments": "{}"},
+                            {"type": "function_call_output", "call_id": "c", "output": "ok"}]
+        post(self.url, {"input": mid_turn})  # reports 100%
         post(self.url, {"input": mid_turn + [{"type": "message", "role": "user", "content": "next"}]})
-        self.assertEqual(self.upstream.seen[-1]["token"], "at-y")
+        self.assertEqual(self.upstream.seen[-1]["token"], "at-y")  # used up: the new turn starts on y
         self.assertEqual(self.manager.active["codex"], self.y)
 
     def test_thread_state_survives_a_restart(self):
@@ -372,6 +373,7 @@ class AfkTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_off_means_leave_the_session_alone(self):
+        self.manager.meta["autoSwap"] = False
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
 
     def test_switches_and_continues(self):
@@ -440,12 +442,22 @@ class AfkTests(unittest.TestCase):
             server.server_close()
 
 
-class ClaudeAheadOfLimitTests(AfkTests):
-    def test_switches_before_the_limit(self):
-        self.api.claude_usage["at-a"] = claude_usage(96, 50)
+class ClaudeFullUseTests(AfkTests):
+    def test_keeps_using_an_account_until_its_limit(self):
+        self.api.claude_usage["at-a"] = claude_usage(99, 50)
         self.manager.refresh(force=True)
-        self.assertEqual(self.manager.auto_swap(), [self.manager.find("claude", "uuid-b")])
-        self.assertEqual(self.claude.read_live().email, "b@example.com")
+        self.assertEqual(self.manager.auto_swap(), [])
+        self.assertEqual(self.claude.read_live().email, "a@example.com")
+
+    def test_auto_swap_without_afk_switches_but_does_not_continue(self):
+        self.manager.meta["autoSwap"] = True
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
+        self.assertEqual(self.claude.read_live().email, "b@example.com")  # the next message uses b
+
+    def test_neither_on_leaves_everything_alone(self):
+        self.manager.meta["autoSwap"] = False
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
+        self.assertEqual(self.claude.read_live().email, "a@example.com")
 
 
 @unittest.skipIf(sys.platform == "win32", "stand-in CLI is a POSIX shell script")

@@ -216,7 +216,8 @@ class Integrations:
     # ---------- AFK ----------
     def apply_afk(self):
         try:
-            if self.manager.meta.get("afk"):
+            # The hook reports Claude's usage limits: needed for Auto swap and for AFK.
+            if self.manager.meta.get("afk") or self.manager.meta.get("autoSwap"):
                 claude_hooks.install(self.state_file, self.claude_root)
             else:
                 claude_hooks.uninstall(self.claude_root)

@@ -22,12 +22,12 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
     - *Compaction checkpoints:* written out as plain text by their own account right after compaction (kept DPAPI-encrypted), and substituted in Codex's own plain-text checkpoint form. Until then, a thread with an untranslated checkpoint stays on that account while it has quota.
     - *Reasoning:* replaced by its plain-text summary.
     - *Anything else the service rejects:* one retry without unknown items.
-  - Planned switches (95% used, from the `x-codex-*-used-percent` response headers) happen only when a request starts a new turn.
+  - Accounts are used to 100%. A request that hits the limit is retried on the next account. If the `x-codex-*-used-percent` response headers already show the account used up, the next turn starts on the next account instead.
   - It answers Codex's WebSocket attempt with 426, which makes Codex use HTTPS right away with no warning.
   - The config also disables request compression (so bodies are readable) and `daemon_auto_start`. Codex's shared background server opens console windows on Windows (openai/codex#44768, #48074). Sessions attach to a running one even with auto-start off, and it keeps its startup settings, which would bypass the router. So the app stops a running one once no session log has been written for 90 seconds (`CodexServerWatch`).
   - Quit writes the chosen account into `auth.json` and restores the config exactly (tagged lines).
 - **AFK:**
-  - *Claude Code:* a `StopFailure` hook with `asyncRewake` (`claude_hooks.py`, `afk_hook.py`), installed while AFK is on. On `rate_limit` it asks the app, which switches to an account with headroom or says how long to wait for a reset. The hook then exits 2, which wakes the session with a continuation note. There's a loop guard of three continues per ten minutes per session.
+  - *Claude Code:* a `StopFailure` hook with `asyncRewake` (`claude_hooks.py`, `afk_hook.py`), installed while Auto swap or AFK is on. On `rate_limit` it asks the app, which switches to an account with headroom (Auto swap). With AFK on, it also continues the session: the hook exits 2 with a continuation note (or first waits for the earliest reset when no account has room). There's a loop guard of three continues per ten minutes per session.
   - *Codex:* the router's transparent retry. The session never sees the limit.
 - **Auto swap:** moves to the account with the most headroom when the account in use hits a limit (from usage checks, or at once when a client reports it).
 - **Start with Windows:** on by default (a `HKCU\...\Run` entry for `AccountSwitcher.pyw`), because Codex's requests go through the app.

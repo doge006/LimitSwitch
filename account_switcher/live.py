@@ -44,8 +44,6 @@ SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
-SOFT_LIMIT = 95             # switch ahead of the limit once an account has used this much
-MIN_ROOM = 10               # ...to an account with at least this much left
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
@@ -401,24 +399,20 @@ class LiveAccounts:
         self.swap(best.id, reason="auto")
         return best.id
 
-    @staticmethod
-    def _nearly_out(account):
-        return account.headroom >= 0 and 100 - account.headroom >= SOFT_LIMIT
-
     def usable(self, account_id):
         account = next((a for a in self.accounts() if a.id == account_id), None)
         return account is not None and account.eligible and not account.status
 
     def turn_start(self, account_id):
-        """A routed session starts a new turn: the moment to move off an account that is
-        nearly out, since nothing from the turn in progress has to travel."""
+        """A routed session starts a new turn. If its account is already used up, move now
+        (between turns) rather than letting the first request of the turn fail."""
         if not self.meta["autoSwap"]:
             return account_id
         account = next((a for a in self.accounts() if a.id == account_id), None)
-        if account is None or (account.eligible and not self._nearly_out(account)):
+        if account is None or account.eligible:
             return account_id
         best = self._best_other(account.provider, account_id)
-        if best is None or best.headroom < MIN_ROOM or (account.eligible and best.headroom <= account.headroom):
+        if best is None:
             return account_id
         self.swap(best.id, reason="auto")
         return best.id
@@ -455,8 +449,11 @@ class LiveAccounts:
 
     # ---------- AFK (Claude Code) ----------
     def claude_limit(self, session):
-        """Called by the StopFailure hook when a Claude turn ended on a usage limit."""
-        if not self.meta.get("afk"):
+        """Called by the StopFailure hook when a Claude turn ended on a usage limit.
+        Auto swap moves to another account now; AFK also continues the session (or waits
+        for a reset when no account has room)."""
+        afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
+        if not (afk or auto):
             return {"action": "stop"}
         current = self.active.get("claude")
         if current is None:
@@ -468,12 +465,16 @@ class LiveAccounts:
             return {"action": "wait", "seconds": 900}
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
         self.on_limit()
-        best = self._best_other("claude", current, allow_unknown=True)
+        best = self._best_other("claude", current, allow_unknown=True) if auto else None
         if best is not None:
             self.swap(best.id, reason="auto")
+            if not afk:
+                return {"action": "stop"}  # the next message goes to the new account
             state["continues"].append(now)
             state["waiting"] = False
             return {"action": "continue", "message": AFK_NOTE}
+        if not afk:
+            return {"action": "stop"}
         account = next((a for a in self.accounts() if a.id == current), None)
         if state["waiting"] and account is not None and all(w["used"] < 100 for w in account.windows()):
             state["continues"].append(now)
@@ -486,24 +487,16 @@ class LiveAccounts:
         return {"action": "wait", "seconds": max(60, min(wait, 6 * 3600))}
 
     def auto_swap(self):
-        """Move off an account that has hit a limit, and (Claude) off one that is about to.
-        Codex's planned switches happen in the router, between turns (turn_start)."""
+        """Move off an account that has used up a limit, to the one with the most headroom."""
         if not self.meta["autoSwap"]:
             return []
         moved = []
         accounts = self.accounts()
         for name in self.providers:
             current = next((a for a in accounts if a.id == self.active.get(name)), None)
-            if current is None:
+            if current is None or current.eligible:
                 continue
-            if current.eligible:
-                if name in self.routed or not self._nearly_out(current):
-                    continue
-                best = self._best_other(name, current.id)
-                if best is None or best.headroom < MIN_ROOM or best.headroom <= current.headroom:
-                    continue
-            else:
-                best = self._best_other(name, current.id)
+            best = self._best_other(name, current.id)
             if best is None:
                 continue
             try:
