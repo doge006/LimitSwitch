@@ -340,6 +340,25 @@ class LiveTests(unittest.TestCase):
         m.refresh(force=True)
         self.assertEqual(len([c for c in self.api.calls if c == "/claude/profile"]), profile_calls)  # once a day
 
+    def test_codex_cancelled_subscription_and_banked_resets(self):
+        from account_switcher.providers import banked_resets
+        m = self.manager()
+        m.sync_live()
+        end = time.time() + 9 * 86400
+        # Cancellation flag beside the entitlement, as ChatGPT's account check can report it.
+        self.api.codex_check["at-x"] = {"accounts": {"acct-x": {
+            "entitlement": {"expires_at": end, "has_active_subscription": True},
+            "last_active_subscription": {"will_renew": False}}}}
+        self.api.codex_usage["at-x"] = dict(codex_usage(5, 5), rate_limit=dict(codex_usage(5, 5)["rate_limit"], available_resets=2))
+        m.refresh(force=True)
+        x = self.by_email(m, "x@example.com")
+        self.assertEqual(x.subscription["ends"], True)
+        self.assertAlmostEqual(x.subscription["at"], end, delta=1)
+        self.assertEqual(x.credits["resets"], 2)
+        self.assertIsNone(banked_resets({"rate_limit": {"reset_at": 1, "limit_window_seconds": 5}}))
+        fields = json.loads((self.vault.root / "subscription-fields.json").read_text())
+        self.assertIn("rate_limit.available_resets", fields["codex-usage"])
+
 
 if __name__ == "__main__":
     unittest.main()

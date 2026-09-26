@@ -186,6 +186,7 @@ class LiveAccounts:
                 secret = updated
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
+            self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
             self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
