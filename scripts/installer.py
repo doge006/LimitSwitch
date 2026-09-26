@@ -192,6 +192,21 @@ def stop_running():
     return True
 
 
+def log_path():
+    if MAC:
+        return Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AccountSwitcher" / "app.log"
+
+
+def started(seconds=20):
+    """True once the app is up (it writes its private URL when its server is running)."""
+    for _ in range(seconds * 4):
+        if (RUNTIME / "tray.url").exists():
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def start():
     if MAC:
         subprocess.run(["open", str(MAC_APP)], check=False)
@@ -231,6 +246,14 @@ def main(argv=None):
         windows_shortcut() if WINDOWS else mac_app()
         if not args.no_launch:
             start()
+            if not started():
+                say("Account Switcher didn't start. The error:", "error")
+                try:
+                    print("\n".join(log_path().read_text(encoding="utf-8").splitlines()[-25:]))
+                except OSError:
+                    python = venv_python()
+                    say(f"(no log yet) To see it, run:  \"{python}\" \"{ROOT / 'AccountSwitcher.pyw'}\"", "warn")
+                return 1
             say("Restarted Account Switcher." if was_running else "Started Account Switcher.", "ok")
         say("Done." + (" It's in the Start menu." if WINDOWS else " It's in your menu bar and in ~/Applications."), "ok")
         return 0
