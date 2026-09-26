@@ -13,6 +13,8 @@ python -m pip install -r requirements-native.txt
 .\Launch.cmd --demo     # sample accounts + the Recovery lab, no real logins touched
 ```
 
+**Start menu shortcut:** double-click `Add-Shortcut.cmd` to add **Account Switcher** to the Start menu with the app's icon; from there you can also pin it to Start or the taskbar. Add `-Desktop` to put one on the desktop too, and `-Remove` to take them away. The shortcut starts the app without a console window. If the app is already running, it opens the full view instead.
+
 ## Your accounts
 
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
