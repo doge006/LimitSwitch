@@ -26,7 +26,6 @@ def point_at_fake(claude, codex, api):
     """Never talk to the real providers from tests."""
     claude.USAGE_URL, claude.TOKEN_URL, claude.PROFILE_URL = api.base + "/claude/usage", api.base + "/claude/token", api.base + "/claude/profile"
     codex.USAGE_URL, codex.TOKEN_URL, codex.CHECK_URL = api.base + "/codex/usage", api.base + "/codex/token", api.base + "/codex/check"
-    codex.CLI = None  # and never touch a real Codex background server
 
 
 class FakeAPI:
@@ -208,44 +207,6 @@ class LiveTests(unittest.TestCase):
         b = self.by_email(m, "b@example.com")
         self.assertEqual(b.status, "")
         self.assertEqual(self.vault.read_secret(b.id)["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b+")
-
-    @unittest.skipIf(sys.platform == "win32", "stand-in CLI is a POSIX shell script")
-    def test_switch_restarts_a_running_codex_background_server(self):
-        root = Path(self.tmp.name)
-        calls = root / "codex-calls.log"
-        fake = root / "codex"
-        fake.write_text("#!/bin/sh\n"
-                        f"echo \"$3 $CODEX_HOME\" >> '{calls}'\n"
-                        "if [ \"$3\" = version ]; then\n"
-                        "  [ -f \"$0.running\" ] || exit 1\n"
-                        "  echo '{\"status\":\"running\",\"appServerVersion\":\"1.0.0\"}'\n"
-                        "fi\n")
-        fake.chmod(0o755)
-        codex = self.providers["codex"]
-        codex.CLI = str(fake)
-        m = self.manager()
-        m.sync_live()
-        codex_login(self.home, "acct-y", "y@example.com", "at-y", "rt-y")
-        m.sync_live()
-        x = self.by_email(m, "x@example.com")
-
-        def switch_and_wait(account_id, expected_lines):
-            m.swap(account_id)
-            deadline = time.time() + 5
-            while time.time() < deadline and len(calls.read_text().splitlines() if calls.exists() else []) < expected_lines:
-                time.sleep(0.02)
-            time.sleep(0.1)
-            return calls.read_text().splitlines()
-
-        # No background server running: only asked, nothing restarted.
-        self.assertEqual([line.split()[0] for line in switch_and_wait(x.id, 1)], ["version"])
-        # Running: restarted after the switch, against the same Codex home.
-        Path(str(fake) + ".running").touch()
-        y = self.by_email(m, "y@example.com")
-        lines = switch_and_wait(y.id, 3)
-        self.assertEqual([line.split()[0] for line in lines], ["version", "version", "restart"])
-        self.assertTrue(lines[-1].endswith(str(codex.codex_home)))
-        self.assertIn(("log", "Restarted Codex's background server so sessions use the new account"), self.logs)
 
     def test_auto_swap_moves_to_most_headroom(self):
         m = self.manager()

@@ -12,15 +12,30 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 - **Import:** the live Claude Code and Codex logins are imported automatically. Add account runs `claude auth login` / `codex login` in an isolated folder.
 - **Storage:** logins are saved DPAPI-encrypted under `%LOCALAPPDATA%\AccountSwitcher`, with metadata and cached usage kept separately and no secrets in them.
 - **Usage:** read from `api.anthropic.com/api/oauth/usage` (5-hour, weekly, per-model weekly) and `chatgpt.com/backend-api/wham/usage` (5-hour / weekly / 30-day). It refreshes every 5 minutes (1 minute near a limit), on panel/full-view open, and on request.
-- **Tokens:** tokens are refreshed only for accounts that aren't in use; the live login belongs to the official client.
-- **Switching:** saves the outgoing tokens, writes the target's login, and verifies it (rolling back on mismatch). MCP credentials and other config keys are preserved.
-- **Auto swap:** moves to the account with the most headroom when the account in use hits a limit, with a notification.
+- **Tokens:** the tokens in the official login files are never rotated here; the clients own them. Other saved accounts are refreshed here when needed.
+- **Claude switching:** saves the outgoing tokens, writes the target's login, and verifies it (rolling back on mismatch). MCP credentials and other config keys are preserved. A running Claude Code notices the changed file and uses the new login on its next request (checked in its source: it compares the credentials file's modification time before its token check).
+- **Codex routing** (`codex_proxy.py`, `codex_config.py`, `integrations.py`):
+  - While the app runs, `~/.codex/config.toml` points `openai_base_url` at a loopback router. The path carries a random secret; port and secret stay the same across restarts.
+  - The router adds the chosen account's token and workspace header, so switching applies to every running session's next request.
+  - On `usage_limit_reached` it retries the same request on the account with the most headroom (Auto swap).
+  - It drops encrypted reasoning/compaction items produced by another account. If the service still rejects encrypted content, it retries once without items it hasn't seen.
+  - It answers Codex's WebSocket attempt with 426, which makes Codex use HTTPS right away with no warning.
+  - The config also disables request compression (so bodies are readable) and `daemon_auto_start`. Codex's shared background server opens console windows on Windows (openai/codex#44768, #48074), and it isn't needed for switching any more.
+  - Quit writes the chosen account into `auth.json` and restores the config exactly (tagged lines).
+- **AFK:**
+  - *Claude Code:* a `StopFailure` hook with `asyncRewake` (`claude_hooks.py`, `afk_hook.py`), installed while AFK is on. On `rate_limit` it asks the app, which switches to an account with headroom or says how long to wait for a reset. The hook then exits 2, which wakes the session with a continuation note. There's a loop guard of three continues per ten minutes per session.
+  - *Codex:* the router's transparent retry. The session never sees the limit.
+- **Auto swap:** moves to the account with the most headroom when the account in use hits a limit (from usage checks, or at once when a client reports it).
+- **Start with Windows:** on by default (a `HKCU\...\Run` entry for `AccountSwitcher.pyw`), because Codex's requests go through the app.
 - **Remove:** removes a saved account; the account in use can't be removed.
 
 ## Limits
 
-- Running sessions keep their account until restarted; switching affects new sessions.
-- AFK continuation of a real interactive session isn't built. It needs a ConPTY supervisor or Claude Code hooks. The Recovery lab demonstrates it in structured mode only.
+- Dropping another account's encrypted items loses that hidden reasoning. After a remote compaction made on another account, the model also loses the compacted summary. Visible messages and tool results are kept.
+- If every account of a provider is out of quota:
+  - *Codex:* gets the usage-limit error as usual.
+  - *Claude Code:* the AFK hook waits for the earliest reset (up to 6 hours) and then continues.
+- Quitting the app while Codex sessions are open: they retry the router's port until the app is back. A session started while the app is closed uses the account written into `auth.json`.
 - If an account is also signed in elsewhere and refreshes its token there, the saved copy expires ("Sign in again").
 - Real provider endpoints can't be reached from the development container. They follow the vendored Codex Vitals clients and are exercised against a fake API; first real use needs a check on your PC.
 
@@ -30,7 +45,17 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 ## Evidence
 
-- 52 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
+- Real Codex CLI 0.157.1 against the router and a fake ChatGPT backend:
+  - its WebSocket attempt got 426 and it used HTTPS without a warning;
+  - a usage limit on account x was retried on y, and `codex exec` printed y's answer with exit 0;
+  - after switching back to x, `codex exec resume` replayed y's encrypted reasoning, the router dropped it, and x answered.
+- Real Claude Code 2.1.283 against a fake Anthropic API:
+  - a usage limit fired `StopFailure` with `rate_limit`;
+  - the `asyncRewake` hook woke the session and a new request went out.
+
+  (The sandbox injects its own Claude login, so the credentials-file reload itself was checked in Claude Code's code rather than end to end.)
+
+- 81 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, the Codex router, config edits, the AFK hook and its decisions, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
 - The same suites pass under Wine with Windows Python 3.12, including real DPAPI encryption.
 - An interactive Wine harness with the Win32 tray in real-account mode passes: left-click panel; click-to-switch shows "Switching…" then rewrites the login files; pinned panel is draggable and ignores click-away; unpinned closes; the right-click menu toggles AFK and opens the panel.
 - Idle tray process in real-account mode, 60 s sample on Linux: 32 MB RSS, 1 wake-up, 0 ms CPU. Usage checks are scheduled per account (5 min in use, 30 min otherwise).

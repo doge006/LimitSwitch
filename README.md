@@ -18,8 +18,15 @@ python -m pip install -r requirements-native.txt
 ## Your accounts
 
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
-- **Switching:** switching saves the outgoing account's newest tokens, then writes the chosen account's login into the files the official clients read (`~/.claude/.credentials.json` + `~/.claude.json`, `~/.codex/auth.json`). **New sessions use it right away. Sessions already running keep the account they started with until you restart them.**
-- **Codex's background server:** current Codex CLIs run one shared background server that every session connects to, and it survives `/exit`. It reads the login once and keeps it in memory, so after a Codex switch the app restarts it with `codex app-server daemon restart`, but only if one is running. Codex saves its open threads first and restores them after, including a turn that was cut off. Open Codex sessions then reconnect and continue on the new account.
+- **Switching:** click an account and every session moves to it, including sessions that are already open. Nothing needs restarting.
+  - *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request.
+  - *Codex:* while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. A switch applies to every open session on its next request.
+  - *On quit:* the app writes the chosen Codex account into `~/.codex/auth.json` and puts `~/.codex/config.toml` back exactly as it was, so Codex works without the app too.
+- **What the app changes in `~/.codex/config.toml` while it runs** (every line is tagged `# account-switcher` and removed again on quit):
+  - `openai_base_url` points at the router;
+  - `enable_request_compression = false`, so the router can read requests;
+  - `daemon_auto_start = false`. Codex's shared background server opens a console window for every command on Windows ([openai/codex#44768](https://github.com/openai/codex/issues/44768), [#48074](https://github.com/openai/codex/issues/48074)). Each Codex session runs in its own terminal again, and nothing flashes.
+- **Start with Windows:** on by default, since Codex's requests go through the app.
 - **Usage:** read from each provider's own usage endpoint:
   - Claude: 5-hour, weekly and per-model weekly caps, plus extra usage.
   - Codex: 5-hour, weekly or 30-day windows, plus credits.
@@ -38,7 +45,14 @@ python -m pip install -r requirements-native.txt
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
 - **Usage limit resets:** banked resets are shown for Codex, which reports them. Claude's usage response doesn't include its free resets (they appear only in Claude's settings), so none are shown for Claude.
-- **Auto swap:** when the account in use hits a limit, Auto swap moves to the account with the most headroom and shows a notification. AFK continuation of an interrupted session is still demo-only (see below).
+- **Auto swap:** when the account in use hits a limit, it moves to the account with the most headroom.
+  - *Codex:* the request that hit the limit is simply sent again on the next account, so the session never sees an error.
+  - *Encrypted data:* Codex replays encrypted reasoning that only the account which produced it can read. The router drops those items before they reach another account, so a thread carries on instead of failing with "encrypted content could not be verified".
+- **AFK:** while AFK is on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
+  - The app adds a `StopFailure` hook to `~/.claude/settings.json`; only its own entry is added, and it's removed when AFK is turned off.
+  - When the hook fires, the app switches to an account with room and Claude Code is told to continue where it left off.
+  - If no account has room, it waits for the earliest reset (up to 6 hours) and then continues.
+  - Codex needs no hook: its requests are retried on the next account automatically.
 - **Storage:** saved logins are encrypted with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\AccountSwitcher`. Nothing is sent anywhere except the providers' own usage and token endpoints.
 - **Token ownership:** each account should be managed from here only. If the same account is also signed in elsewhere and refreshes its token there, this copy expires and shows "Sign in again". The in-use account's token is never refreshed by this app; that stays with Claude Code / Codex.
 
@@ -57,7 +71,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 - **Hover:** the tooltip shows the account in use per provider and what's left.
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
-- **Quit** stops everything the app started. Nothing runs at sign-in.
+- **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); to turn that off, delete the `AccountSwitcher` entry under Task Manager → Startup apps.
 
 Resource use: one Python process that sleeps until an account is due for a check or something changes. The panel and menu are native windows drawn with Pillow; they exist only while open. Measured idle over 60 s in real-account mode (Linux, virtual display): 32 MB, 1 wake-up, 0 ms CPU. The full-view window costs memory only while it's open.
 
@@ -73,7 +87,7 @@ That's two tiny requests in total.
 - **For the cleanest result:** pause any running Codex/Claude session and close the ChatGPT app first, so nothing writes the old login back mid-test. The script warns if one is open.
 - **"Model not supported":** if your CLI's default model isn't offered on your plan (for example a model only available with an API key), the prompt comes back that way. That still proves the switch: you were signed in and reached the provider as that account, and the report says so. Add `--model <name>` to run the prompt with a model your plan offers. A report without tokens is saved in `%LOCALAPPDATA%\AccountSwitcher`.
 
-What "seamless" covers today: after a switch, **new** Codex/Claude sessions and new CLI runs use the new account immediately. A session that's already running keeps its account until it's restarted.
+`Verify-Switch.cmd` checks the login-file switch (what Codex uses while the app is closed, and what Claude Code always uses). With the app running, Codex switching goes through the router instead. That path is covered by `tests/test_routing.py` and was checked with the real Codex CLI.
 
 ## Updating
 
@@ -108,7 +122,10 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 
 - `account_switcher/tray.py`: the app (tray icon, notifications).
 - `account_switcher/flyout.py` + `flyout_render.py`: panel and right-click menu (Win32 layered windows + Pillow drawing).
-- `account_switcher/live.py`: real accounts (import, usage refresh, switching, auto swap, add/remove).
+- `account_switcher/live.py`: real accounts (import, usage refresh, switching, auto swap, AFK decisions, add/remove).
+- `account_switcher/codex_proxy.py` + `codex_config.py`: the Codex router and the config lines that point Codex at it.
+- `account_switcher/claude_hooks.py` + `afk_hook.py`: the Claude Code AFK hook.
+- `account_switcher/integrations.py`: sets all of that up while the app runs and undoes it on quit.
 - `account_switcher/providers.py`: Claude Code / Codex login files and usage APIs.
 - `account_switcher/vault.py`: DPAPI-encrypted storage.
 - `account_switcher/web.py` + `static/`: controller and full view.

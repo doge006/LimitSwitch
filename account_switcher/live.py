@@ -3,8 +3,13 @@
 How it works
 - Whatever Claude Code / Codex login is active on this PC is imported automatically, so
   signing in to another account (in the CLI, or via "Add account") adds it here.
-- Switching saves the outgoing account's latest tokens, then writes the chosen account's
-  login into the files the official clients read. New sessions use it right away.
+- Claude: switching saves the outgoing account's latest tokens, then writes the chosen
+  account's login into the files Claude Code reads; running sessions pick it up on their next
+  request. AFK: a StopFailure hook asks claude_limit() what to do when a turn hits a limit.
+- Codex: while the app runs, Codex sends its requests through the local router
+  (codex_proxy.py), so switching just changes the account the router uses; every session
+  follows on its next request, and a request that hits a usage limit is retried on another
+  account. When the app quits, the chosen account is written into ~/.codex/auth.json.
 - Usage is fetched from each provider's own usage endpoint (read-only; it does not use any
   quota). To stay well clear of the endpoints' rate limits, each account has its own schedule:
   the account in use every 5 minutes (2 when close to a limit), others every 30 minutes or
@@ -12,8 +17,9 @@ How it works
   requests are spaced out, and 429s back off exponentially (up to an hour).
 - Subscription renewal / end dates are checked at most once a day per account; a date you
   enter by hand always wins.
-- Token refresh is done here only for accounts that are *not* in use; the live account's
-  tokens belong to the official client, so they are never rotated behind its back.
+- Tokens in the official login files belong to the official clients and are never rotated
+  here. Other saved accounts are refreshed here when needed (for usage checks, and by the
+  Codex router just before their access token expires).
 """
 from dataclasses import asdict
 import json
@@ -28,7 +34,7 @@ import time
 import uuid
 
 from .core import Account, Router
-from .providers import PROVIDERS, ProviderError
+from .providers import PROVIDERS, ProviderError, _jwt_payload
 from .vault import Vault, atomic_write
 
 ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 300, 120, 1800
@@ -38,6 +44,8 @@ SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
+AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
+AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
 
 class LiveAccounts:
@@ -46,16 +54,21 @@ class LiveAccounts:
         self.vault = vault or Vault()
         self.providers = providers or {name: cls() for name, cls in PROVIDERS.items()}
         self.lock = threading.RLock()
-        self.restart_lock = threading.Lock()
         meta = self.vault.load_meta()
-        self.meta = {"accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True)}
+        self.meta = {"accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
+                     "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
+        self.live_ids = {}       # provider -> account in the official login file
+        self.routed = set()      # providers whose requests go through the local router
+        self.token_locks = {}
+        self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
         self.signatures = {}
         self.backoff = {}  # account id -> (monotonic time before which we do not call, failures)
         self.last_refresh = 0.0
         self.last_manual = 0.0
         self.spacing = SPACING
         self.on_new_account = lambda: None
+        self.on_limit = lambda: None   # a client reported a limit: fetch fresh usage soon
         self.logins = {}   # provider -> running login process info
 
     # ---------- account list ----------
@@ -91,10 +104,16 @@ class LiveAccounts:
                 self.signatures[name] = signature
                 login = provider.read_live()
                 if login is None:
-                    changed |= self.active.pop(name, None) is not None
+                    self.live_ids.pop(name, None)
+                    if name not in self.routed:
+                        changed |= self.active.pop(name, None) is not None
                     continue
                 account_id = self.adopt(name, login)
-                if self.active.get(name) != account_id:
+                previous, self.live_ids[name] = self.live_ids.get(name), account_id
+                # Routed: the router decides; only a different login in the file (the user
+                # signed in to another account) changes the account in use.
+                follow = name not in self.routed or previous != account_id or name not in self.active
+                if follow and self.active.get(name) != account_id:
                     self.active[name] = account_id
                     changed = True
             if changed:
@@ -145,14 +164,15 @@ class LiveAccounts:
                 if only is not None and i != only:
                     continue
                 is_active = i == self.active.get(m["provider"])
+                is_live = i == self.live_ids.get(m["provider"])
                 if max_age is not None:
                     due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
                 else:
                     due = 0.0 if (force or only) else self.due(i, m, is_active, now)
                 if due <= now:
-                    targets.append((i, dict(m), is_active))
+                    targets.append((i, dict(m), is_active, is_live))
         fetched = False
-        for account_id, meta, is_active in targets:
+        for account_id, meta, is_active, is_live in targets:
             until, failures = self.backoff.get(account_id, (0, 0))
             if until > clock:
                 continue
@@ -169,13 +189,14 @@ class LiveAccounts:
             fetched = True
             self._set(account_id, attemptedAt=time.time())
             try:
-                windows, plan, updated = provider.fetch(secret, allow_refresh=not is_active)
+                # Never rotate the tokens in the official login file: the client owns those.
+                windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live))
             except ProviderError as error:
                 if error.retry_after:  # rate limited: exponential backoff, honouring Retry-After
                     wait = min(MAX_BACKOFF, max(error.retry_after, 300 * 2 ** failures))
                     self.backoff[account_id] = (time.monotonic() + wait, failures + 1)
                 message = str(error)
-                if error.relogin and is_active:
+                if error.relogin and (is_active or is_live):
                     message = f"Waiting for {meta['provider'].title()} to refresh its login"
                 self._set(account_id, status=message)
                 continue
@@ -264,39 +285,158 @@ class LiveAccounts:
                 raise ValueError("Unknown account")
             name = target["provider"]
             provider = self.providers[name]
-            self.sync_live(force=True)
-            current = self.active.get(name)
-            if current == account_id:
-                return
-            secret = self.vault.read_secret(account_id)
-            if secret is None:
-                raise RuntimeError("This account's saved login is missing; sign in again")
-            # sync_live(force=True) just saved the outgoing account's newest tokens.
-            before = provider.read_live()
-            provider.write_live(secret)
-            after = provider.read_live()
-            if after is None or after.identity != target["identity"]:
-                if before is not None:
-                    provider.write_live(before.secret)  # put things back exactly as they were
-                raise RuntimeError("Switch could not be verified; your previous login was restored")
-            self.signatures[name] = provider.signature()
-            self.active[name] = account_id
-            self.save()
+            if name in self.routed:
+                if self.active.get(name) == account_id:
+                    return
+                if self.vault.read_secret(account_id) is None:
+                    raise RuntimeError("This account's saved login is missing; sign in again")
+                self.active[name] = account_id  # the router uses it from the next request on
+                self.meta["selected"][name] = account_id
+                self.save()
+            else:
+                self.sync_live(force=True)
+                current = self.active.get(name)
+                if current == account_id:
+                    return
+                secret = self.vault.read_secret(account_id)
+                if secret is None:
+                    raise RuntimeError("This account's saved login is missing; sign in again")
+                # sync_live(force=True) just saved the outgoing account's newest tokens.
+                before = provider.read_live()
+                provider.write_live(secret)
+                after = provider.read_live()
+                if after is None or after.identity != target["identity"]:
+                    if before is not None:
+                        provider.write_live(before.secret)  # put things back exactly as they were
+                    raise RuntimeError("Switch could not be verified; your previous login was restored")
+                self.signatures[name] = provider.signature()
+                self.active[name] = self.live_ids[name] = account_id
+                self.save()
+        if reason == "quiet":
+            return
         who = target.get("email") or target["identity"]
         self.notify("log", f"{name.title()} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
         self.notify("accounts", None)
-        if hasattr(provider, "after_switch"):
-            threading.Thread(target=self._after_switch, args=(provider,), daemon=True).start()
 
-    def _after_switch(self, provider):
-        """Let the provider's own background process pick up the new login (off the caller's thread)."""
-        with self.restart_lock:  # back-to-back switches restart one at a time, the last one winning
-            try:
-                note = provider.after_switch()
-            except Exception as error:  # never let this break switching
-                note = f"Couldn't refresh {provider.name.title()}'s background process: {error}"
-        if note:
-            self.notify("log", note)
+    # ---------- routing (Codex through the local router) ----------
+    def enable_routing(self, name):
+        with self.lock:
+            self.routed.add(name)
+            chosen = self.meta["selected"].get(name)
+            if chosen in self.meta["accounts"] and self.meta["accounts"][chosen]["provider"] == name:
+                self.active[name] = chosen
+            elif name in self.active:
+                self.meta["selected"][name] = self.active[name]
+            self.save()
+        self.notify("accounts", None)
+
+    def disable_routing(self, name):
+        """Stop routing; write the chosen account into the login file so Codex keeps using it."""
+        with self.lock:
+            chosen = self.active.get(name)
+            self.routed.discard(name)
+            self.sync_live(force=True)
+            if chosen and chosen != self.active.get(name) and chosen in self.meta["accounts"]:
+                try:
+                    self.swap(chosen, reason="quiet")
+                except (RuntimeError, ValueError, OSError):
+                    pass
+
+    def route(self, name):
+        with self.lock:
+            return self.active.get(name) if name in self.routed else None
+
+    def credentials(self, account_id):
+        """Current tokens for a routed account: the official login file's for the account it
+        holds (Codex keeps those fresh), our saved copy (refreshed here) for the others."""
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id)
+            live = account_id == self.live_ids.get(entry["provider"]) if entry else False
+        if entry is None:
+            raise ValueError("Unknown account")
+        provider = self.providers[entry["provider"]]
+        if live:
+            login = provider.read_live()
+            if login is not None and login.identity == entry["identity"]:
+                tokens = login.secret["auth"]["tokens"]
+                return tokens["access_token"], tokens.get("account_id")
+        with self.token_locks.setdefault(account_id, threading.Lock()):
+            secret = self.vault.read_secret(account_id)
+            if secret is None:
+                raise RuntimeError("Saved login missing")
+            tokens = secret["auth"]["tokens"]
+            expires = _jwt_payload(tokens.get("access_token")).get("exp")
+            if isinstance(expires, (int, float)) and expires - time.time() < 300:
+                secret = provider.refresh(secret)
+                self.vault.write_secret(account_id, secret)
+                tokens = secret["auth"]["tokens"]
+            return tokens["access_token"], tokens.get("account_id")
+
+    def limit_hit(self, account_id, resets_at=None):
+        """A routed request found this account out of quota. Mark it, and (with Auto swap)
+        move to the account with the most headroom. Returns the account to retry on, or None."""
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id)
+            if entry is None:
+                return None
+            name = entry["provider"]
+            if self.active.get(name) != account_id:
+                return self.active.get(name)  # a parallel request already moved on
+            usage = [dict(w) for w in entry.get("usage") or []]
+            window = next((w for w in usage if w["key"] == "five_hour"), None)
+            if window is None:
+                window = {"key": "five_hour", "label": "5-hour", "scope": "account"}
+                usage.insert(0, window)
+            window.update(used=100.0, resetsAt=float(resets_at) if resets_at else window.get("resetsAt"))
+            entry["usage"] = usage
+            auto = self.meta["autoSwap"]
+        self.on_limit()
+        best = self._best_other(name, account_id, allow_unknown=True) if auto else None
+        if best is None:
+            self.notify("accounts", None)
+            return None
+        self.swap(best.id, reason="auto")
+        return best.id
+
+    def _best_other(self, name, current, allow_unknown=False):
+        """The other account with the most headroom. allow_unknown also accepts accounts whose
+        usage has not been read yet (after the known ones): a client just hit a limit, and
+        trying one is better than stopping."""
+        candidates = [a for a in self.accounts() if a.provider == name and a.id != current
+                      and a.eligible and not a.status and (a.headroom > 0 or (allow_unknown and a.headroom < 0))]
+        return max(candidates, key=lambda a: a.headroom) if candidates else None
+
+    # ---------- AFK (Claude Code) ----------
+    def claude_limit(self, session):
+        """Called by the StopFailure hook when a Claude turn ended on a usage limit."""
+        if not self.meta.get("afk"):
+            return {"action": "stop"}
+        current = self.active.get("claude")
+        if current is None:
+            return {"action": "stop"}
+        now = time.time()
+        state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
+        state["continues"] = [t for t in state["continues"] if now - t < 600]
+        if len(state["continues"]) >= 3:  # something keeps failing: do not loop
+            return {"action": "wait", "seconds": 900}
+        self.refresh(only=current)  # fresh numbers for the account that just hit its limit
+        self.on_limit()
+        best = self._best_other("claude", current, allow_unknown=True)
+        if best is not None:
+            self.swap(best.id, reason="auto")
+            state["continues"].append(now)
+            state["waiting"] = False
+            return {"action": "continue", "message": AFK_NOTE}
+        account = next((a for a in self.accounts() if a.id == current), None)
+        if state["waiting"] and account is not None and all(w["used"] < 100 for w in account.windows()):
+            state["continues"].append(now)
+            state["waiting"] = False
+            return {"action": "continue", "message": AFK_RESUMED}
+        state["waiting"] = True
+        resets = [w["resetsAt"] for a in self.accounts() if a.provider == "claude"
+                  for w in a.windows() if w["used"] >= 100 and w.get("resetsAt")]
+        wait = min(resets) - now + 30 if resets else 900
+        return {"action": "wait", "seconds": max(60, min(wait, 6 * 3600))}
 
     def auto_swap(self):
         """If an account in use has hit a limit, move to the one with the most headroom."""
@@ -308,11 +448,9 @@ class LiveAccounts:
             current = next((a for a in accounts if a.id == self.active.get(name)), None)
             if current is None or current.eligible:
                 continue
-            candidates = [a for a in accounts if a.provider == name and a.id != current.id
-                          and a.eligible and a.headroom > 0 and not a.status]
-            if not candidates:
+            best = self._best_other(name, current.id)
+            if best is None:
                 continue
-            best = max(candidates, key=lambda a: a.headroom)
             try:
                 self.swap(best.id, reason="auto")
                 moved.append(best.id)
@@ -431,6 +569,8 @@ class LiveGateway:
     def __init__(self, notify, vault=None, providers=None, background=True):
         self.manager = LiveAccounts(notify, vault, providers)
         self.manager.on_new_account = lambda: self.wake.set() if hasattr(self, "wake") else None
+        self.manager.on_limit = lambda: self.wake.set() if hasattr(self, "wake") else None
+        self.integrations = None  # Codex router + Claude AFK hook, set up by the tray
         self.router = LiveRouter(self.manager)
         self.notify = notify
         self.quota_observed = False
@@ -476,6 +616,13 @@ class LiveGateway:
             self.manager.last_manual = time.monotonic()
             self.force = True
         self.wake.set()
+
+    def set_afk(self, enabled):
+        with self.manager.lock:
+            self.manager.meta["afk"] = bool(enabled)
+            self.manager.save()
+        if self.integrations:
+            self.integrations.apply_afk()
 
     def apply_preferences(self):
         if self.router.auto_swap:
