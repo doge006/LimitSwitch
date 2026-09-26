@@ -149,6 +149,20 @@ class TrayTests(unittest.TestCase):
         finally:
             self.server.shutdown()
 
+    def test_opening_again_shows_the_running_copy(self):
+        from account_switcher.tray import show_running
+        thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .1}, daemon=True)
+        thread.start()
+        try:
+            self.assertFalse(show_running(self.server.launch_url))  # no window of its own: use a browser
+            shown = threading.Event()
+            self.server.show = shown.set
+            self.assertTrue(show_running(self.server.launch_url))
+            self.assertTrue(shown.is_set())
+            self.assertFalse(show_running(self.server.launch_url.split("#")[0] + "#token=wrong"))
+        finally:
+            self.server.shutdown()
+
     def test_no_idle_threads_without_timeout(self):
         before = {t.name for t in threading.enumerate()}
         server = make_server(self.controller, idle_seconds=0)

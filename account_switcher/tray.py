@@ -124,6 +124,18 @@ def open_dashboard(url):
         webbrowser.open(url)
 
 
+def show_running(url):
+    """Ask the running copy to show its own window; False when it has none (open a browser)."""
+    try:
+        base, token = url.split("/#token=")
+        request = Request(base + "/api/show", data=b"{}", method="POST",
+                          headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        with _local.open(request, timeout=2) as response:
+            return bool(json.load(response).get("shown"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def existing_instance(url_file):
     """Launch URL of an already-running copy, or None."""
     try:
@@ -294,12 +306,14 @@ def main(argv=None):
     parser.add_argument("--simulator", action="store_true", help="Demo mode with a lightweight routing simulation instead of the compiled proxy")
     parser.add_argument("--url-file", help="Where the private dashboard URL is kept while running")
     parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the dashboard")
+    parser.add_argument("--show", action="store_true", help="Open the dashboard even with --quiet (opened by the user)")
     args = parser.parse_args(argv)
 
     if args.url_file:
         running = existing_instance(args.url_file)
         if running:  # second launch: just bring up the dashboard of the running copy
-            open_dashboard(running)
+            if not show_running(running):
+                open_dashboard(running)
             return
 
     if sys.platform == "win32":
@@ -326,9 +340,9 @@ def main(argv=None):
     try:
         if sys.platform == "darwin":
             from .macos_app import run  # menu bar app
-            run(controller, server, open_now=not args.quiet)
+            run(controller, server, open_now=args.show or not args.quiet)
         else:
-            Tray(controller, server).run(open_now=not args.quiet)
+            Tray(controller, server).run(open_now=args.show or not args.quiet)
     finally:
         if integrations:
             integrations.stop()  # Codex and Claude Code keep working without the app
