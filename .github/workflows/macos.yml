@@ -47,6 +47,21 @@ jobs:
           for v in symbol+popover symbol+window symbol+tooltip symbol+action symbol+menu+popover+window+tooltip+action; do
             .venv/bin/python3 .github/probe/pyprobe.py "$v" || echo "$v failed"
           done
+      - name: The real app started from the shell
+        if: always()
+        run: |
+          LOG="$HOME/Library/Application Support/AccountSwitcher/app.log"
+          : > "$LOG"
+          ACCOUNT_SWITCHER_DEBUG=1 .venv/bin/python3 AccountSwitcher.pyw --show 2>>"$LOG" &
+          sleep 12
+          cat "$LOG"
+          python3 - <<'PY'
+          import json
+          from urllib.request import ProxyHandler, Request, build_opener
+          base, token = open(".runtime/tray.url").read().strip().split("/#token=")
+          build_opener(ProxyHandler({})).open(Request(base + "/api/shutdown", b"{}", {"Authorization": "Bearer " + token, "Content-Type": "application/json"}), timeout=5)
+          PY
+          sleep 3
       - name: Menu bar details
         if: always()
         run: |
