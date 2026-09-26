@@ -6,8 +6,9 @@ failure/recovery experiments repeatable without touching subscription accounts.
 import json
 import secrets
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
+from .local_http import LocalServer
 from .core import Router, demo_accounts
 
 
@@ -140,7 +141,7 @@ class DemoGateway:
                 except (ConnectionError, OSError):
                     pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = LocalServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return f"http://127.0.0.1:{self.server.server_port}"

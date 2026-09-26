@@ -18,13 +18,15 @@ the app's encrypted store, so threads keep working across app restarts.
 """
 from collections import OrderedDict
 from hashlib import blake2b
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 import json
 import secrets
 import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, ProxyHandler
+
+from .local_http import LocalServer
 
 UPSTREAM = "https://chatgpt.com"
 DEFAULT_PORT = 47821
@@ -273,7 +275,7 @@ class CodexProxy:
 
         for port in [self.port] + list(range(self.port + 1, self.port + 20)):
             try:
-                self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+                self.server = LocalServer(("127.0.0.1", port), Handler)
                 break
             except OSError:
                 continue

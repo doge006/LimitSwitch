@@ -9,6 +9,7 @@
 - Notifications when Auto swap moves an account.
 No Dock icon (accessory app). Built on PyObjC (pyobjc-framework-Cocoa and -WebKit).
 """
+import os
 import subprocess
 import threading
 import time
@@ -108,9 +109,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
     def applicationDidFinishLaunching_(self, _note):
         NSApp.setMainMenu_(self.main_menu())
         icon = NSImage.alloc().initWithContentsOfFile_(str(ICON))
-        if icon is not None:
-            NSApp.setApplicationIconImage_(icon)  # Dock and ⌘-Tab while the window is open
+        self.icon = icon
         self.item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        self.item.setAutosaveName_("AccountSwitcher")  # macOS remembers its place and visibility by this
+        self.item.setVisible_(True)
         button = self.item.button()
         button.setTarget_(self)
         button.setAction_("statusClicked:")
@@ -134,6 +136,21 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         threading.Thread(target=self.watch, daemon=True).start()
         if self.open_now:
             self.showFullView_(None)
+        if os.environ.get("ACCOUNT_SWITCHER_DEBUG"):
+            AppHelper.callLater(3, self.describe_status_item)
+
+    @objc.python_method
+    def describe_status_item(self):
+        button = self.item.button()
+        window = button.window() if button is not None else None
+        frame = window.frame() if window is not None else None
+        log.warning("status item: visible=%s button=%s window=%s frame=%s onscreen=%s occlusion=%s level=%s number=%s",
+                    self.item.isVisible(), button is not None, window is not None,
+                    None if frame is None else (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height),
+                    None if window is None else window.isVisible(),
+                    None if window is None else window.occlusionState(),
+                    None if window is None else window.level(),
+                    None if window is None else window.windowNumber())
 
     @objc.python_method
     def main_menu(self):
@@ -263,6 +280,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
                 NSMakeRect(0, 0, 1180, 860), style, NSBackingStoreBuffered, False)
             window.setTitle_(APP)
             window.setTitlebarAppearsTransparent_(True)
+            window.setTitleVisibility_(1)  # NSWindowTitleHidden: the page has its own header
             window.setReleasedWhenClosed_(False)
             window.setMinSize_(NSMakeSize(720, 520))
             window.setContentView_(web_view(self.url, NSMakeRect(0, 0, 1180, 860)))
@@ -272,6 +290,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             self.full_window = window
         # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.
         NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        if self.icon is not None:
+            NSApp.setApplicationIconImage_(self.icon)  # the Dock would show Python's icon otherwise
         NSApp.activateIgnoringOtherApps_(True)
         self.full_window.makeKeyAndOrderFront_(None)
 

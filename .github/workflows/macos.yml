@@ -21,6 +21,7 @@ jobs:
       - name: Install (the same script users run)
         run: |
           mkdir -p ~/.codex
+          launchctl setenv ACCOUNT_SWITCHER_DEBUG 1
           sw_vers
           bash Install.command --skip-code
       - name: Smoke test
@@ -28,6 +29,12 @@ jobs:
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
           /tmp/probe/bin/python .github/mac_smoke.py
+      - name: Menu bar details
+        if: always()
+        run: |
+          defaults read org.python.python 2>/dev/null | grep -i -A2 statusitem || true
+          defaults read com.apple.controlcenter 2>/dev/null | head -40 || true
+          ls ~/Library/Group\ Containers/group.com.apple.controlcenter* 2>/dev/null || true
       - name: Keep screenshots
         if: always()
         run: |
