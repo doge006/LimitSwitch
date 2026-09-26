@@ -18,9 +18,13 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
   - While the app runs, `~/.codex/config.toml` points `openai_base_url` at a loopback router. The path carries a random secret; port and secret stay the same across restarts.
   - The router adds the chosen account's token and workspace header, so switching applies to every running session's next request.
   - On `usage_limit_reached` it retries the same request on the account with the most headroom (Auto swap).
-  - It drops encrypted reasoning/compaction items produced by another account. If the service still rejects encrypted content, it retries once without items it hasn't seen.
+  - Encrypted items are tied to the account that made them, so the router carries them across:
+    - *Compaction checkpoints:* written out as plain text by their own account right after compaction (kept DPAPI-encrypted), and substituted in Codex's own plain-text checkpoint form. Until then, a thread with an untranslated checkpoint stays on that account while it has quota.
+    - *Reasoning:* replaced by its plain-text summary.
+    - *Anything else the service rejects:* one retry without unknown items.
+  - Planned switches (95% used, from the `x-codex-*-used-percent` response headers) happen only when a request starts a new turn.
   - It answers Codex's WebSocket attempt with 426, which makes Codex use HTTPS right away with no warning.
-  - The config also disables request compression (so bodies are readable) and `daemon_auto_start`. Codex's shared background server opens console windows on Windows (openai/codex#44768, #48074), and it isn't needed for switching any more.
+  - The config also disables request compression (so bodies are readable) and `daemon_auto_start`. Codex's shared background server opens console windows on Windows (openai/codex#44768, #48074). Sessions attach to a running one even with auto-start off, and it keeps its startup settings, which would bypass the router. So the app stops a running one once no session log has been written for 90 seconds (`CodexServerWatch`).
   - Quit writes the chosen account into `auth.json` and restores the config exactly (tagged lines).
 - **AFK:**
   - *Claude Code:* a `StopFailure` hook with `asyncRewake` (`claude_hooks.py`, `afk_hook.py`), installed while AFK is on. On `rate_limit` it asks the app, which switches to an account with headroom or says how long to wait for a reset. The hook then exits 2, which wakes the session with a continuation note. There's a loop guard of three continues per ten minutes per session.
@@ -31,7 +35,7 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 
 ## Limits
 
-- Dropping another account's encrypted items loses that hidden reasoning. After a remote compaction made on another account, the model also loses the compacted summary. Visible messages and tool results are kept.
+- Hidden reasoning can only cross accounts as the plain-text summary ChatGPT returns with it (it's encrypted per account).
 - If every account of a provider is out of quota:
   - *Codex:* gets the usage-limit error as usual.
   - *Claude Code:* the AFK hook waits for the earliest reset (up to 6 hours) and then continues.
@@ -48,14 +52,15 @@ A single tray process (`account_switcher.tray`) hosts the controller and a loopb
 - Real Codex CLI 0.157.1 against the router and a fake ChatGPT backend:
   - its WebSocket attempt got 426 and it used HTTPS without a warning;
   - a usage limit on account x was retried on y, and `codex exec` printed y's answer with exit 0;
-  - after switching back to x, `codex exec resume` replayed y's encrypted reasoning, the router dropped it, and x answered.
+  - after switching back to x, `codex exec resume` replayed y's encrypted reasoning; the router sent its summary instead, and x answered;
+  - with a tiny auto-compact limit, Codex compacted on x, x wrote the checkpoint out, and after a switch y received the thread with the plain-text checkpoint and answered.
 - Real Claude Code 2.1.283 against a fake Anthropic API:
   - a usage limit fired `StopFailure` with `rate_limit`;
   - the `asyncRewake` hook woke the session and a new request went out.
 
   (The sandbox injects its own Claude login, so the credentials-file reload itself was checked in Claude Code's code rather than end to end.)
 
-- 81 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, the Codex router, config edits, the AFK hook and its decisions, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
+- 94 tests on Linux (2 skip without the built proxy): core, web, tray, panel renderer, the Codex router, config edits, the AFK hook and its decisions, and the real-account backend against fake login files and a fake provider API (import, add, switch round-trip with token capture, refresh ownership, auto swap, controller integration).
 - The same suites pass under Wine with Windows Python 3.12, including real DPAPI encryption.
 - An interactive Wine harness with the Win32 tray in real-account mode passes: left-click panel; click-to-switch shows "Switching…" then rewrites the login files; pinned panel is draggable and ignores click-away; unpinned closes; the right-click menu toggles AFK and opens the panel.
 - Idle tray process in real-account mode, 60 s sample on Linux: 32 MB RSS, 1 wake-up, 0 ms CPU. Usage checks are scheduled per account (5 min in use, 30 min otherwise).

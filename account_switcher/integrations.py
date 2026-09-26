@@ -15,15 +15,19 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import subprocess
 import sys
+import threading
+import time
 
 from . import claude_hooks, codex_config
-from .codex_proxy import DEFAULT_PORT, CodexProxy
+from .codex_proxy import DEFAULT_PORT, CodexProxy, ThreadState
 from .vault import atomic_write
 
 log = logging.getLogger("account_switcher.integrations")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "AccountSwitcher"
+THREADS = "codex-threads"   # encrypted: which account made which item, checkpoint texts
 
 
 class RoutedAccounts:
@@ -41,10 +45,99 @@ class RoutedAccounts:
     def limit_hit(self, account_id, resets_at):
         return self.manager.limit_hit(account_id, resets_at)
 
+    def turn_start(self, account_id):
+        return self.manager.turn_start(account_id)
+
+    def usable(self, account_id):
+        return self.manager.usable(account_id)
+
+    def observe(self, account_id, windows):
+        self.manager.observe(account_id, windows)
+
+
+def codex_home_path(codex_home=None):
+    return Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
 
 def codex_present(codex_home=None):
-    home = Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    return home.exists() or shutil.which("codex") is not None
+    return codex_home_path(codex_home).exists() or shutil.which("codex") is not None
+
+
+class CodexServerWatch:
+    """Stops Codex's shared background server once it is idle.
+
+    Sessions attach to that server if it is running, even with auto-start off, and it keeps
+    the settings it started with, so its sessions would skip the router (no switching) and
+    it opens a console window for every command on Windows. Once it is gone, each session
+    runs in its own terminal and goes through the router. It is only stopped while no
+    session has written anything for a while, so no turn in progress is cut off."""
+
+    QUIET = 90      # seconds without session activity that count as idle
+    EVERY = 60
+
+    def __init__(self, codex_home=None, notify=lambda *_: None, cli="codex"):
+        self.home = codex_home_path(codex_home)
+        self.notify, self.cli = notify, cli
+        self.stopped = threading.Event()
+        self.tried_at = None
+
+    @property
+    def socket(self):
+        return self.home / "app-server-control" / "app-server-control.sock"
+
+    def start(self):
+        threading.Thread(target=self._loop, daemon=True, name="codex-server-watch").start()
+
+    def close(self):
+        self.stopped.set()
+
+    def _loop(self):
+        while not self.stopped.is_set():
+            try:
+                self.check()
+            except Exception:
+                pass
+            self.stopped.wait(self.EVERY)
+
+    def running(self):
+        try:
+            stamp = self.socket.stat().st_mtime
+        except OSError:
+            return False
+        return stamp != self.tried_at  # a socket we already stopped (and that stayed) is stale
+
+    def last_activity(self):
+        """Newest write to a session log in the last two day folders (sessions/YYYY/MM/DD)."""
+        root = self.home / "sessions"
+        days = []
+        try:
+            for year in sorted(p for p in root.iterdir() if p.is_dir())[-2:]:
+                for month in sorted(p for p in year.iterdir() if p.is_dir())[-2:]:
+                    days += [p for p in month.iterdir() if p.is_dir()]
+        except OSError:
+            return 0.0
+        newest = 0.0
+        for day in sorted(days)[-2:]:
+            try:
+                newest = max([newest] + [f.stat().st_mtime for f in day.iterdir()])
+            except OSError:
+                continue
+        return newest
+
+    def check(self):
+        if not self.running() or time.time() - self.last_activity() < self.QUIET:
+            return False
+        self.tried_at = self.socket.stat().st_mtime
+        codex = shutil.which(self.cli)
+        if not codex:
+            return False
+        done = subprocess.run([codex, "app-server", "daemon", "stop"], capture_output=True, text=True, timeout=120,
+                              stdin=subprocess.DEVNULL, env=dict(os.environ, CODEX_HOME=str(self.home)),
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if done.returncode == 0:
+            self.notify("log", "Stopped Codex's shared background server; Codex sessions now go through the app")
+            return True
+        return False
 
 
 class Integrations:
@@ -56,6 +149,7 @@ class Integrations:
         self.codex_home, self.claude_root = codex_home, claude_root
         self.upstream = upstream
         self.proxy = None
+        self.watch = None
 
     @property
     def state_file(self):
@@ -79,7 +173,10 @@ class Integrations:
         port = saved.get("port") if isinstance(saved.get("port"), int) else DEFAULT_PORT
         secret = saved.get("secret") if isinstance(saved.get("secret"), str) else secrets.token_urlsafe(18)
         kwargs = {"upstream": self.upstream} if self.upstream else {}
-        proxy = CodexProxy(RoutedAccounts(self.manager), port=port, secret=secret, **kwargs)
+        vault = self.manager.vault
+        state = ThreadState(load=lambda: vault.read_secret(THREADS), save=lambda data: vault.write_secret(THREADS, data))
+        proxy = CodexProxy(RoutedAccounts(self.manager), port=port, secret=secret, state=state, **kwargs)
+        proxy.can_switch = lambda: sum(a.provider == "codex" for a in self.manager.accounts()) > 1
         try:
             base_url = proxy.start()
             codex_config.apply(base_url, self.codex_home)
@@ -91,8 +188,12 @@ class Integrations:
         atomic_write(settings_path, json.dumps({"port": proxy.port, "secret": proxy.secret}).encode())
         self.proxy = proxy
         self.manager.enable_routing("codex")
+        self.watch = CodexServerWatch(self.codex_home, self.manager.notify)
+        self.watch.start()
 
     def stop(self):
+        if self.watch:
+            self.watch.close()
         if self.proxy:
             try:
                 self.manager.disable_routing("codex")

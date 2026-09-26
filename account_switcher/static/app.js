@@ -189,6 +189,11 @@ function buildCard(account, index) {
   swap.type = 'button';
   swap.append(label);
   swap.addEventListener('click', () => startSwap(account.id));
+  // The whole card switches too (like the tray panel), except its own buttons and fields.
+  card.addEventListener('click', event => {
+    if (event.target.closest('button, a, input, select, label') || !card.classList.contains('pickable')) return;
+    startSwap(account.id);
+  });
   const remove = node('button', 'button quiet remove', 'Remove');
   remove.type = 'button';
   remove.title = 'Forget this saved login';
@@ -296,6 +301,7 @@ function updateCards() {
     }
     const switching = pendingSwap === account.id;
     view.swap.disabled = locked || account.active || !account.eligible;
+    view.card.classList.toggle('pickable', !view.swap.disabled);
     view.swap.classList.toggle('working', switching);
     view.swap.classList.toggle('current', account.active);
     view.swap.classList.toggle('accent', !account.active && account.eligible);

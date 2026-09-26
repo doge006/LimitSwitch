@@ -44,6 +44,9 @@ SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
+SOFT_LIMIT = 95             # switch ahead of the limit once an account has used this much
+MIN_ROOM = 10               # ...to an account with at least this much left
+WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
@@ -398,6 +401,50 @@ class LiveAccounts:
         self.swap(best.id, reason="auto")
         return best.id
 
+    @staticmethod
+    def _nearly_out(account):
+        return account.headroom >= 0 and 100 - account.headroom >= SOFT_LIMIT
+
+    def usable(self, account_id):
+        account = next((a for a in self.accounts() if a.id == account_id), None)
+        return account is not None and account.eligible and not account.status
+
+    def turn_start(self, account_id):
+        """A routed session starts a new turn: the moment to move off an account that is
+        nearly out, since nothing from the turn in progress has to travel."""
+        if not self.meta["autoSwap"]:
+            return account_id
+        account = next((a for a in self.accounts() if a.id == account_id), None)
+        if account is None or (account.eligible and not self._nearly_out(account)):
+            return account_id
+        best = self._best_other(account.provider, account_id)
+        if best is None or best.headroom < MIN_ROOM or (account.eligible and best.headroom <= account.headroom):
+            return account_id
+        self.swap(best.id, reason="auto")
+        return best.id
+
+    def observe(self, account_id, windows):
+        """Live usage the service reported with a response: [(window minutes, used %, reset)]."""
+        changed = False
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id)
+            if entry is None:
+                return
+            usage = [dict(w) for w in entry.get("usage") or []]
+            for minutes, used, reset in windows:
+                key, label = WINDOW_KEYS.get(minutes, (f"window-{minutes * 60}", f"{round(minutes / 60)}-hour"))
+                window = next((w for w in usage if w["key"] == key), None)
+                if window is None:
+                    window = {"key": key, "label": label, "scope": "account", "used": -1.0}
+                    usage.append(window)
+                if round(window.get("used", -1)) != round(used) or window.get("resetsAt") != reset:
+                    changed = True
+                window.update(used=float(used), resetsAt=reset)
+            entry["usage"] = usage
+            entry["updatedAt"] = time.time()
+        if changed:
+            self.notify("accounts", None)
+
     def _best_other(self, name, current, allow_unknown=False):
         """The other account with the most headroom. allow_unknown also accepts accounts whose
         usage has not been read yet (after the known ones): a client just hit a limit, and
@@ -439,16 +486,24 @@ class LiveAccounts:
         return {"action": "wait", "seconds": max(60, min(wait, 6 * 3600))}
 
     def auto_swap(self):
-        """If an account in use has hit a limit, move to the one with the most headroom."""
+        """Move off an account that has hit a limit, and (Claude) off one that is about to.
+        Codex's planned switches happen in the router, between turns (turn_start)."""
         if not self.meta["autoSwap"]:
             return []
         moved = []
         accounts = self.accounts()
         for name in self.providers:
             current = next((a for a in accounts if a.id == self.active.get(name)), None)
-            if current is None or current.eligible:
+            if current is None:
                 continue
-            best = self._best_other(name, current.id)
+            if current.eligible:
+                if name in self.routed or not self._nearly_out(current):
+                    continue
+                best = self._best_other(name, current.id)
+                if best is None or best.headroom < MIN_ROOM or best.headroom <= current.headroom:
+                    continue
+            else:
+                best = self._best_other(name, current.id)
             if best is None:
                 continue
             try:
