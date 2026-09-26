@@ -89,6 +89,7 @@ class FlyoutRenderTests(unittest.TestCase):
         state["accounts"][1]["status"] = "Login expired; sign in again"
         layout, _ = fr.build(state)
         self.assertIn("Sign in again", [t[2] for t in layout.texts])
+        self.assertIn("add:" + state["accounts"][1]["provider"], [a for _, a in layout.hits])  # one click to sign in
 
     def test_switch_needs_a_confirming_click(self):
         layout, _ = fr.build(self.state, armed="claude-b")

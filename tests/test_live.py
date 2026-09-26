@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 from account_switcher.live import LiveAccounts, LiveGateway
@@ -279,7 +280,7 @@ class LiveTests(unittest.TestCase):
         a_id = m.active["claude"]
         now = time.time()
         self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 300, delta=5)  # Claude in use, not live: gently
-        self.assertGreater(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 550)  # inactive: 10 min
+        self.assertGreater(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 250)  # not in use here: 5 min (cloud sessions)
         # A passed reset is applied locally without asking the API.
         m.meta["accounts"][b_id]["usage"][0]["resetsAt"] = now - 5
         b = self.by_email(m, "b@example.com")
@@ -324,6 +325,18 @@ class LiveTests(unittest.TestCase):
         m.statusline({"five_hour": {"used_percentage": 5, "resets_at": reset}})
         five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
         self.assertEqual(five["used"], 77.0)
+
+    def test_mac_sign_in_opens_in_terminal(self):
+        m = self.manager()
+        started = []
+        with mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch("account_switcher.live.subprocess.Popen", side_effect=lambda args, **kw: started.append(args) or mock.Mock()), \
+                mock.patch("account_switcher.live.threading.Thread"):
+            m.add("claude")
+        self.assertEqual(started[0][0], "/usr/bin/osascript")  # Terminal has the user's PATH and a window
+        self.assertIn('tell application "Terminal"', started[0][2])
+        self.assertIn("CLAUDE_CONFIG_DIR=", started[0][2])
+        self.assertIn("claude auth login", started[0][2])
 
     def test_backoff_on_rate_limit(self):
         from account_switcher.providers import ProviderError

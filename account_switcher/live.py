@@ -41,7 +41,7 @@ from .vault import Vault, atomic_write
 # Near-live usage for the accounts in use, gently for the rest. Each account also has a pace
 # (1 = normal) that doubles when the provider rate limits it and eases back after successes,
 # so the app settles at whatever rate the provider accepts.
-ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 600  # idle: may be in use on another computer
+ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 300  # idle: may be in use in a cloud session or elsewhere
 FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
 MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
@@ -581,27 +581,38 @@ class LiveAccounts:
             raise ValueError("Unknown provider")
         if name in self.logins:
             raise RuntimeError(f"A {name.title()} sign-in is already open")
-        directory = Path(tempfile.mkdtemp(prefix=f"account-switcher-{name}-"))
+        # The real path (/private/var/... on macOS): Claude Code names its Keychain item after it.
+        directory = Path(tempfile.mkdtemp(prefix=f"account-switcher-{name}-")).resolve()
         command, env = provider.login_command(directory)
-        executable = shutil.which(command[0])
-        if not executable:
-            shutil.rmtree(directory, ignore_errors=True)
-            raise RuntimeError(f"{name.title()} CLI not found on PATH")
-        flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-        process = subprocess.Popen([executable, *command[1:]], env=dict(os.environ, **env), creationflags=flags)
+        if sys.platform == "darwin":
+            # In Terminal: it has the user's PATH (an app opened from Finder does not) and a
+            # window to sign in from. The login is picked up from its folder as it lands.
+            import shlex
+            line = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " + " ".join(shlex.quote(c) for c in command)
+            script = 'tell application "Terminal"\nactivate\ndo script "' + line.replace("\\", "\\\\").replace('"', '\\"') + '"\nend tell'
+            process = subprocess.Popen(["/usr/bin/osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            watch_process = False
+        else:
+            executable = shutil.which(command[0])
+            if not executable:
+                shutil.rmtree(directory, ignore_errors=True)
+                raise RuntimeError(f"{name.title()} CLI not found on PATH")
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            process = subprocess.Popen([executable, *command[1:]], env=dict(os.environ, **env), creationflags=flags)
+            watch_process = True
         self.logins[name] = process
         self.notify("log", f"{name.title()} sign-in opened in a new window")
-        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory),
+        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory, watch_process),
                          daemon=True).start()
 
-    def _finish_login(self, name, process, isolated, directory):
+    def _finish_login(self, name, process, isolated, directory, watch_process=True):
         try:
             # Watch for the login file (the CLI may stay open); stop after 10 minutes.
             deadline = time.monotonic() + 600
             login = None
             while time.monotonic() < deadline:
                 login = isolated.read_live()
-                if login or process.poll() is not None:
+                if login or (watch_process and process.poll() is not None):
                     login = login or isolated.read_live()
                     break
                 time.sleep(1.5)
@@ -615,7 +626,7 @@ class LiveAccounts:
             else:
                 self.notify("log", f"{name.title()} sign-in closed without a login")
         finally:
-            if process.poll() is None:
+            if watch_process and process.poll() is None:
                 process.terminate()
             self.logins.pop(name, None)
             shutil.rmtree(directory, ignore_errors=True)
