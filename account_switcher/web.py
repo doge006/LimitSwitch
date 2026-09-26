@@ -270,7 +270,9 @@ def make_server(controller, port=0, idle_seconds=90):
             if path in ("/assets/codex.png", "/assets/claude.png", "/assets/switcher.png"):
                 self.respond(200, (ASSETS / path.lstrip("/")).read_bytes(), "image/png")
                 return
-            assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8")}
+            assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"),
+                      "/menu": ("menu.html", "text/html; charset=utf-8"), "/menu.js": ("menu.js", "text/javascript; charset=utf-8"),
+                      "/menu.css": ("menu.css", "text/css; charset=utf-8")}
             if path in assets:
                 name, mime = assets[path]
                 self.respond(200, (ASSETS / name).read_bytes(), mime)
