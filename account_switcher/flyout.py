@@ -1,11 +1,13 @@
-"""Windows host for the tray flyout: a per-pixel-alpha layered popup, like the shell's own.
+"""Windows host for the tray flyout and right-click menu: per-pixel-alpha layered popups.
 
-The window exists only while open. It lives on the tray's thread (pystray's message loop
-dispatches its messages), uses a timer only during the ~0.17 s open/close animation, and
-redraws only when the hovered item or the app state changes.
+Windows exist only while open. They live on the tray's thread (pystray's message loop
+dispatches their messages). Timers run only during the ~0.17 s open/close animation, plus a
+once-a-minute tick while the flyout is open so "renews in" times stay current. Redraws
+happen only when the hovered item or the app state changes.
 """
 import ctypes
 from ctypes import wintypes
+import logging
 import time
 
 from . import flyout_render as fr
@@ -22,11 +24,13 @@ WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST = 0x00080000, 0x00000080, 0x00000
 WM_DESTROY, WM_ACTIVATE, WM_SETCURSOR, WM_KEYDOWN, WM_TIMER = 0x0002, 0x0006, 0x0020, 0x0100, 0x0113
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSELEAVE = 0x0200, 0x0201, 0x0202, 0x02A3
 WM_APP_REFRESH, WM_APP_CLOSE = 0x8000 + 1, 0x8000 + 2
+WM_MOVE, WM_NCHITTEST, HTCLIENT, HTCAPTION = 0x0003, 0x0084, 1, 2
 SW_SHOWNA, VK_ESCAPE, ULW_ALPHA, TME_LEAVE = 8, 0x1B, 0x2, 0x2
 IDC_ARROW, IDC_HAND = 32512, 32649
 MONITOR_DEFAULTTONEAREST = 2
 CLASS_NAME = "AccountSwitcherFlyout"
-TIMER_ID = 1
+TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING = 1, 2, 3
+log = logging.getLogger("account_switcher.flyout")
 
 
 class BLENDFUNCTION(ctypes.Structure):
@@ -55,6 +59,14 @@ class WNDCLASSEXW(ctypes.Structure):
 class TRACKMOUSEEVENT(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
                 ("hwndTrack", wintypes.HWND), ("dwHoverTime", wintypes.DWORD)]
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class NOTIFYICONIDENTIFIER(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND), ("uID", wintypes.UINT), ("guidItem", GUID)]
 
 
 class MONITORINFO(ctypes.Structure):
@@ -95,6 +107,16 @@ _sig(gdi32.CreateDIBSection, wintypes.HBITMAP, wintypes.HDC, ctypes.POINTER(BITM
 _sig(gdi32.SelectObject, H, wintypes.HDC, H)
 _sig(gdi32.DeleteObject, wintypes.BOOL, H)
 _sig(kernel32.GetModuleHandleW, wintypes.HMODULE, wintypes.LPCWSTR)
+try:
+    shell32 = ctypes.WinDLL("shell32")
+    _sig(shell32.Shell_NotifyIconGetRect, ctypes.c_long, ctypes.POINTER(NOTIFYICONIDENTIFIER), ctypes.POINTER(wintypes.RECT))
+except (AttributeError, OSError):
+    shell32 = None
+try:
+    shcore = ctypes.WinDLL("shcore")
+    _sig(shcore.GetDpiForMonitor, ctypes.c_long, H, ctypes.c_int, ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT))
+except (AttributeError, OSError):
+    shcore = None
 
 
 def enable_dpi_awareness():
@@ -108,90 +130,154 @@ def enable_dpi_awareness():
             pass
 
 
-def monitor_at_cursor():
+def cursor():
     point = wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(point))
-    monitor = user32.MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
+    return point.x, point.y
+
+
+def monitor_at(x, y):
+    """(monitor rect, work rect, scale) for the monitor containing a physical-pixel point."""
+    monitor = user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), MONITOR_DEFAULTTONEAREST)
     info = MONITORINFO()
     info.cbSize = ctypes.sizeof(info)
     user32.GetMonitorInfoW(monitor, ctypes.byref(info))
     scale = 1.0
-    try:
+    if shcore is not None:
         dpi_x, dpi_y = wintypes.UINT(), wintypes.UINT()
-        if ctypes.windll.shcore.GetDpiForMonitor(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) == 0:
+        if shcore.GetDpiForMonitor(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) == 0 and dpi_x.value:
             scale = dpi_x.value / 96
-    except (AttributeError, OSError):
-        pass
     return info.rcMonitor, info.rcWork, scale
 
 
-def place(monitor, work, width, height, scale):
-    """Top-left of the image so the panel sits in the taskbar's corner, 12 px from the edges."""
-    gap, margin = round(12 * scale), round(fr.MARGIN * scale)
-    x = work.right - gap - width + margin
-    y = work.bottom - gap - height + margin
-    edge = "bottom"
+def icon_rect(icon):
+    """Screen rectangle of the tray icon (pystray registers it with uID 0), or None."""
+    if shell32 is None or icon is None or not getattr(icon, "_hwnd", None):
+        return None
+    ident = NOTIFYICONIDENTIFIER(ctypes.sizeof(NOTIFYICONIDENTIFIER), icon._hwnd, 0)
+    rect = wintypes.RECT()
+    try:
+        if shell32.Shell_NotifyIconGetRect(ctypes.byref(ident), ctypes.byref(rect)) == 0 and rect.right > rect.left:
+            return rect
+    except OSError:
+        pass
+    return None
+
+
+def taskbar_edge(monitor, work):
     if work.left > monitor.left:
-        x, edge = work.left + gap - margin, "left"
-    elif work.top > monitor.top:
-        y, edge = work.top + gap - margin, "top"
-    elif work.right < monitor.right:
-        edge = "right"
-    return x, y, edge
+        return "left"
+    if work.top > monitor.top:
+        return "top"
+    if work.right < monitor.right:
+        return "right"
+    return "bottom"
 
 
-class Flyout:
+def clamp(value, low, high):
+    return max(low, min(value, high))
+
+
+def place_above(anchor, monitor, work, width, height, scale):
+    """Top-left for an image (with shadow margin) so the panel sits over the anchor point,
+    next to the taskbar, 12 px from screen edges. Returns (x, y, slide direction)."""
+    ax, ay = anchor
+    gap, margin = round(12 * scale), round(fr.MARGIN * scale)
+    edge = taskbar_edge(monitor, work)
+    min_x, max_x = work.left + gap - margin, work.right - gap - width + margin
+    min_y, max_y = work.top + gap - margin, work.bottom - gap - height + margin
+    if edge in ("bottom", "top"):
+        x = clamp(round(ax - width / 2), min_x, max_x)
+        y = max_y if edge == "bottom" else min_y
+    else:
+        y = clamp(round(ay - height / 2), min_y, max_y)
+        x = min_x if edge == "left" else max_x
+    return x, y, {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[edge]
+
+
+def place_menu(point, monitor, work, width, height, scale):
+    """Like a context menu: open up and to the left of the cursor, kept on screen."""
+    px, py = point
+    margin = round(fr.MARGIN * scale)
+    x = px - width + margin if px + width - margin > work.right else px - margin
+    y = py - height + margin if py + height - margin > work.bottom else py - margin
+    x = clamp(x, work.left - margin, work.right - width + margin)
+    y = clamp(y, work.top - margin, work.bottom - height + margin)
+    edge = taskbar_edge(monitor, work)
+    return x, y, {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[edge]
+
+
+class Popup:
+    """One layered window: fade/slide in and out, hover, click, Esc and click-away."""
     _registered = False
     _proc = None
+    _windows = {}      # hwnd -> popup
+    _creating = None   # popup whose CreateWindowExW is in progress
 
     def __init__(self, tray):
         self.tray = tray
         self.hwnd = None
-        self.hover = None
-        self.pressed = None
+        self.hover = self.pressed = None
         self.hits = []
         self.closing = False
         self.closed_at = self.opened_at = 0.0
         self.anim = None
         self.tracking = False
+        self.alpha = 0.0
+        self.x = self.y = 0
+        self.slide = (0, 1)
+        self.scale = 1.0
 
-    # ---------- public (tray thread) ----------
+    # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
+    dismiss_on_deactivate = True
+    minute_ticks = False
+
     def toggle(self):
         if self.hwnd and not self.closing:
             self.close()
-        elif time.monotonic() - self.closed_at > 0.3:  # the click that dismissed it
+        elif time.monotonic() - self.closed_at > 0.3:  # ignore the click that just dismissed it
             self.open()
 
     def open(self):
         if self.hwnd:
             self._destroy()
         self._register()
-        self.monitor, self.work, self.scale = monitor_at_cursor()
         self.hover = self.pressed = None
-        image, self.hits = fr.render(self.tray.state, None, self.scale)
+        self.prepare()
+        image, self.hits = self.render(None)
         self.size = image.size
-        self.x, self.y, edge = place(self.monitor, self.work, *image.size, self.scale)
-        self.slide = {"bottom": (0, 1), "top": (0, -1), "left": (-1, 0), "right": (1, 0)}[edge]
-        self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, CLASS_NAME,
-                                           "Account Switcher", WS_POPUP, self.x, self.y, *image.size,
-                                           None, None, kernel32.GetModuleHandleW(None), None)
+        self.x, self.y, self.slide = self.position(*image.size)
+        Popup._creating = self
+        try:
+            self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, CLASS_NAME,
+                                               "Account Switcher", WS_POPUP, self.x, self.y, *image.size,
+                                               None, None, kernel32.GetModuleHandleW(None), None)
+        finally:
+            Popup._creating = None
         if not self.hwnd:
+            log.error("CreateWindowExW failed: %s", ctypes.get_last_error())
             return
+        Popup._windows[self.hwnd] = self
         self.closing = False
         self.opened_at = time.monotonic()
         self._push(image, 0)
         user32.ShowWindow(self.hwnd, SW_SHOWNA)
         user32.SetForegroundWindow(self.hwnd)  # so clicking elsewhere deactivates and closes it
+        if self.minute_ticks:
+            user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self._animate(0.0, 1.0, 0.17)
+
+    def prepare(self):
+        pass
 
     def close(self):
         if self.hwnd and not self.closing:
             self.closing = True
             self.closed_at = time.monotonic()
-            self._animate(1.0, 0.0, 0.11)
+            self._animate(self.alpha, 0.0, 0.11)
 
     def dismiss(self):
-        """Any thread: remove the window immediately (used on quit)."""
+        """Any thread: remove the window (used on quit)."""
         if self.hwnd:
             user32.PostMessageW(self.hwnd, WM_APP_CLOSE, 0, 0)
 
@@ -201,21 +287,20 @@ class Flyout:
             user32.PostMessageW(self.hwnd, WM_APP_REFRESH, 0, 0)
 
     # ---------- drawing ----------
-    def _redraw(self):
-        if not self.hwnd:
+    def redraw(self):
+        if not self.hwnd or self.closing:
             return
-        image, self.hits = fr.render(self.tray.state, self.hover, self.scale)
-        if image.size != self.size:  # content height changed: keep the bottom edge anchored
+        image, self.hits = self.render(self.hover)
+        if image.size != self.size:  # height changed: keep the edge next to the taskbar fixed
             dy = image.size[1] - self.size[1]
             self.size = image.size
-            if self.slide[1] >= 0:
+            if self.slide[1] > 0:
                 self.y -= dy
         self._push(image, self.alpha)
 
     def _push(self, image, alpha, offset=(0, 0)):
         """Blit a premultiplied-BGRA copy of `image` to the layered window."""
-        self.alpha = alpha
-        self.image = image
+        self.alpha, self.image = alpha, image
         width, height = image.size
         screen = user32.GetDC(None)
         memory = gdi32.CreateCompatibleDC(screen)
@@ -241,18 +326,17 @@ class Flyout:
     # ---------- animation (timer only while moving) ----------
     def _animate(self, start, end, duration):
         self.anim = (start, end, time.perf_counter(), duration)
-        user32.SetTimer(self.hwnd, TIMER_ID, 10, None)
+        user32.SetTimer(self.hwnd, TIMER_ANIM, 10, None)
         self._tick()
 
     def _tick(self):
         start, end, began, duration = self.anim
         progress = min(1.0, (time.perf_counter() - began) / duration)
-        eased = 1 - (1 - progress) ** 3
-        value = start + (end - start) * eased
+        value = start + (end - start) * (1 - (1 - progress) ** 3)
         travel = round(8 * self.scale * (1 - value))  # short slide toward the taskbar edge
         self._push(self.image, value, (self.slide[0] * travel, self.slide[1] * travel))
         if progress >= 1:
-            user32.KillTimer(self.hwnd, TIMER_ID)
+            user32.KillTimer(self.hwnd, TIMER_ANIM)
             self.anim = None
             if end == 0.0:
                 self._destroy()
@@ -266,43 +350,47 @@ class Flyout:
     def _set_hover(self, action):
         if action != self.hover:
             self.hover = action
-            self._redraw()
+            self.redraw()
 
-    def _activate(self, action):
-        tray = self.tray
-        if action == "full":
-            self.close()
-            tray.open_full_view()
-        elif action == "quit":
-            self._destroy()
-            tray.quit()
-        elif action.startswith("swap:"):
-            tray.act("swap", {"id": action[5:]})
-        elif action.startswith("toggle:"):
-            key = action[7:]
-            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
-            prefs[key] = not prefs[key]
-            tray.act("preferences", prefs)
+    def drag_region(self, x, y):
+        return False
 
-    def _wndproc(self, hwnd, msg, wparam, lparam):
-        if msg == WM_TIMER and wparam == TIMER_ID and self.anim:
-            self._tick()
+    def wndproc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_TIMER:
+            if wparam == TIMER_ANIM and self.anim:
+                self._tick()
+            elif wparam == TIMER_MINUTE:
+                self.redraw()
+            elif wparam == TIMER_PENDING:
+                user32.KillTimer(hwnd, TIMER_PENDING)
+                self.pending_timeout()
             return 0
         if msg == WM_APP_CLOSE:
             self._destroy()
             return 0
         if msg == WM_APP_REFRESH:
-            if not self.closing:
-                self._redraw()
+            self.redraw()
             return 0
         if msg == WM_ACTIVATE and (wparam & 0xFFFF) == 0:  # WA_INACTIVE: clicked elsewhere
             # Focus can bounce while the tray click is still being processed; only a
-            # deactivation after the flyout has settled means the user clicked away.
-            if time.monotonic() - self.opened_at > 0.25:
+            # deactivation after the popup has settled means the user clicked away.
+            if self.dismiss_on_deactivate and time.monotonic() - self.opened_at > 0.25:
                 self.close()
             return 0
         if msg == WM_KEYDOWN and wparam == VK_ESCAPE:
             self.close()
+            return 0
+        if msg == WM_NCHITTEST:
+            px = ctypes.c_short(lparam & 0xFFFF).value - self.x
+            py = ctypes.c_short((lparam >> 16) & 0xFFFF).value - self.y
+            x, y = px / self.scale, py / self.scale
+            if self.drag_region(x, y) and fr.hit_test(self.hits, x, y) is None:
+                return HTCAPTION  # Windows moves the window natively while dragging
+            return HTCLIENT
+        if msg == WM_MOVE:
+            if not self.anim:
+                self.x = ctypes.c_short(lparam & 0xFFFF).value
+                self.y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
             return 0
         if msg == WM_MOUSEMOVE:
             if not self.tracking:
@@ -324,42 +412,197 @@ class Flyout:
             return 0
         if msg == WM_LBUTTONUP:
             action = fr.hit_test(self.hits, *self._logical(lparam))
-            if action and action == self.pressed and not self.closing:
-                self._activate(action)
-            self.pressed = None
+            pressed, self.pressed = self.pressed, None
+            # Accept the click if the release lands on the pressed item or the hovered one.
+            if action and action in (pressed, self.hover) and not self.closing:
+                self.activate(action)
             return 0
         if msg == WM_DESTROY:
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
+    def pending_timeout(self):
+        pass
+
     def _destroy(self):
         if self.hwnd:
             hwnd, self.hwnd = self.hwnd, None
-            user32.KillTimer(hwnd, TIMER_ID)
+            Popup._windows.pop(hwnd, None)
+            for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING):
+                user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
         self.anim, self.tracking, self.closing = None, False, False
 
-    def _register(self):
-        if Flyout._registered:
-            Flyout._active = self
+    @classmethod
+    def _register(cls):
+        if Popup._registered:
             return
-        Flyout._active = self
 
         def proc(hwnd, msg, wparam, lparam):
-            owner = Flyout._active
-            if owner is not None and owner.hwnd in (None, hwnd):
+            owner = Popup._windows.get(hwnd) or Popup._creating
+            if owner is not None:
                 try:
-                    return owner._wndproc(hwnd, msg, wparam, lparam)
-                except Exception:  # never let a Python error escape into Win32
-                    return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+                    return owner.wndproc(hwnd, msg, wparam, lparam)
+                except Exception:  # never let a Python error escape into Win32, but record it
+                    log.exception("popup message %#x failed", msg)
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-        Flyout._proc = WNDPROC(proc)  # keep a reference for the process lifetime
+        Popup._proc = WNDPROC(proc)  # keep a reference for the process lifetime
         wc = WNDCLASSEXW()
         wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
-        wc.lpfnWndProc = Flyout._proc
+        wc.lpfnWndProc = Popup._proc
         wc.hInstance = kernel32.GetModuleHandleW(None)
         wc.hCursor = user32.LoadCursorW(None, ctypes.c_void_p(IDC_ARROW))
         wc.lpszClassName = CLASS_NAME
         user32.RegisterClassExW(ctypes.byref(wc))
-        Flyout._registered = True
+        Popup._registered = True
+
+
+class Flyout(Popup):
+    """The accounts panel. Pop out pins it: it stays open and can be dragged by its header."""
+    minute_ticks = True
+
+    def __init__(self, tray):
+        super().__init__(tray)
+        self.pinned = False
+        self.pending = None   # account id being switched to
+
+    @property
+    def dismiss_on_deactivate(self):
+        return not self.pinned
+
+    def prepare(self):
+        self.tray.poke()  # fetch fresh usage if the numbers are older than a minute
+        rect = icon_rect(getattr(self.tray, "icon", None))
+        self.anchor = ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) if rect else cursor()
+        self.monitor, self.work, self.scale = monitor_at(*self.anchor)
+
+    def position(self, width, height):
+        if self.pinned and getattr(self, "pinned_at", None):
+            return (*self.pinned_at, (0, 0))
+        return place_above(self.anchor, self.monitor, self.work, width, height, self.scale)
+
+    def render(self, hover):
+        state = self.tray.state
+        if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
+            self.pending = None  # the switch landed
+        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned)
+
+    def drag_region(self, x, y):
+        return self.pinned and y < fr.header_height()
+
+    def toggle(self):
+        if self.pinned and self.hwnd:
+            user32.SetForegroundWindow(self.hwnd)  # a pinned panel just comes to the front
+            return
+        super().toggle()
+
+    def close(self):
+        if self.pinned:
+            self.pinned_at = (self.x, self.y)
+        super().close()
+
+    def pending_timeout(self):
+        self.pending = None
+        self.redraw()
+
+    def activate(self, action):
+        tray = self.tray
+        if action == "full":
+            if not self.pinned:
+                self.close()
+            tray.open_full_view()
+        elif action == "pin":
+            self.pinned = not self.pinned
+            if not self.pinned:  # pop back in: return to the tray and behave like a flyout again
+                self.pinned_at = None
+                image, self.hits = self.render(self.hover)
+                self.x, self.y, self.slide = place_above(self.anchor, self.monitor, self.work, *image.size, self.scale)
+                self.size = image.size
+                self._push(image, self.alpha)
+                user32.SetForegroundWindow(self.hwnd)
+            else:
+                self.redraw()
+        elif action == "quit":
+            self._destroy()
+            tray.quit()
+        elif action.startswith("swap:"):
+            self.pending = action[5:]
+            self.redraw()
+            user32.SetTimer(self.hwnd, TIMER_PENDING, 6000, None)
+            tray.act("swap", {"id": self.pending})
+        elif action.startswith("toggle:"):
+            key = action[7:]
+            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
+            prefs[key] = not prefs[key]
+            tray.act("preferences", prefs)
+        elif action.startswith("add:"):
+            tray.act("add", {"provider": action[4:]})
+
+
+class TrayMenu(Popup):
+    """Right-click menu drawn in the same style as the flyout."""
+
+    def items(self):
+        state = self.tray.state
+        rows = [{"action": "panel", "label": "Open panel", "bold": True},
+                {"action": "full", "label": "Full view"},
+                "-",
+                {"action": "toggle:autoSwap", "label": "Auto swap", "checked": state["autoSwap"], "enabled": not state["busy"]},
+                {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]},
+                {"action": "refresh", "label": "Refresh usage"}]
+        if state.get("mode") == "live":
+            rows += ["-", {"action": "add:claude", "label": "Add Claude account"},
+                     {"action": "add:codex", "label": "Add Codex account"}]
+        return rows + ["-", {"action": "quit", "label": "Quit"}]
+
+    def prepare(self):
+        self.point = cursor()
+        self.monitor, self.work, self.scale = monitor_at(*self.point)
+
+    def position(self, width, height):
+        return place_menu(self.point, self.monitor, self.work, width, height, self.scale)
+
+    def render(self, hover):
+        return fr.render_menu(self.items(), hover, self.scale)
+
+    def activate(self, action):
+        tray = self.tray
+        self.close()
+        if action == "panel":
+            tray.flyout.open()
+        elif action == "full":
+            tray.open_full_view()
+        elif action == "quit":
+            self._destroy()
+            tray.quit()
+        elif action == "refresh":
+            tray.act("reset", {})
+        elif action.startswith("toggle:"):
+            key = action[7:]
+            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
+            prefs[key] = not prefs[key]
+            tray.act("preferences", prefs)
+        elif action.startswith("add:"):
+            tray.act("add", {"provider": action[4:]})
+
+
+def tray_icon_class():
+    """pystray's Win32 icon, with left/right clicks routed to our own popups."""
+    import pystray._win32 as backend
+
+    class Icon(backend.Icon):
+        popups = None  # (flyout, menu), set by the tray
+
+        def _on_notify(self, wparam, lparam):
+            if self.popups and lparam == WM_LBUTTONUP:
+                self.popups[1].close()
+                self.popups[0].toggle()
+            elif self.popups and lparam == 0x0205:  # WM_RBUTTONUP
+                if not self.popups[0].pinned:
+                    self.popups[0].close()
+                self.popups[1].toggle()
+            else:
+                super()._on_notify(wparam, lparam)
+
+    return Icon

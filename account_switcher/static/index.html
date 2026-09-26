@@ -21,6 +21,16 @@
       </div>
     </div>
     <div class="topbar-tools">
+      <div class="add-wrap">
+        <button type="button" class="button" id="add" hidden aria-haspopup="menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="plus"><path d="M12 5v14M5 12h14"/></svg>Add account
+        </button>
+        <div class="add-menu" id="add-menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-add="claude"><img src="/assets/claude.png" alt="">Claude account</button>
+          <button type="button" role="menuitem" data-add="codex"><img src="/assets/codex.png" alt="">Codex account</button>
+          <p>Opens the official sign-in in a separate window. Your current login is not changed.</p>
+        </div>
+      </div>
       <button type="button" class="icon-button" id="reset" aria-label="Reset sample accounts" title="Reset sample accounts">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
       </button>
@@ -84,7 +94,7 @@
 
   <footer>
     <div class="connection"><i id="connection-dot"></i><span id="connection">Connecting…</span></div>
-    <span class="footnote">Live login and usage fetching are in development.</span>
+    <span class="footnote" id="footnote"></span>
     <button type="button" class="button quiet" id="shutdown" title="Close the dashboard and quit the tray app">Quit</button>
   </footer>
 </main>

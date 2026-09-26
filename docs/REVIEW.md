@@ -2,6 +2,13 @@
 
 Scope: everything outside the vendored `proxy-fork/` and `codex-vitals-source/` trees, checked against `ACCOUNT_SWITCHER_TECHNICAL_PLAN.md` and the reference screenshots (quota card grid, Codex Vitals, PowerToys Settings).
 
+## Update — later on 2026-09-26
+
+- **Real data is in:** gaps 1 (real usage) and 2 (encrypted credentials) are addressed by `live.py`, `providers.py` and `vault.py` (DPAPI).
+- **Codex switching is real:** gap 4 is covered, since it swaps `~/.codex/auth.json`.
+- **Model is still hardcoded:** gap 5 remains, but only in the demo Recovery lab.
+- **Still open:** AFK for real interactive sessions (gap 3), and the proxy/experiments coupling (gaps 6–7), which now only affects `--demo`.
+
 ## Verdict
 
 The safety thinking is good: explicit AFK opt-in, dedup of failure events, bounded retries, lazy proxy start, and loopback auth with Host/Origin checks. The recovery lab shows a real Claude CLI losing its quota mid-response, moving to the reserve account and finishing the turn.

@@ -10,6 +10,7 @@ menu are rebuilt only when what they show actually changes.
 """
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -38,8 +39,8 @@ def remaining(used):
 
 
 def headroom(account):
-    """Remaining percent of the tightest account-wide window."""
-    return min(remaining(account["five_hour"]), remaining(account["weekly"]))
+    """Remaining percent of the tightest account-wide window (100 when not known yet)."""
+    return account["headroom"] if account.get("headroom", -1) >= 0 else 100
 
 
 def level(left):
@@ -47,7 +48,7 @@ def level(left):
 
 
 def short_name(account):
-    return account["alias"].split(" · ")[-1].replace(" (synthetic)", "")
+    return account.get("name") or account["alias"]
 
 
 def active_accounts(state):
@@ -136,22 +137,38 @@ def existing_instance(url_file):
         return None
 
 
+def _log_path():
+    from .vault import data_dir
+    directory = data_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "app.log"  # errors only; empty in normal use
+
+
 # ---------- tray host ----------
 class Tray:
-    def __init__(self, controller, server, icon_factory=pystray.Icon, flyout=None):
+    def __init__(self, controller, server, icon_factory=None, flyout=None):
         self.controller, self.server = controller, server
         self.url = server.launch_url
         self.state = controller.snapshot()
         self.shown = {"title": None, "level": None, "menu": None}
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
         self.quitting = False
+        native = icon_factory is None and sys.platform == "win32"
+        if icon_factory is None:
+            if native:
+                from .flyout import tray_icon_class
+                icon_factory = tray_icon_class()
+            else:
+                icon_factory = pystray.Icon
         self.icon = icon_factory("account-switcher", icon_image(tray_level(self.state)),
                                  tooltip(self.state), pystray.Menu(self.menu_items))
         # The dashboard's "Quit" button quits the tray too.
         server.quit = self.quit
-        if flyout is None and sys.platform == "win32":
-            from .flyout import Flyout
-            flyout = Flyout(self)
+        self.menu = None
+        if native:
+            from .flyout import Flyout, TrayMenu
+            flyout, self.menu = Flyout(self), TrayMenu(self)
+            self.icon.popups = (flyout, self.menu)  # left/right clicks open our own popups
         self.flyout = flyout
 
     # Right-click menu; account swaps live in the flyout. Rebuilt only when it changes.
@@ -175,6 +192,13 @@ class Tray:
 
     def open_full_view(self):
         open_dashboard(self.url)
+
+    def poke(self):
+        """Refresh usage soon if it is more than a minute old (panel opened)."""
+        try:
+            self.controller.action("refresh", {"ifOlderThan": 60})
+        except (RuntimeError, ValueError):
+            pass
 
     def toggle(self, key):
         def flip():
@@ -203,8 +227,9 @@ class Tray:
         if signature != self.shown["menu"]:
             self.shown["menu"] = signature
             self.icon.update_menu()
-        if self.flyout:
-            self.flyout.state_changed()
+        for popup in (self.flyout, self.menu):
+            if popup:
+                popup.state_changed()
         self.announce_failovers(state)
 
     def announce_failovers(self, state):
@@ -240,8 +265,9 @@ class Tray:
     def quit(self, *_):
         if not self.quitting:
             self.quitting = True
-            if self.flyout:
-                self.flyout.dismiss()
+            for popup in (self.flyout, self.menu):
+                if popup:
+                    popup.dismiss()
             self.icon.stop()
 
     def run(self, open_now=False):
@@ -257,7 +283,8 @@ class Tray:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--simulator", action="store_true", help="Lightweight routing simulation instead of the compiled proxy")
+    parser.add_argument("--demo", action="store_true", help="Synthetic accounts and the Recovery lab instead of your real logins")
+    parser.add_argument("--simulator", action="store_true", help="Demo mode with a lightweight routing simulation instead of the compiled proxy")
     parser.add_argument("--url-file", help="Where the private dashboard URL is kept while running")
     parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the dashboard")
     args = parser.parse_args()
@@ -271,7 +298,10 @@ def main():
     if sys.platform == "win32":
         from .flyout import enable_dpi_awareness
         enable_dpi_awareness()
-    controller = Controller(args.simulator)
+    if sys.platform == "win32":
+        logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
+                            format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    controller = Controller(args.simulator, live=not (args.demo or args.simulator))
     server = make_server(controller, args.port, idle_seconds=0)
     write_url_file(args.url_file, server.launch_url)
     # A long poll interval: the loop never has to exit on its own because quitting

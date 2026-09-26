@@ -9,6 +9,7 @@ const PROVIDERS = [
 ];
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, stopped = false, submitting = null, pendingPrefs = null, lastLogId = null, minuteTimer = null;
+let pendingSwap = null, pendingTimer = null, layoutKey = '';
 const cards = new Map(), tiles = new Map();
 
 // ---------- helpers ----------
@@ -20,7 +21,7 @@ function node(tag, className, text) {
 }
 const remaining = used => Math.max(0, Math.min(100, 100 - used));
 const level = left => left > 30 ? 'level-good' : left > 10 ? 'level-warn' : 'level-bad';
-const shortName = account => account.alias.split(' · ').pop().replace(' (synthetic)', '');
+const displayName = account => account.name || account.email || account.alias;
 function relative(ts) {
   const m = Math.max(0, Math.round((ts * 1000 - Date.now()) / 60000));
   if (m < 1) return 'now';
@@ -32,9 +33,23 @@ function absolute(ts) {
   const d = new Date(ts * 1000), time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
 }
-const resetText = ts => `Resets ${absolute(ts)} · ${relative(ts)}`;
-const accountWindows = a => a.windows.filter(w => w.key === 'five_hour' || w.key === 'weekly');
-const headroom = a => Math.min(...accountWindows(a).map(w => remaining(w.used)));
+const resetText = ts => ts ? `Resets ${absolute(ts)} · ${relative(ts)}` : 'Reset time not reported';
+const accountWindows = a => a.windows.filter(w => w.scope === 'account');
+const headroom = a => (a.headroom ?? -1) >= 0 ? a.headroom : 100;
+const renewText = ts => ts ? `Renews ${relative(ts)}` : '';
+function ago(ts) {
+  const m = Math.floor((Date.now() / 1000 - ts) / 60);
+  return m < 1 ? 'Updated just now' : m < 60 ? `Updated ${m}m ago` : `Updated ${Math.floor(m / 60)}h ago`;
+}
+// Swap a text label with a short cross-fade instead of an instant jump.
+function setLabel(el, text) {
+  if (el.textContent === text) return;
+  if (reduceMotion || !el.isConnected || !el.textContent) { el.textContent = text; return; }
+  el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 90, easing: 'ease-in' }).onfinish = () => {
+    el.textContent = text;
+    el.animate([{ opacity: 0, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 160, easing: 'ease-out' });
+  };
+}
 
 // Short count for changed percentages (~0.35s, then stops).
 function tweenNumber(el, to) {
@@ -62,9 +77,9 @@ function toast(message, kind = '') {
   }, kind === 'error' ? 6000 : 3800);
 }
 const classify = text =>
-  /fail|exhaust|error|stopped|attention|interrupt|quota/i.test(text) && !/→|failover|routed|selected/i.test(text) ? 'fail'
-    : /→|swap|selected|routed|failover|continue/i.test(text) ? 'swap'
-    : /completed|started|restored/i.test(text) ? 'ok' : '';
+  /fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without/i.test(text) && !/→|failover|routed|selected/i.test(text) ? 'fail'
+    : /→|swap|selected|routed|failover|continue|now uses/i.test(text) ? 'swap'
+    : /added|completed|started|restored|opened/i.test(text) ? 'ok' : '';
 
 // ---------- build (once) ----------
 function buildTile(provider) {
@@ -97,11 +112,16 @@ function buildCard(account, index) {
   logo.src = `/assets/${account.provider}.png`; logo.alt = '';
   avatar.append(logo);
   const identity = node('div', 'identity'), line = node('div', 'alias-line');
-  line.append(node('span', 'alias', shortName(account)));
-  if (account.plan) line.append(node('span', 'plan', account.plan));
-  identity.append(line, node('div', 'email', account.email || 'Sample account'));
-  const badge = node('span', 'badge', 'In use');
-  head.append(avatar, identity, badge);
+  const name = node('span', 'alias', displayName(account));
+  name.title = displayName(account);
+  line.append(name);
+  const plan = node('span', 'plan', account.plan || '');
+  plan.hidden = !account.plan;
+  line.append(plan);
+  identity.append(line);
+  const side = node('div', 'card-side'), renew = node('span', 'renew num'), badge = node('span', 'badge', 'In use');
+  side.append(renew, badge);
+  head.append(avatar, identity, side);
 
   const list = node('div', 'windows'), windows = new Map();
   for (const w of account.windows) {
@@ -121,18 +141,50 @@ function buildCard(account, index) {
     windows.set(w.key, { row, value, bar, fill, reset });
   }
 
-  const foot = node('div', 'card-foot'), hint = node('span', 'hint'), swap = node('button', 'button', 'Swap');
+  if (!account.windows.length) list.append(node('div', 'window-empty', 'Usage not loaded yet'));
+  const foot = node('div', 'card-foot'), hint = node('span', 'hint'), actions = node('div', 'card-actions');
+  const swap = node('button', 'button swap'), label = node('span', 'label', 'Swap to this');
   swap.type = 'button';
-  swap.addEventListener('click', () => act('swap', { id: account.id }, swap));
-  foot.append(hint, swap);
+  swap.append(label);
+  swap.addEventListener('click', () => startSwap(account.id));
+  const remove = node('button', 'button quiet remove', 'Remove');
+  remove.type = 'button';
+  remove.title = 'Forget this saved login';
+  remove.addEventListener('click', () => {
+    if (confirm(`Remove ${displayName(account)} from Account Switcher? Its saved login is deleted from this PC.`)) act('remove', { id: account.id });
+  });
+  remove.hidden = state.mode !== 'live';
+  actions.append(remove, swap);
+  foot.append(hint, actions);
   card.append(head, list, foot);
-  cards.set(account.id, { card, badge, windows, swap, hint });
+  cards.set(account.id, { card, badge, renew, windows, swap, label, hint, remove, plan });
   return card;
 }
 
 function build() {
-  PROVIDERS.forEach(buildTile);
+  if (!tiles.size) PROVIDERS.forEach(buildTile);
+  cards.clear();
+  $('accounts').replaceChildren();
   let index = 0;
+  if (!state.accounts.length) {
+    const empty = node('section', 'empty-state enter');
+    empty.append(node('h2', '', 'No accounts yet'),
+      node('p', '', state.mode === 'live'
+        ? 'Sign in to Claude Code or Codex as usual and the account appears here automatically, or add one now.'
+        : 'No sample accounts.'));
+    if (state.mode === 'live') {
+      const row = node('div', 'empty-actions');
+      for (const provider of PROVIDERS) {
+        const add = node('button', 'button', `Add ${provider.name} account`);
+        add.type = 'button';
+        add.addEventListener('click', () => act('add', { provider: provider.id }, add));
+        row.append(add);
+      }
+      empty.append(row);
+    }
+    $('accounts').append(empty);
+    return;
+  }
   for (const provider of PROVIDERS) {
     const accounts = state.accounts.filter(a => a.provider === provider.id);
     if (!accounts.length) continue;
@@ -141,7 +193,8 @@ function build() {
     const head = node('div', 'group-head enter'), logo = node('img');
     head.style.setProperty('--i', index++);
     logo.src = `/assets/${provider.id}.png`; logo.alt = '';
-    head.append(logo, node('h2', '', provider.name), node('span', 'count', `${accounts.length} account${accounts.length === 1 ? '' : 's'}`), node('span', 'caption', provider.caption));
+    head.append(logo, node('h2', '', provider.name), node('span', 'count', `${accounts.length} account${accounts.length === 1 ? '' : 's'}`),
+      node('span', 'caption', state.mode === 'live' ? (provider.id === 'claude' ? 'Claude Code' : 'Codex CLI & app') : provider.caption));
     const grid = node('div', 'cards');
     for (const account of accounts) grid.append(buildCard(account, index++));
     group.append(head, grid);
@@ -150,14 +203,30 @@ function build() {
 }
 
 // ---------- update (every state change) ----------
+function startSwap(id) {
+  if (pendingSwap || submitting) return;
+  pendingSwap = id;
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => { pendingSwap = null; if (state) updateCards(); }, 8000);
+  updateCards();
+  act('swap', { id }).then(ok => { if (!ok) { pendingSwap = null; updateCards(); } });
+}
+
 function updateCards() {
-  const locked = state.busy || !!submitting;
+  const locked = state.busy || !!submitting || !!pendingSwap;
+  if (pendingSwap && state.accounts.some(a => a.id === pendingSwap && a.active)) {
+    pendingSwap = null;  // the switch landed
+    clearTimeout(pendingTimer);
+  }
   for (const account of state.accounts) {
     const view = cards.get(account.id);
     if (!view) continue;
     view.card.classList.toggle('active', account.active);
     view.card.classList.toggle('spent', !account.eligible);
     view.badge.textContent = account.eligible ? 'In use' : 'Limit reached';
+    view.renew.textContent = renewText(account.renewsAt);
+    view.plan.textContent = account.plan || '';
+    view.plan.hidden = !account.plan;
     for (const w of account.windows) {
       const wv = view.windows.get(w.key);
       if (!wv) continue;
@@ -168,12 +237,21 @@ function updateCards() {
       wv.bar.setAttribute('aria-valuenow', String(Math.round(left)));
       wv.reset.textContent = resetText(w.resetsAt);
     }
-    const isWorking = submitting && submitting.el === view.swap;
-    view.swap.classList.toggle('working', !!isWorking);
+    const switching = pendingSwap === account.id;
     view.swap.disabled = locked || account.active || !account.eligible;
-    view.swap.className = `button${isWorking ? ' working' : ''}${account.active ? ' current' : account.eligible ? ' accent' : ''}`;
-    view.swap.textContent = !account.eligible ? 'Unavailable' : account.active ? 'Active' : 'Swap to this';
-    view.hint.textContent = account.active ? 'New requests route here' : account.eligible ? `${Math.round(headroom(account))}% headroom` : 'Waiting for reset';
+    view.swap.classList.toggle('working', switching);
+    view.swap.classList.toggle('current', account.active);
+    view.swap.classList.toggle('accent', !account.active && account.eligible);
+    setLabel(view.label, switching ? 'Switching…' : !account.eligible ? 'Unavailable' : account.active ? 'Active' : 'Swap to this');
+    view.remove.hidden = state.mode !== 'live' || account.active;
+    view.remove.disabled = locked;
+    const problem = account.status;
+    view.hint.classList.toggle('warn', !!problem);
+    view.hint.textContent = problem
+      || (account.active ? 'New sessions use this account'
+        : !account.eligible ? 'Waiting for reset'
+        : account.headroom >= 0 ? `${Math.round(account.headroom)}% headroom` : 'Usage not loaded yet');
+    if (!problem && state.mode === 'live' && account.updated_at) view.hint.title = ago(account.updated_at);
   }
 }
 
@@ -181,15 +259,24 @@ function updateTiles() {
   for (const provider of PROVIDERS) {
     const view = tiles.get(provider.id);
     const account = state.accounts.find(a => a.provider === provider.id && a.active);
-    if (!view || !account) continue;
+    if (!view) continue;
+    view.tile.classList.toggle('idle', !account);
+    if (!account) {
+      view.who.textContent = 'Not signed in';
+      view.meta.textContent = state.mode === 'live' ? `Sign in to ${provider.name} to track it here` : '';
+      view.next.textContent = '';
+      view.fill.style.strokeDashoffset = view.circumference;
+      tweenNumber(view.pct, 0);
+      continue;
+    }
     const left = headroom(account);
     view.tile.style.setProperty('--level', `var(--${left > 30 ? 'good' : left > 10 ? 'warn' : 'bad'})`);
     view.fill.style.strokeDashoffset = view.circumference * (1 - left / 100);
     tweenNumber(view.pct, left);
-    view.who.textContent = shortName(account);
-    view.meta.textContent = [account.plan, account.email].filter(Boolean).join(' · ');
-    const soonest = accountWindows(account).reduce((a, b) => (a.resetsAt < b.resetsAt ? a : b));
-    view.next.replaceChildren('Next reset ', node('b', 'num', relative(soonest.resetsAt)), ` · ${soonest.label}`);
+    view.who.textContent = displayName(account);
+    view.who.title = displayName(account);
+    view.meta.textContent = account.status || account.plan || '';
+    view.next.replaceChildren(...(account.renewsAt ? ['Renews ', node('b', 'num', relative(account.renewsAt).replace(/^in /, 'in '))] : []));
   }
 }
 
@@ -218,10 +305,19 @@ function updateLog() {
 
 function render(next) {
   state = next;
-  if (!cards.size) {
+  // Rebuild only when the set of accounts or their usage windows changes.
+  const key = state.mode + '|' + state.accounts.map(a => a.id + ':' + a.windows.map(w => w.key).join(',')).join(';');
+  if (key !== layoutKey) {
+    layoutKey = key;
     build();
     void $('accounts').offsetHeight; // commit the empty bars so the first fill transitions
   }
+  const live = state.mode === 'live';
+  document.body.classList.toggle('live', live);
+  $('lab').hidden = live;
+  $('reset').title = $('reset').ariaLabel = live ? 'Refresh usage' : 'Reset sample accounts';
+  $('add').hidden = !live;
+  $('footnote').textContent = live ? 'Logins are saved encrypted on this PC only.' : 'Sample data. Start without --demo to use your real accounts.';
   $('connection').textContent = 'Connected to local server';
   $('connection-dot').classList.add('ready');
   if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
@@ -272,9 +368,11 @@ async function act(action, body = {}, el = null) {
   if (state) render(state);
   try {
     await request(`/api/${action}`, body);
+    return true;
   } catch (e) {
     pendingPrefs = null;
     toast(e.message, 'error');
+    return false;
   } finally {
     submitting = null;
     if (state) render(state);
@@ -288,6 +386,7 @@ async function observe() {
     return;
   }
   let failures = 0;
+  request('/api/refresh', { ifOlderThan: 60 }).catch(() => {});  // fresh numbers when the dashboard opens
   while (!stopped) {
     try {
       const next = await request(`/api/state?after=${state?.revision ?? -1}`);
@@ -339,6 +438,14 @@ $('reset').addEventListener('click', () => {
   icon.classList.remove('spin'); void icon.offsetWidth; icon.classList.add('spin');
   act('reset');
 });
+$('add').addEventListener('click', event => {
+  event.stopPropagation();
+  $('add-menu').hidden = !$('add-menu').hidden;
+});
+for (const item of document.querySelectorAll('[data-add]')) {
+  item.addEventListener('click', () => { $('add-menu').hidden = true; act('add', { provider: item.dataset.add }); });
+}
+document.addEventListener('click', () => { $('add-menu').hidden = true; });
 $('shutdown').addEventListener('click', async () => {
   try {
     await request('/api/shutdown', {});

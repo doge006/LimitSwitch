@@ -1,7 +1,8 @@
-"""Draws the tray flyout as an image plus clickable regions. Pure Pillow; no windowing.
+"""Draws the tray flyout and its right-click menu as images plus clickable regions.
 
-Shapes are drawn at 3x and downsampled so edges are anti-aliased; text is drawn at
-final size by FreeType (already smooth). Everything is in logical pixels times `scale`.
+Pure Pillow; no windowing. Shapes are drawn at 2x on an opaque canvas and downsampled
+(anti-aliased edges, correct blending); text is drawn at final size by FreeType.
+Everything is in logical pixels times `scale`.
 """
 from functools import lru_cache
 import os
@@ -15,7 +16,8 @@ ASSETS = Path(__file__).with_name("static") / "assets"
 PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 SS = 2  # supersampling factor for shapes
 
-WIDTH = 372         # panel width
+WIDTH = 404         # panel width
+MENU_WIDTH = 232
 MARGIN = 18         # transparent margin that holds the shadow
 RADIUS = 8
 ROW_H = 54
@@ -43,8 +45,8 @@ def level_rgb(left):
     return GOOD if left > 30 else WARN if left > 10 else BAD
 
 
-def short_name(account):
-    return account["alias"].split(" · ")[-1].replace(" (synthetic)", "")
+def display_name(account):
+    return account.get("name") or account.get("email") or account["alias"]
 
 
 def short_label(window):
@@ -52,12 +54,26 @@ def short_label(window):
         return "5h"
     if window["key"] == "weekly":
         return "1w"
+    if window["key"] == "monthly":
+        return "30d"
     return window["label"].split(" · ")[-1]
 
 
 def until(ts):
     m = max(0, int((ts - time.time()) / 60))
-    return f"{m // 1440}d {m % 1440 // 60}h" if m >= 1440 else f"{m // 60}h {m % 60}m"
+    if m >= 1440:
+        return f"{m // 1440}d {m % 1440 // 60}h"
+    return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m}m"
+
+
+def status_note(account):
+    """Short text when usage could not be fetched, else None."""
+    status = account.get("status") or ""
+    if not status:
+        return None
+    if "sign in" in status.lower() or "missing" in status.lower():
+        return "Sign in again"
+    return "Stale"
 
 
 # ---------- fonts & images ----------
@@ -76,6 +92,10 @@ def font(size, bold, scale):
         return ImageFont.truetype(str(semibold if bold else regular), round(size * scale))
     except OSError:
         return ImageFont.load_default(round(size * scale))
+
+
+def text_w(value, size, bold=False):
+    return font(size, bold, 1).getlength(value)
 
 
 @lru_cache(maxsize=16)
@@ -97,8 +117,8 @@ class Layout:
     def dot(self, cx, cy, r, fill):
         self.shapes.append(("ellipse", cx - r, cy - r, cx + r, cy + r, fill))
 
-    def power(self, cx, cy, r, fill):
-        self.shapes.append(("power", cx, cy, r, fill))
+    def icon(self, kind, cx, cy, r, fill):
+        self.shapes.append((kind, cx, cy, r, fill))
 
     def text(self, x, y, value, size, fill, bold=False, anchor="lm"):
         self.texts.append((x, y, value, size, bold, fill, anchor))
@@ -110,102 +130,139 @@ class Layout:
         self.hits.append(((x, y, w, h), action))
 
 
-def fit(value, size, bold, width, scale):
-    f = font(size, bold, scale)
-    if f.getlength(value) <= width * scale:
+def fit(value, size, bold, width):
+    if text_w(value, size, bold) <= width:
         return value
-    while value and f.getlength(value + "…") > width * scale:
+    while value and text_w(value + "…", size, bold) > width:
         value = value[:-1]
     return value + "…"
 
 
 def switch(layout, x, cy, on, hover):
-    fill = GOOD if on else (0, 0, 0, 0)
-    layout.rect(x, cy - 8, 34, 16, 8, fill if on else (255, 255, 255, 60 if hover else 40))
+    layout.rect(x, cy - 8, 34, 16, 8, GOOD if on else (255, 255, 255, 60 if hover else 40))
     if not on:
         layout.rect(x + 1, cy - 7, 32, 14, 7, FOOTER)
     knob = 11 if hover else 10
     layout.dot(x + (26 if on else 8), cy, knob / 2, (20, 20, 20, 255) if on else MUTED)
 
 
-def build(state, hover=None):
+def icon_button(layout, x, y, size, kind, action, hover, active=False):
+    if hover == action or active:
+        layout.rect(x, y, size, size, 6, PILL_HOVER if hover == action else PILL)
+    layout.icon(kind, x + size / 2, y + size / 2, 6.5, TEXT if (hover == action or active) else MUTED)
+    layout.hit(x, y, size, size, action)
+
+
+def build(state, hover=None, pending=None, pinned=False):
     """Lay out the flyout. Returns (layout, panel_height). Coordinates exclude MARGIN."""
     L, W = Layout(), WIDTH
     busy = state.get("busy")
 
-    # Header: mark, title, "Full view" pill.
+    # Header: mark, title, pop-out, "Full view".
     L.image(16, 16, "switcher", 22)
     L.text(46, 27, "Account Switcher", 14, TEXT, bold=True)
     pill_w = 92
-    L.rect(W - 16 - pill_w, 13, pill_w, 28, 6, PILL_HOVER if hover == "full" else PILL)
-    L.text(W - 16 - pill_w + 13, 27, "Full view", 12, TEXT)
+    pill_x = W - 16 - pill_w
+    L.rect(pill_x, 13, pill_w, 28, 6, PILL_HOVER if hover == "full" else PILL)
+    L.text(pill_x + 13, 27, "Full view", 12, TEXT)
     L.text(W - 16 - 13, 26, "›", 16, TEXT, anchor="rm")
-    L.hit(W - 16 - pill_w, 13, pill_w, 28, "full")
+    L.hit(pill_x, 13, pill_w, 28, "full")
+    icon_button(L, pill_x - 34, 13, 28, "popin" if pinned else "popout", "pin", hover, active=pinned)
     y = 54
 
+    accounts_all = state["accounts"]
+    if not accounts_all:
+        y += 10
+        L.text(W / 2, y + 12, "No accounts yet", 13, TEXT, bold=True, anchor="mm")
+        L.text(W / 2, y + 34, "Sign in to Claude Code or Codex, or add one here.", 11, MUTED, anchor="mm")
+        y += 54
+        for i, (provider, title) in enumerate(PROVIDERS):
+            bx = W / 2 - 124 + i * 128
+            action = "add:" + provider
+            L.rect(bx, y, 120, 30, 6, PILL_HOVER if hover == action else PILL)
+            L.image(bx + 12, y + 8, provider, 14)
+            L.text(bx + 32, y + 15, f"Add {title}", 12, TEXT)
+            L.hit(bx, y, 120, 30, action)
+        y += 44
+
     for provider, title in PROVIDERS:
-        accounts = [a for a in state["accounts"] if a["provider"] == provider]
+        accounts = [a for a in accounts_all if a["provider"] == provider]
         if not accounts:
             continue
         y += 6
         L.image(16, y + 4, provider, 14)
         L.text(37, y + 11, title.upper(), 11, ACCENT[provider], bold=True)
-        tw = font(11, True, 1).getlength(title.upper())
-        L.text(37 + tw + 7, y + 11, str(len(accounts)), 11, FAINT)
+        L.text(37 + text_w(title.upper(), 11, True) + 7, y + 11, str(len(accounts)), 11, FAINT)
         y += 24
         for account in accounts:
             key = "swap:" + account["id"]
             top = y
-            if hover == key and account["eligible"] and not account["active"]:
+            switchable = account["eligible"] and not account["active"] and not busy and not pending
+            if hover == key and switchable:
                 L.rect(8, top, W - 16, ROW_H, 6, HOVER)
             elif account["active"]:
                 L.rect(8, top, W - 16, ROW_H, 6, ACTIVE)
             if account["active"]:
                 L.rect(10, top + 13, 3, ROW_H - 26, 1.5, GOOD)
 
-            # Line 1: name, plan chip, status on the right.
-            if not account["eligible"]:
-                resets = min(w["resetsAt"] for w in account["windows"] if w["key"] in ("five_hour", "weekly") and w["used"] >= 100) \
-                    if any(w["used"] >= 100 for w in account["windows"]) else None
-                status, color = ("Limit · " + until(resets) if resets else "Limit reached"), BAD
+            # Line 1, right to left: status, then renewal time; the name takes the rest.
+            cy = top + 17
+            right = W - 22
+            if pending == account["id"]:
+                status, color = "Switching…", TEXT
             elif account["active"]:
                 status, color = "In use", GOOD
-            elif hover == key and not busy:
+            elif not account["eligible"]:
+                status, color = "Limit", BAD
+            elif hover == key and switchable:
                 status, color = "Switch", TEXT
             else:
                 status, color = "", FAINT
-            status_w = font(11, True, 1).getlength(status) + (12 if account["active"] else 0)
-            name_x = 22
-            chip = account.get("plan") or ""
-            chip_w = font(10, True, 1).getlength(chip) + 12 if chip else 0
-            name = fit(short_name(account), 13, True, W - name_x - 22 - status_w - chip_w - 16, 1)
-            L.text(name_x, top + 17, name, 13, TEXT, bold=True)
-            if chip:
-                cx = name_x + font(13, True, 1).getlength(name) + 8
-                accent = ACCENT[provider]
-                L.rect(cx, top + 9, chip_w, 16, 4, accent[:3] + (38,))
-                L.text(cx + 6, top + 17, chip, 10, accent, bold=True)
             if status:
-                L.text(W - 22, top + 17, status, 11, color, bold=True, anchor="rm")
-                if account["active"]:
-                    L.dot(W - 22 - status_w + 4, top + 17, 3, GOOD)
+                L.text(right, cy, status, 11, color, bold=True, anchor="rm")
+                right -= text_w(status, 11, True)
+                if account["active"] and pending != account["id"]:
+                    L.dot(right - 6, cy, 3, GOOD)
+                    right -= 10
+                right -= 12
+            note = status_note(account)
+            if note:
+                L.text(right, cy, note, 11, WARN, anchor="rm")
+                right -= text_w(note, 11) + 12
+            elif account.get("renewsAt"):
+                renew = until(account["renewsAt"])
+                L.text(right, cy, renew, 11, MUTED, anchor="rm")
+                right -= text_w(renew, 11)
+                L.icon("clock", right - 8, cy, 4.5, MUTED)
+                right -= 22
+            chip = account.get("plan") or ""
+            chip_w = text_w(chip, 10, True) + 12 if chip else 0
+            name = fit(display_name(account), 13, True, right - 22 - (chip_w + 8 if chip else 0))
+            L.text(22, cy, name, 13, TEXT, bold=True)
+            if chip:
+                cx = 22 + text_w(name, 13, True) + 8
+                L.rect(cx, top + 9, chip_w, 16, 4, ACCENT[provider][:3] + (38,))
+                L.text(cx + 6, cy, chip, 10, ACCENT[provider], bold=True)
 
             # Line 2: up to three compact meters.
             windows = account["windows"][:3]
-            col_w = (W - 44 + 14) / len(windows)
-            for i, window in enumerate(windows):
-                left = remaining(window["used"])
-                x0 = 22 + i * col_w
-                ly = top + 38
-                label = short_label(window)
-                label_w = max(20, font(11, False, 1).getlength(label) + 7)
-                L.text(x0, ly, label, 11, MUTED)
-                bar_x, bar_w = x0 + label_w, col_w - label_w - 52
-                L.rect(bar_x, ly - 2, bar_w, 4, 2, TRACK)
-                if left > 0:
-                    L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
-                L.text(x0 + col_w - 14, ly, f"{left:.0f}%", 11, level_rgb(left), bold=True, anchor="rm")
-            if account["eligible"] and not account["active"] and not busy:
+            if not windows:
+                L.text(22, top + 38, "Usage not loaded yet" if not account.get("status") else account["status"], 11, FAINT)
+            else:
+                col_w = (W - 44 + 14) / len(windows)
+                for i, window in enumerate(windows):
+                    left = remaining(window["used"])
+                    x0 = 22 + i * col_w
+                    ly = top + 38
+                    label = short_label(window)
+                    label_w = max(20, text_w(label, 11) + 7)
+                    L.text(x0, ly, label, 11, MUTED)
+                    bar_x, bar_w = x0 + label_w, col_w - label_w - 52
+                    L.rect(bar_x, ly - 2, bar_w, 4, 2, TRACK)
+                    if left > 0:
+                        L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
+                    L.text(x0 + col_w - 14, ly, f"{left:.0f}%", 11, level_rgb(left), bold=True, anchor="rm")
+            if switchable:
                 L.hit(8, top, W - 16, ROW_H, key)
             y += ROW_H + 2
 
@@ -220,24 +277,42 @@ def build(state, hover=None):
         action = "toggle:" + pref
         switch(L, x, cy, state[pref], hover == action)
         L.text(x + 42, cy, label, 12, TEXT if not busy else MUTED)
-        width = 42 + font(12, False, 1).getlength(label) + 18
+        width = 42 + text_w(label, 12) + 18
         if not busy:
             L.hit(x - 4, cy - 14, width, 28, action)
         x += width + 4
-    if hover == "quit":
-        L.rect(W - 16 - 30, cy - 15, 30, 30, 6, PILL)
-    L.power(W - 16 - 15, cy, 7, TEXT if hover == "quit" else MUTED)
-    L.hit(W - 16 - 30, cy - 15, 30, 30, "quit")
+    icon_button(L, W - 16 - 30, cy - 15, 30, "power", "quit", hover)
     return L, y + footer_h
 
 
+def build_menu(items, hover=None):
+    """Right-click menu. items: dicts {action, label, checked?, bold?, enabled?} or "-"."""
+    L, W = Layout(), MENU_WIDTH
+    y = 5
+    for item in items:
+        if item == "-":
+            L.rect(10, y + 4, W - 20, 1, 0, BORDER)
+            y += 9
+            continue
+        enabled = item.get("enabled", True)
+        if hover == item["action"] and enabled:
+            L.rect(5, y, W - 10, 32, 5, HOVER)
+        if item.get("checked"):
+            L.icon("check", 20, y + 16, 5, TEXT if enabled else FAINT)
+        L.text(36, y + 16, item["label"], 12, TEXT if enabled else FAINT, bold=item.get("bold", False))
+        if enabled:
+            L.hit(5, y, W - 10, 32, item["action"])
+        y += 32
+    return L, y + 5
+
+
 @lru_cache(maxsize=8)
-def frame(height, scale):
+def frame(width, height, scale):
     """Rounded panel mask and its soft shadow; depend only on size, so cached."""
-    W, M, big = WIDTH, MARGIN, scale * SS
-    full = (round((W + 2 * M) * scale), round((height + 2 * M) * scale))
-    mask = Image.new("L", (round((W + 2 * M) * big), round((height + 2 * M) * big)), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((M * big, M * big, (M + W) * big - 1, (M + height) * big - 1), RADIUS * big, fill=255)
+    M, big = MARGIN, scale * SS
+    full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
+    mask = Image.new("L", (round((width + 2 * M) * big), round((height + 2 * M) * big)), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((M * big, M * big, (M + width) * big - 1, (M + height) * big - 1), RADIUS * big, fill=255)
     mask = mask.resize(full, Image.Resampling.LANCZOS)
     shadow = Image.new("RGBA", full, (0, 0, 0, 0))
     shadow.putalpha(mask.point(lambda v: v * 110 // 255).filter(ImageFilter.GaussianBlur(12 * scale)))
@@ -245,25 +320,18 @@ def frame(height, scale):
     return mask, shadow
 
 
-def render(state, hover=None, scale=1.0):
-    """Return (RGBA image including shadow margin, hits in logical px incl. margin)."""
-    layout, height = build(state, hover)
-    W, H, M = WIDTH, height, MARGIN
-    full_w, full_h = round((W + 2 * M) * scale), round((H + 2 * M) * scale)
-    big = scale * SS
-
-    mask_size = (round((W + 2 * M) * big), round((H + 2 * M) * big))
-    mask, shadow = frame(H, scale)
-    shadow = shadow.copy()
-
-    # Shapes at SS x on an opaque canvas (so translucent fills blend), then downsampled
-    # and cut to the rounded panel shape.
-    canvas = Image.new("RGB", mask_size, BG[:3])
+def paint(layout, width, height, scale):
+    """Rasterise a layout. Returns (RGBA image incl. shadow margin, hits in logical px incl. margin)."""
+    M, big = MARGIN, scale * SS
+    full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
+    mask, shadow = frame(width, height, scale)
+    canvas = Image.new("RGB", (round((width + 2 * M) * big), round((height + 2 * M) * big)), BG[:3])
     d = ImageDraw.Draw(canvas, "RGBA")
 
     def P(v):
         return v * big
 
+    line = max(1, round(P(1.4)))
     for op in layout.shapes:
         kind = op[0]
         if kind == "rect":
@@ -276,27 +344,48 @@ def render(state, hover=None, scale=1.0):
         elif kind == "ellipse":
             _, x1, y1, x2, y2, fill = op
             d.ellipse((P(M + x1), P(M + y1), P(M + x2), P(M + y2)), fill=fill)
-        elif kind == "power":
+        else:
             _, cx, cy, r, fill = op
-            cx, cy = P(M + cx), P(M + cy)
-            w = max(1, round(P(1.4)))
-            d.arc((cx - P(r), cy - P(r) + P(1), cx + P(r), cy + P(r) + P(1)), 300, 240, fill=fill, width=w)
-            d.line((cx, cy - P(r) - P(1), cx, cy + P(1)), fill=fill, width=w)
-    d.rounded_rectangle((P(M), P(M), P(M + W) - 1, P(M + H) - 1), P(RADIUS), outline=BORDER, width=max(1, round(big)))
-    panel = canvas.resize((full_w, full_h), Image.Resampling.LANCZOS).convert("RGBA")
+            cx, cy, r = P(M + cx), P(M + cy), P(r)
+            if kind == "power":
+                d.arc((cx - r, cy - r + P(1), cx + r, cy + r + P(1)), 300, 240, fill=fill, width=line)
+                d.line((cx, cy - r - P(1), cx, cy + P(1)), fill=fill, width=line)
+            elif kind == "clock":
+                d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=fill, width=line)
+                d.line((cx, cy - r * .55, cx, cy, cx + r * .45, cy + r * .3), fill=fill, width=line, joint="curve")
+            elif kind == "check":
+                d.line((cx - r, cy, cx - r * .3, cy + r * .7, cx + r, cy - r * .7), fill=fill, width=line, joint="curve")
+            elif kind in ("popout", "popin"):
+                # A window with an arrow leaving it (pop out) or entering it (pop in).
+                d.rounded_rectangle((cx - r, cy - r * .6, cx + r * .6, cy + r), P(1.5), outline=fill, width=line)
+                if kind == "popout":
+                    d.line((cx - r * .1, cy + r * .1, cx + r, cy - r), fill=fill, width=line)
+                    d.line((cx + r * .25, cy - r, cx + r, cy - r, cx + r, cy - r * .25), fill=fill, width=line, joint="curve")
+                else:
+                    d.line((cx + r, cy - r, cx + r * .05, cy - r * .05), fill=fill, width=line)
+                    d.line((cx - r * .05, cy - r * .7, cx + r * .05, cy - r * .05, cx + r * .7, cy + r * .05), fill=fill, width=line, joint="curve")
+    d.rounded_rectangle((P(M), P(M), P(M + width) - 1, P(M + height) - 1), P(RADIUS), outline=BORDER, width=max(1, round(big)))
+    panel = canvas.resize(full, Image.Resampling.LANCZOS).convert("RGBA")
     panel.putalpha(mask)
 
-    image = shadow
+    image = shadow.copy()
     image.alpha_composite(panel)
     draw = ImageDraw.Draw(image)
     for x, y, name, size in layout.images:
-        icon = asset(name, round(size * scale))
-        image.alpha_composite(icon, (round((M + x) * scale), round((M + y) * scale)))
+        image.alpha_composite(asset(name, round(size * scale)), (round((M + x) * scale), round((M + y) * scale)))
     for x, y, value, size, bold, fill, anchor in layout.texts:
         draw.text(((M + x) * scale, (M + y) * scale), value, font=font(size, bold, scale), fill=fill, anchor=anchor)
+    return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
-    hits = [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
-    return image, hits
+
+def render(state, hover=None, scale=1.0, pending=None, pinned=False):
+    layout, height = build(state, hover, pending, pinned)
+    return paint(layout, WIDTH, height, scale)
+
+
+def render_menu(items, hover=None, scale=1.0):
+    layout, height = build_menu(items, hover)
+    return paint(layout, MENU_WIDTH, height, scale)
 
 
 def hit_test(hits, x, y):
@@ -305,3 +394,8 @@ def hit_test(hits, x, y):
         if hx <= x < hx + hw and hy <= y < hy + hh:
             return action
     return None
+
+
+def header_height():
+    """Pinned flyouts can be dragged by the header strip (above the first section)."""
+    return MARGIN + 50
