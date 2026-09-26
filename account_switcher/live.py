@@ -41,7 +41,7 @@ from .vault import Vault, atomic_write
 # Near-live usage for the accounts in use, gently for the rest. Each account also has a pace
 # (1 = normal) that doubles when the provider rate limits it and eases back after successes,
 # so the app settles at whatever rate the provider accepts.
-ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 1800
+ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 600  # idle: may be in use on another computer
 FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
 MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled

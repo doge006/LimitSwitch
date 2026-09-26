@@ -230,6 +230,13 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.showFullView_(None)  # clicked in the Dock or opened again
         return False
 
+    def applicationDidResignActive_(self, _note):
+        """Switched to another app: the full view goes away with its Dock icon, so the menu bar
+        icon only ever opens the small panel. Full view brings it back as it was."""
+        if self.full_window is not None and self.full_window.isVisible():
+            self.full_window.orderOut_(None)
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
     def windowWillClose_(self, _note):
         # Back to a menu bar app: no Dock icon once the window is closed.
         AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
