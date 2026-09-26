@@ -1,7 +1,8 @@
 """Account Switcher: a notification-area icon is the whole resident app.
 
-Left-click opens the dashboard (the local Web UI) in a borderless browser app window.
-Right-click offers one-click swaps, the Auto swap / AFK switches and Quit.
+Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / AFK) with a
+"Full view" button that opens the dashboard (the local Web UI) in a browser app window.
+Right-click offers a short menu.
 
 Idle cost is kept near zero: no Tk, no timers, no polling. The tray's Win32 message
 loop and one refresh thread both block until something happens; the icon image and
@@ -74,17 +75,9 @@ def tooltip(state):
     return "\n".join(lines)[:127]  # Windows tooltip limit
 
 
-def account_label(account):
-    if not account["eligible"]:
-        return f"{short_name(account)}  ·  limit reached"
-    return (f"{short_name(account)}  ·  {remaining(account['five_hour']):.0f}% 5h"
-            f"  ·  {remaining(account['weekly']):.0f}% week")
-
-
 def menu_signature(state):
     """Everything the menu shows; the menu is rebuilt only when this changes."""
-    return (state["autoSwap"], state["afk"], state["busy"],
-            tuple((a["id"], a["active"], account_label(a)) for a in state["accounts"]))
+    return state["autoSwap"], state["afk"], state["busy"]
 
 
 # ---------- icon ----------
@@ -145,7 +138,7 @@ def existing_instance(url_file):
 
 # ---------- tray host ----------
 class Tray:
-    def __init__(self, controller, server, icon_factory=pystray.Icon):
+    def __init__(self, controller, server, icon_factory=pystray.Icon, flyout=None):
         self.controller, self.server = controller, server
         self.url = server.launch_url
         self.state = controller.snapshot()
@@ -154,24 +147,21 @@ class Tray:
         self.quitting = False
         self.icon = icon_factory("account-switcher", icon_image(tray_level(self.state)),
                                  tooltip(self.state), pystray.Menu(self.menu_items))
-        # The dashboard's "Shut down" button quits the tray too.
+        # The dashboard's "Quit" button quits the tray too.
         server.quit = self.quit
+        if flyout is None and sys.platform == "win32":
+            from .flyout import Flyout
+            flyout = Flyout(self)
+        self.flyout = flyout
 
-    # Menu is generated from the latest snapshot each time pystray rebuilds it.
+    # Right-click menu; account swaps live in the flyout. Rebuilt only when it changes.
     def menu_items(self):
         state = self.state
-        yield pystray.MenuItem(f"Open {APP}", lambda: open_dashboard(self.url), default=True)
-        for provider, title in PROVIDERS:
-            accounts = [a for a in state["accounts"] if a["provider"] == provider]
-            if not accounts:
-                continue
-            yield pystray.Menu.SEPARATOR
-            yield pystray.MenuItem(title, None, enabled=False)
-            for account in accounts:
-                yield pystray.MenuItem(
-                    account_label(account), self.swapper(account["id"]),
-                    checked=lambda _, active=account["active"]: active, radio=True,
-                    enabled=account["eligible"] and not state["busy"])
+        if self.flyout:
+            yield pystray.MenuItem("Accounts", self.toggle_flyout, default=True)
+            yield pystray.MenuItem("Full view", self.open_full_view)
+        else:
+            yield pystray.MenuItem("Full view", self.open_full_view, default=True)
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Auto swap", self.toggle("autoSwap"),
                                checked=lambda _: state["autoSwap"], enabled=not state["busy"])
@@ -180,11 +170,11 @@ class Tray:
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Quit", self.quit)
 
-    def swapper(self, account_id):
-        def swap():
-            if not next(a for a in self.state["accounts"] if a["id"] == account_id)["active"]:
-                self.act("swap", {"id": account_id})
-        return swap
+    def toggle_flyout(self):
+        self.flyout.toggle()
+
+    def open_full_view(self):
+        open_dashboard(self.url)
 
     def toggle(self, key):
         def flip():
@@ -213,6 +203,8 @@ class Tray:
         if signature != self.shown["menu"]:
             self.shown["menu"] = signature
             self.icon.update_menu()
+        if self.flyout:
+            self.flyout.state_changed()
         self.announce_failovers(state)
 
     def announce_failovers(self, state):
@@ -248,6 +240,8 @@ class Tray:
     def quit(self, *_):
         if not self.quitting:
             self.quitting = True
+            if self.flyout:
+                self.flyout.dismiss()
             self.icon.stop()
 
     def run(self, open_now=False):
@@ -274,6 +268,9 @@ def main():
             open_dashboard(running)
             return
 
+    if sys.platform == "win32":
+        from .flyout import enable_dpi_awareness
+        enable_dpi_awareness()
     controller = Controller(args.simulator)
     server = make_server(controller, args.port, idle_seconds=0)
     write_url_file(args.url_file, server.launch_url)

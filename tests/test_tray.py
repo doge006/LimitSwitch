@@ -29,6 +29,20 @@ class FakeIcon:
         self.stopped = True
 
 
+class FakeFlyout:
+    def __init__(self):
+        self.toggles = self.refreshes = 0
+
+    def toggle(self):
+        self.toggles += 1
+
+    def state_changed(self):
+        self.refreshes += 1
+
+    def dismiss(self):
+        pass
+
+
 def wait_for(predicate, timeout=5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -65,30 +79,32 @@ class TrayTests(unittest.TestCase):
         self.assertIn("limit reached", tray.tooltip(state))
         self.assertEqual(tray.icon_image("warn").size, (64, 64))
 
-    def test_menu_lists_accounts_and_switches(self):
-        items = list(self.tray.menu_items())
-        texts = [i.text for i in items if i is not pystray.Menu.SEPARATOR]
-        self.assertEqual(texts[0], "Open Account Switcher")
+    def test_menu_without_flyout_opens_full_view(self):
+        items = [i for i in self.tray.menu_items() if i is not pystray.Menu.SEPARATOR]
+        self.assertEqual([i.text for i in items], ["Full view", "Auto swap", "AFK mode", "Quit"])
         self.assertTrue(items[0].default)
-        self.assertIn("Claude", texts)
-        self.assertIn("Quit", texts)
-        radios = [i for i in items if i is not pystray.Menu.SEPARATOR and i.radio]
-        self.assertEqual(len(radios), 4)
-        self.assertEqual(sum(i.checked for i in radios), 2)
-        header = next(i for i in items if i is not pystray.Menu.SEPARATOR and i.text == "Claude")
-        self.assertFalse(header.enabled)
+        self.assertTrue(items[1].checked)
+        self.assertFalse(items[2].checked)
 
-    def test_menu_actions_swap_and_toggle(self):
-        second = next(i for i in self.tray.menu_items() if getattr(i, "text", "").startswith("Second") and i.radio)
-        second(self.icon)
+    def test_menu_with_flyout_and_toggles(self):
+        flyout = FakeFlyout()
+        tray_ = tray.Tray(self.controller, self.server, icon_factory=FakeIcon, flyout=flyout)
+        items = [i for i in tray_.menu_items() if i is not pystray.Menu.SEPARATOR]
+        self.assertEqual(items[0].text, "Accounts")
+        items[0](tray_.icon)  # left-click activates the default item
+        self.assertEqual(flyout.toggles, 1)
+        next(i for i in items if i.text == "AFK mode")(tray_.icon)
+        self.assertTrue(wait_for(lambda: self.controller.afk))
+        tray_.refresh()
+        self.assertIn("AFK", tray_.icon.title)
+        self.assertGreater(flyout.refreshes, 0)  # open flyout is told to redraw
+
+    def test_manual_swap_is_not_announced(self):
+        self.tray.refresh()
+        self.controller.action("swap", {"id": "claude-b"})
         self.settle()
         self.assertEqual(self.controller.gateway.router.active["claude"], "claude-b")
-        self.assertEqual(self.icon.notes, [])  # manual swaps are not announced
-        afk = next(i for i in self.tray.menu_items() if getattr(i, "text", "") == "AFK mode")
-        afk(self.icon)
-        self.settle()
-        self.assertTrue(self.controller.afk)
-        self.assertIn("AFK", self.icon.title)
+        self.assertEqual(self.icon.notes, [])
 
     def test_refresh_only_touches_what_changed(self):
         self.tray.refresh()

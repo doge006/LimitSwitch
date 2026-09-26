@@ -14,15 +14,15 @@ python -m pip install -r requirements-native.txt
 .\Launch.cmd --quiet    # starts in the tray only
 ```
 
-- **Left-click the tray icon:** opens the dashboard, a borderless Edge/Chrome app window (falls back to your default browser).
-- **Right-click:** one-click account swaps with 5-hour and weekly headroom, plus Auto swap, AFK mode and Quit.
+- **Left-click the tray icon:** a compact panel slides up above the taskbar, like PowerToys' quick access. It shows each account's 5-hour, weekly and per-model headroom. Click an account to switch to it; the footer holds Auto swap, AFK and Quit. **Full view ›** opens the full dashboard in a borderless Edge/Chrome app window (falls back to your default browser). Esc or clicking elsewhere closes the panel.
+- **Right-click:** a short menu with Accounts, Full view, Auto swap, AFK mode and Quit.
 - **Hover:** shows the account in use per provider and how much is left.
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Failover:** a Windows notification says what switched and why.
 - **Launching again:** opens the running copy's dashboard instead of starting a second one.
 - **Quit** (tray menu or dashboard) stops everything the app started. Nothing runs at sign-in.
 
-Resource use: one Python process with no timers or polling. It sleeps until something changes. Measured idle over 30 s (Linux, virtual display): about 31 MB, 3 threads, 0 CPU, 0 wake-ups. The dashboard window costs memory only while it's open. The Go proxy and Claude CLI run only between Run and Stop in the Recovery lab.
+Resource use: one Python process with no timers or polling. It sleeps until something changes. The panel is a native Windows window drawn with Pillow; it exists only while open, and redraws only when the pointer moves to a different item or the state changes. Measured idle over 30 s (Linux, virtual display): about 31 MB, 3 threads, 0 CPU, 0 wake-ups. The dashboard window costs memory only while it's open. The Go proxy and Claude CLI run only between Run and Stop in the Recovery lab.
 
 ## Updating
 
@@ -61,6 +61,7 @@ Tray tests use pystray's dummy backend and need `pystray` + `Pillow`; they skip 
 ## Layout
 
 - `account_switcher/tray.py`: the app (tray icon, menu, notifications).
+- `account_switcher/flyout.py` + `flyout_render.py`: the tray panel (Win32 layered window + Pillow drawing).
 - `account_switcher/web.py` + `static/`: controller and dashboard.
 - `account_switcher/core.py`: routing and AFK recovery rules.
 - `account_switcher/client.py`, `demo.py`, `proxy_demo.py`: Recovery lab plumbing.
