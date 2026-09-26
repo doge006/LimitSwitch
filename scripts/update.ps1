@@ -27,7 +27,7 @@ param(
 # error under "Stop". Failures are detected through exit codes in RunGit instead.
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
-# Each launcher records its private URL here while running: native.url / web.url.
+# The running app records its private URL here (tray.url; older versions used native.url / web.url).
 $Runtime = Join-Path $Root ".runtime"
 
 function Say([string]$Text, [string]$Color = "Gray") {
@@ -165,11 +165,13 @@ try {
         }
     }
 
-    foreach ($mode in @(@{ File = "native.url"; Launcher = "Launch.cmd" }, @{ File = "web.url"; Launcher = "Launch-Web.cmd" })) {
-        if (Stop-RunningApp (Join-Path $Runtime $mode.File)) {
-            Start-Process -FilePath (Join-Path $Root $mode.Launcher) -WorkingDirectory $Root -WindowStyle Hidden
-            Say "Restarted Account Switcher on the new version." Green
-        }
+    $wasRunning = $false
+    foreach ($file in @("tray.url", "native.url", "web.url")) {
+        if (Stop-RunningApp (Join-Path $Runtime $file)) { $wasRunning = $true }
+    }
+    if ($wasRunning) {
+        Start-Process -FilePath (Join-Path $Root "Launch.cmd") -ArgumentList "--quiet" -WorkingDirectory $Root -WindowStyle Hidden
+        Say "Restarted Account Switcher on the new version." Green
     }
     Say "Done." Green
 } catch {

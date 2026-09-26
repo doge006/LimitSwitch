@@ -27,19 +27,19 @@ The safety thinking is good: explicit AFK opt-in, dedup of failure events, bound
 5. **Hardcoded model.** `claude-sonnet-4-6` appears in both `client.py` and `experiments/proxy/runtime.py`.
 6. **The proxy adapter only handles accounts "A" and "B".** `proxy_demo.py` maps accounts with `account.id[-1].upper()`, so a third account breaks it.
 7. **Product code imports `experiments/`.** `web.py` → `proxy_demo.py` → `experiments.proxy.runtime`. Move the runtime into the package once it stops being an experiment.
-8. **Two UIs, one controller.** The Tk dashboard and the Web UI duplicate each other. See "UI direction" below.
+8. ~~Two UIs, one controller.~~ Resolved: tray + web dashboard only; the Tk UI is gone.
 
 ## Bugs and smaller issues
 
 | Where | Issue | Status |
 |---|---|---|
 | `core.Router.fallback` | Failed over to the *first* eligible account in list order, which could be one that's nearly spent | **Fixed**: now picks the most headroom |
-| `native.Dashboard.poll` | Re-read state every 500 ms while visible and every 2 s while hidden, forever | **Fixed**: redraws on state change plus one tick per minute while on screen, nothing while hidden |
+| `native.Dashboard.poll` | Tk dashboard re-read state every 500 ms while visible and every 2 s while hidden, forever | **Fixed**, then superseded: Tk UI removed; the tray sleeps until state changes (0 idle wake-ups measured) |
 | `Launch*.cmd` | Hardcoded `%LocalAppData%\Programs\Python\Python313\pythonw.exe` | **Fixed**: falls back to `pyw`/`pythonw` on PATH |
 | `web.Controller.action` | `self.pending` is set outside the lock; `ProxyDemoGateway.arm/reset` mutate state without `self.lock` | Open, low risk (operations are serialized) |
-| `native.smoke_finish` | Final `/api/shutdown` POST gets a connection reset on Linux+Xvfb. Also happens on the original commit. External shutdown (curl / updater) works | Open, unverified on Windows |
+| `web.make_server` | Idle-watch thread woke every 5 s even when the timeout was off | **Fixed**: no thread without a timeout |
 | Repo size | ~1,600 vendored proxy files plus the whole Vitals repo (including the Swift macOS app) to use about 5 Python files | Consider trimming to what's used |
-| Docs | `README`/`IMPLEMENTATION_STATUS` are long and partly contradictory (Web chosen, then native) | Consider collapsing into one status page |
+| Docs | `README`/`IMPLEMENTATION_STATUS` were long and partly contradictory | **Fixed**: rewritten short and current |
 
 Policy note from your own plan (§12): Anthropic and OpenAI terms restrict third-party handling of subscription credentials and rate-limit circumvention. Weigh that before running this against real accounts.
 
@@ -47,14 +47,13 @@ Policy note from your own plan (§12): Anthropic and OpenAI terms restrict third
 
 | Component | Measured | When it runs |
 |---|---|---|
-| Web backend (Python, idle) | ~22 MB RSS, 0 CPU s over 30 s (Linux, this review) | While the app is open |
-| Native Tk tray + dashboard | ~59 MB working set, per your earlier Windows sample | While the app is open |
+| Tray app, idle (backend included) | ~31 MB RSS, 3 threads, 0 CPU ticks, 0 context switches over 30 s (Linux, Xvfb) | While the app is open |
 | Go proxy + Claude CLI | Not measured here | Only between Run and Stop |
 | Browser tab | Usually more than all of the above combined | Only while the tab is open |
 
 Changes in this pass:
 
-- Native: no idle timers (see above).
+- Tray: no timers or polling; one thread blocks on the controller until state changes.
 - Web: all motion is finite (transitions and one-shot keyframes). There are no infinite animations. The only timer is a once-a-minute countdown tick that stops while the tab is hidden. The DOM is built once and patched in place.
 
 ## UI direction
@@ -67,13 +66,13 @@ The Web UI has been rebuilt around the references:
 - Account cards per provider, each showing every usage window (including per-model caps like "Weekly · Fable"), plan chip, email and reset time in absolute and relative form.
 - Swap buttons in the provider's accent colour.
 
-Motion: active-card glow and toasts for swaps, failovers and errors. The Recovery lab expands smoothly and shows an activity timeline. Dark theme only, kept deliberately minimal; it respects reduced-motion settings.
+Motion is deliberately restrained: short ease-out fades, no bounce, no glow; toasts for swaps, failovers and errors. The Recovery lab expands smoothly and shows an activity timeline. Dark theme only, kept deliberately minimal; it respects reduced-motion settings.
 
-Recommendation: keep the **tray as the always-on, lightweight piece** and the **Web UI as the premium surface you open on demand**. Closing the tab frees its memory. Tk can't do anti-aliasing, blur or smooth compositing, so it'll never feel premium; stop investing in the Tk dashboard beyond the tray popup. If you later want premium *and* tiny in one always-open window, the realistic path is a native WinUI/Win32 shell. That's a much bigger job, so do it only after real data and real-session AFK work.
+Decision (2026-09-26): the tray is the app; left-click opens this dashboard in an app window. Tk was removed. If one always-open, tiny, premium window is ever needed, the path is a native WinUI/Win32 shell. Do that only after real data and real-session AFK work.
 
 ## Suggested next steps
 
 1. Real usage: wire the proxy's quota endpoints (or the Vitals Codex client) into `Account.windows()`.
 2. Encrypted credential store plus real sign-in for one provider.
 3. Interactive-session AFK for the Claude CLI (ConPTY or hooks).
-4. Drop the Tk dashboard window; keep the tray popup and the Web UI.
+4. ~~Drop the Tk dashboard.~~ Done: the app is now tray-only, with the web dashboard opened from the tray.

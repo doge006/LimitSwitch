@@ -36,9 +36,9 @@ class Controller:
         # Listing accounts and keeping a tray icon available should not start
         # the Go proxy or an official client. Start inference only on Run.
         self.url = None
-        # Callables invoked (from any thread) after every state change, so
-        # native views can redraw on demand instead of polling.
-        self.listeners = []
+        # Account ids the user picked by hand (dashboard, tray menu or reset), so the
+        # tray can tell those apart from automatic failovers worth a notification.
+        self.manual_swaps = set()
 
     def notify(self, kind, value):
         with self.condition:
@@ -57,8 +57,6 @@ class Controller:
                     self.output = (self.output + "\n\n[Response interrupted. Waiting for recovery.]\n\n")[-24000:]
             self.revision += 1
             self.condition.notify_all()
-        for listener in list(self.listeners):
-            listener()
 
     def snapshot(self):
         with self.condition:
@@ -102,12 +100,14 @@ class Controller:
                     if hasattr(self.gateway, "apply_preferences"):
                         self.gateway.apply_preferences()
                 elif action == "swap":
+                    self.manual_swaps.add(body["id"])
                     account = self.gateway.swap(body["id"]) if hasattr(self.gateway, "swap") else self.gateway.router.swap(body["id"])
                     self.notify("log", f"Next {account.provider} request selected: {account.alias}")
                 elif action in {"stop", "reset"}:
                     self.stop_session()
                     if action == "reset":
                         self.gateway.reset()
+                        self.manual_swaps.update(self.gateway.router.active.values())
                         self.output = ""
                         self.notify("log", "Synthetic accounts reset; AFK is off.")
                 elif action == "run":
@@ -157,8 +157,6 @@ class Controller:
         with self.condition:
             self.closed = True
             self.condition.notify_all()
-        for listener in list(self.listeners):
-            listener()
         with self.operations:
             self.stop_session()
             self.gateway.close()
@@ -239,7 +237,8 @@ def make_server(controller, port=0, idle_seconds=90):
                     raise ValueError("JSON object required")
                 if self.path == "/api/shutdown":
                     self.respond(200, {"ok": True})
-                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    # A host (the tray) can supply its own quit; otherwise stop serving.
+                    threading.Thread(target=getattr(self.server, "quit", self.server.shutdown), daemon=True).start()
                     return
                 if not self.path.startswith("/api/"):
                     raise ValueError("Unknown route")
@@ -259,10 +258,13 @@ def make_server(controller, port=0, idle_seconds=90):
     def idle_watch():
         while not controller.closed:
             time.sleep(5)
-            if idle_seconds and time.monotonic() - server.last_seen > idle_seconds:
+            if time.monotonic() - server.last_seen > idle_seconds:
                 server.shutdown()
                 return
-    threading.Thread(target=idle_watch, daemon=True).start()
+    # Only the standalone dev server exits when unused; the tray host passes 0 and
+    # so gets no watcher thread (no periodic wake-ups at all).
+    if idle_seconds:
+        threading.Thread(target=idle_watch, daemon=True).start()
     return server
 
 
