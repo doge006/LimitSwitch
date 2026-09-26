@@ -287,14 +287,14 @@ class Tray:
         self.icon.run(setup=setup)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--demo", action="store_true", help="Synthetic accounts and the Recovery lab instead of your real logins")
     parser.add_argument("--simulator", action="store_true", help="Demo mode with a lightweight routing simulation instead of the compiled proxy")
     parser.add_argument("--url-file", help="Where the private dashboard URL is kept while running")
     parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the dashboard")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.url_file:
         running = existing_instance(args.url_file)
@@ -314,9 +314,20 @@ def main():
     # A long poll interval: the loop never has to exit on its own because quitting
     # goes through the tray, so this thread just sleeps between connections.
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 60}, daemon=True).start()
+    integrations = None
+    if controller.live:  # route Codex through the app, and the Claude AFK hook
+        from .integrations import Integrations
+        integrations = Integrations(controller.gateway, server.hook_url, server.hook_token)
+        controller.gateway.integrations = integrations
+        try:
+            integrations.start()
+        except Exception:
+            logging.getLogger("account_switcher").exception("integrations failed to start")
     try:
         Tray(controller, server).run(open_now=not args.quiet)
     finally:
+        if integrations:
+            integrations.stop()  # Codex and Claude Code keep working without the app
         controller.close()  # stops any proxy / Claude processes this app owns
         clear_url_file(args.url_file, server.launch_url)
 

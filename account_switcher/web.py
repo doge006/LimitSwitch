@@ -79,7 +79,7 @@ class Controller:
                 "revision": self.revision,
                 "mode": "live" if self.live else "demo",
                 "accounts": accounts,
-                "autoSwap": auto_swap, "afk": self.afk,
+                "autoSwap": auto_swap, "afk": self.afk_enabled(),
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -127,6 +127,8 @@ class Controller:
                 if self.session and (self.session.busy or self.session.recovering) and action not in {"stop"}:
                     raise RuntimeError("Wait for the current turn to settle or stop it")
                 if action == "preferences":
+                    if self.live:
+                        self.gateway.set_afk(body["afk"])
                     self.afk = body["afk"]
                     self.gateway.router.auto_swap = body["autoSwap"]
                     if self.session:
@@ -182,6 +184,17 @@ class Controller:
                 self.notify("changed", None)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def afk_enabled(self):
+        return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
+
+    def afk_limit(self, body):
+        """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
+        if not self.live or body.get("provider") != "claude":
+            return {"action": "stop"}
+        answer = self.gateway.manager.claude_limit(str(body.get("session") or "")[:100])
+        self.notify("changed", None)
+        return answer
 
     def stop_session(self):
         if self.session:
@@ -277,6 +290,18 @@ def make_server(controller, port=0, idle_seconds=90):
             self.respond(200, controller.snapshot())
 
         def do_POST(self):
+            if self.path == "/api/afk":  # the Claude Code AFK hook, with its own narrow token
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, controller.afk_limit(body if isinstance(body, dict) else {}))
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"action": "stop", "error": str(error)})
+                return
             if not self.authorized():
                 return
             try:
@@ -305,6 +330,8 @@ def make_server(controller, port=0, idle_seconds=90):
     server.expected_host = f"127.0.0.1:{server.server_port}"
     server.last_seen = time.monotonic()
     server.launch_url = f"http://{server.expected_host}/#token={token}"
+    server.hook_token = secrets.token_urlsafe(32)
+    server.hook_url = f"http://{server.expected_host}/api/afk"
 
     def idle_watch():
         while not controller.closed:

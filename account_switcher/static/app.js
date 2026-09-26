@@ -305,7 +305,7 @@ function updateCards() {
     const problem = account.status;
     view.hint.classList.toggle('warn', !!problem);
     view.hint.textContent = problem
-      || (account.active ? 'New sessions use this account' : !account.eligible ? 'Waiting for reset' : '');
+      || (account.active ? 'All sessions use this account' : !account.eligible ? 'Waiting for reset' : '');
     if (!problem && state.mode === 'live' && account.updated_at) view.hint.title = ago(account.updated_at);
   }
 }
