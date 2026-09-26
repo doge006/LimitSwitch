@@ -44,7 +44,7 @@ jobs:
       - name: Which part macOS rejects (PyObjC variants)
         if: always()
         run: |
-          for v in title symbol symbol+regular symbol+regular-later symbol+menu; do
+          for v in symbol+popover symbol+window symbol+tooltip symbol+action symbol+menu+popover+window+tooltip+action; do
             .venv/bin/python3 .github/probe/pyprobe.py "$v" || echo "$v failed"
           done
       - name: Menu bar details

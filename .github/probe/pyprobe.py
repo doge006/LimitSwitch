@@ -4,7 +4,8 @@ import sys
 
 from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
                     NSImage, NSMenu, NSStatusBar, NSVariableStatusItemLength)
-from Foundation import NSObject
+from AppKit import NSPopover, NSViewController, NSWindow
+from Foundation import NSMakeRect, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
 
 VARIANT = sys.argv[1]
@@ -25,6 +26,28 @@ class Delegate(NSObject):
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
         if VARIANT.endswith("+regular-later"):
             AppHelper.callLater(1, NSApp.setActivationPolicy_, NSApplicationActivationPolicyRegular)
+        if "popover" in VARIANT:
+            from WebKit import WKWebView, WKWebViewConfiguration
+            view = WKWebView.alloc().initWithFrame_configuration_(NSMakeRect(0, 0, 340, 420),
+                                                                  WKWebViewConfiguration.alloc().init())
+            view.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_("about:blank")))
+            controller = NSViewController.alloc().init()
+            controller.setView_(view)
+            self.popover = NSPopover.alloc().init()
+            self.popover.setContentViewController_(controller)
+        if "window" in VARIANT:
+            self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, 800, 600), 15 | (1 << 15), 2, False)
+            self.window.center()
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            NSApp.activateIgnoringOtherApps_(True)
+            self.window.makeKeyAndOrderFront_(None)
+        if "tooltip" in VARIANT:
+            self.item.button().setToolTip_("tip")
+        if "action" in VARIANT:
+            self.item.button().setTarget_(self)
+            self.item.button().setAction_("report:")
+            self.item.button().sendActionOn_((1 << 2) | (1 << 4))
         AppHelper.callLater(3, self.report)
 
     def report(self):
