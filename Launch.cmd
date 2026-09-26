@@ -6,4 +6,4 @@ if exist "%PYW%" goto run
 set "PYW=pythonw"
 where pyw >nul 2>&1 && set "PYW=pyw"
 :run
-start "" "%PYW%" -m account_switcher.native --url-file "%~dp0.runtime\launch-url" %*
+start "" "%PYW%" -m account_switcher.native --url-file "%~dp0.runtime\native.url" %*

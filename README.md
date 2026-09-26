@@ -27,16 +27,15 @@ The proxy and client start only on Run and stop on Stop. The fixture uses dummy 
 
 ## Updating from GitHub
 
-`Update.cmd` pulls the latest code into this folder (it needs git; a ZIP download is converted into a git checkout on first run). It never overwrites local edits unless you pass `-Force`, which saves them to a stash or backup branch first.
+Double-click `Update.cmd` (or run it from a terminal) to download the latest version into this folder. It runs once and exits: it fetches from GitHub, fast-forwards the checkout, reinstalls Python requirements if they changed, and, if Account Switcher is running, closes it cleanly and starts it again on the new version.
 
 ```powershell
-.\Update.cmd                                           # update once, current branch
-.\Update.cmd -Branch claude/pensive-brahmagupta-cufhuf # switch to and track a branch
-.\Update.cmd -Watch -Launch native                     # dev loop: check every 60 s, restart the app on new commits
-.\Update.cmd -Watch -Launch web -Simulator -Interval 30
+.\Update.cmd                                           # update the current branch
+.\Update.cmd -Branch claude/pensive-brahmagupta-cufhuf # switch to and update another branch
+.\Update.cmd -Force                                    # update even with local edits (saved to git stash / a backup branch first)
 ```
 
-Restarts are clean: the script asks the running app to shut down over its private local URL (stored in the git-ignored `.runtime/` folder while the app runs), so the proxy and Claude processes it owns stop too. Nothing is installed or scheduled.
+It needs git (`winget install --id Git.Git -e`). A folder downloaded as a ZIP is converted into a git checkout on first run; git-ignored files such as the built proxy are kept. Nothing is installed as a service or scheduled.
 
 ## Cloud sessions / Linux
 

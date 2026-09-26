@@ -182,7 +182,7 @@ function updateCards() {
     const isWorking = submitting && submitting.el === view.swap;
     view.swap.classList.toggle('working', !!isWorking);
     view.swap.disabled = locked || account.active || !account.eligible;
-    view.swap.className = `button${isWorking ? ' working' : ''}${!account.active && account.eligible ? ' accent' : ''}`;
+    view.swap.className = `button${isWorking ? ' working' : ''}${account.active ? ' current' : account.eligible ? ' accent' : ''}`;
     view.swap.textContent = !account.eligible ? 'Unavailable' : account.active ? 'Active' : 'Swap to this';
     view.hint.textContent = account.active ? 'New requests route here' : account.eligible ? `${Math.round(headroom(account))}% headroom` : 'Waiting for reset';
   }

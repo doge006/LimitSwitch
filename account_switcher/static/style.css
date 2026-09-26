@@ -13,7 +13,7 @@
   --line-strong: rgba(255, 255, 255, .13);
   --text: #f3f3f3;
   --muted: #a3a3a3;
-  --faint: #7a7a7a;
+  --faint: #959595;
   --track: rgba(255, 255, 255, .09);
   --good: #4cc38a;
   --warn: #e5b54a;
@@ -22,6 +22,7 @@
   --claude-soft: rgba(224, 138, 104, .14);
   --codex: #a295f7;
   --codex-soft: rgba(162, 149, 247, .14);
+  --on-accent: #161616; /* dark text on pastel accents: ~7:1 */
   --focus: #8ab4ff;
   --primary-bg: #f3f3f3;
   --primary-fg: #161616;
@@ -44,15 +45,16 @@
     --line-strong: rgba(0, 0, 0, .14);
     --text: #1a1a1a;
     --muted: #5f5f5f;
-    --faint: #8a8a8a;
+    --faint: #6b6b6b;
     --track: rgba(0, 0, 0, .08);
-    --good: #1f9d63;
-    --warn: #b7860f;
-    --bad: #d6412f;
-    --claude: #c4613c;
+    --good: #177a4c;
+    --warn: #8a6508;
+    --bad: #c0392b;
+    --claude: #a84f2c;
     --claude-soft: rgba(196, 97, 60, .10);
     --codex: #6c5ce7;
     --codex-soft: rgba(108, 92, 231, .10);
+    --on-accent: #ffffff;
     --focus: #2f6fea;
     --primary-bg: #1a1a1a;
     --primary-fg: #ffffff;
@@ -219,11 +221,12 @@ h1 { margin: 0; font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", syst
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 32px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color .15s, border-color .15s, transform .15s var(--ease), opacity .2s; }
 .button:hover:not(:disabled) { background: var(--surface-3); }
 .button:active:not(:disabled) { transform: scale(.97); }
-.button:disabled { opacity: .45; cursor: default; }
+.button:disabled { opacity: .6; cursor: default; }
+.button.current, .button.current:disabled { opacity: 1; background: transparent; border-color: var(--line); color: var(--good); font-weight: 600; }
 .button svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
 .button.primary { background: var(--primary-bg); color: var(--primary-fg); border-color: transparent; }
 .button.primary:hover:not(:disabled) { background: var(--primary-bg); filter: brightness(.92); }
-.button.accent { background: var(--accent); color: #fff; border-color: transparent; }
+.button.accent { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
 .button.accent:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
 .button.quiet { background: transparent; border-color: transparent; color: var(--muted); }
 .button.quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
