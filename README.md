@@ -25,7 +25,7 @@ python -m pip install -r requirements-native.txt
 - **What the app changes in `~/.codex/config.toml` while it runs** (every line is tagged `# account-switcher` and removed again on quit):
   - `openai_base_url` points at the router;
   - `enable_request_compression = false`, so the router can read requests;
-  - `daemon_auto_start = false`. Codex's shared background server opens a console window for every command on Windows ([openai/codex#44768](https://github.com/openai/codex/issues/44768), [#48074](https://github.com/openai/codex/issues/48074)). Each Codex session runs in its own terminal again, and nothing flashes.
+  - `daemon_auto_start = false`. Codex's shared background server opens a console window for every command on Windows ([openai/codex#44768](https://github.com/openai/codex/issues/44768), [#48074](https://github.com/openai/codex/issues/48074)). Sessions also attach to it whenever it's running, and it keeps the settings it started with, so its sessions would bypass the router. The app stops a running one as soon as no session has been active for 90 seconds; after that, each Codex session runs in its own terminal, goes through the router, and nothing flashes.
 - **Start with Windows:** on by default, since Codex's requests go through the app.
 - **Usage:** read from each provider's own usage endpoint:
   - Claude: 5-hour, weekly and per-model weekly caps, plus extra usage.
@@ -45,9 +45,15 @@ python -m pip install -r requirements-native.txt
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
 - **Usage limit resets:** banked resets are shown for Codex, which reports them. Claude's usage response doesn't include its free resets (they appear only in Claude's settings), so none are shown for Claude.
-- **Auto swap:** when the account in use hits a limit, it moves to the account with the most headroom.
-  - *Codex:* the request that hit the limit is simply sent again on the next account, so the session never sees an error.
-  - *Encrypted data:* Codex replays encrypted reasoning that only the account which produced it can read. The router drops those items before they reach another account, so a thread carries on instead of failing with "encrypted content could not be verified".
+- **Auto swap:** the account in use is swapped before it runs out, and a thread carries on with everything it had:
+  - *Before the limit:* at 95% used, the app moves to the account with the most room.
+    - *Claude:* the switch applies to the next request.
+    - *Codex:* it happens when the next turn starts, never in the middle of one. The live usage comes from ChatGPT's own response headers.
+  - *At the limit:* a Codex request that hits a limit anyway is sent again on the next account, so the session never sees the error. For Claude, the AFK hook below takes over.
+  - *Claude threads:* nothing in them is tied to an account, so they carry over whole.
+  - *Codex threads:* ChatGPT encrypts two things for the account that made them, which another account can't read. The router carries both across:
+    - *Compaction checkpoints* (the summary Codex keeps instead of old history): right after a compaction, the same account writes the checkpoint out as plain text. The app keeps that text encrypted, and it's what another account receives, in the form Codex uses for its own plain-text checkpoints. Until it exists, the thread stays on the checkpoint's account while that account has quota.
+    - *Hidden reasoning:* another account receives the plain-text summary ChatGPT returned with it. This is the only part that changes form, and only when a thread moves.
 - **AFK:** while AFK is on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
   - The app adds a `StopFailure` hook to `~/.claude/settings.json`; only its own entry is added, and it's removed when AFK is turned off.
   - When the hook fires, the app switches to an account with room and Claude Code is told to continue where it left off.

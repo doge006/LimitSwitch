@@ -137,6 +137,7 @@ h1 { margin: 0; font: 600 22px/1.2 "Segoe UI Variable Display", "Segoe UI", syst
   transition: border-color .25s var(--ease), background-color .25s, transform .25s var(--ease), box-shadow .25s var(--ease);
 }
 .card:hover { border-color: var(--line-strong); background: #232323; transform: translateY(-1px); box-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 28px rgba(0, 0, 0, .28); }
+.card.pickable { cursor: pointer; }
 .card.active { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .card.spent { opacity: .72; }
 

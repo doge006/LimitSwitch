@@ -1,24 +1,29 @@
-"""Local router for Codex: every Codex session (CLI, IDE extension) sends its model requests
-here, and they are forwarded to ChatGPT with the login of the account selected in the app.
+"""Local router for Codex: every Codex session sends its model requests here, and they are
+forwarded to ChatGPT with the login of the account selected in the app.
 
-Why a router rather than rewriting ~/.codex/auth.json: a running Codex keeps its login in
-memory, so a file switch only reaches new sessions. Here a switch applies to the very next
-request of every session, and when an account hits its usage limit the same request is
-retried on another account, so a session never sees the error (Auto swap / AFK).
+A switch applies to the very next request of every open session, and a request that hits a
+usage limit is sent again on another account, so the session never sees the error.
 
-Details handled here:
-- The request path carries a random secret, so other local programs cannot borrow the logins.
-- Codex's Responses-over-WebSocket attempt gets 426, which makes it use plain HTTP at once.
-- Codex replays encrypted reasoning/compaction items that only the account that produced them
-  can read. Items produced by one account are dropped before a request goes to another, and
-  if the provider still rejects encrypted content the request is retried once without the
-  items this router has not seen.
-Nothing is logged or stored except a bounded, in-memory map of encrypted-item fingerprints.
+Keeping a thread whole across accounts. Codex replays items the service encrypted for the
+account that produced them; another account cannot read them. So:
+- Compaction checkpoints (the summary Codex keeps instead of old history) are written out
+  as plain text by the account that made them, right after it made them. When the thread
+  moves to another account, the checkpoint is replaced by that text, in the same form Codex
+  uses for its own plain-text checkpoints. Until the text exists, the thread's requests stay
+  on the checkpoint's account while it has quota.
+- Hidden reasoning is replaced by the plain-text summary the service returned with it.
+- Planned switches (an account close to its limit) happen when a new turn starts, never in
+  the middle of one; usage comes live from the service's own response headers.
+The request path carries a random secret, so other local programs cannot borrow the logins.
+Codex's WebSocket attempt gets 426, which makes it use plain HTTP at once.
+Nothing is logged. Fingerprints of encrypted items and the checkpoint texts are kept (the
+texts encrypted, in the app's store) so threads keep working across app restarts.
 """
 from collections import OrderedDict
 from hashlib import blake2b
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import queue
 import secrets
 import threading
 import time
@@ -31,12 +36,25 @@ HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriza
               "transfer-encoding", "upgrade", "host", "content-length", "authorization", "chatgpt-account-id",
               "accept-encoding"}
 MAX_BODY = 64 * 1024 * 1024
-FINGERPRINTS = 20000
+MAX_OWNERS = 50000
+MAX_TEXTS = 300
 TIMEOUT = 600
+CHECKPOINTS = ("compaction", "compaction_summary", "context_compaction")
+# Codex's own wording for a plain-text checkpoint (codex-rs/prompts/templates/compact/summary_prefix.md).
+SUMMARY_PREFIX = ("Another language model started to solve this problem and produced a summary of its thinking "
+                  "process. You also have access to the state of the tools that were used by that language model. "
+                  "Use this to build on the work that has already been done and avoid duplicating work. Here is the "
+                  "summary produced by the other language model, use the information in this summary to assist with "
+                  "your own analysis:")
+WRITE_OUT = ("Your context includes a compacted checkpoint of the earlier part of this session. Write that checkpoint "
+             "out in full as a plain-text handoff, so the same work can continue in a fresh context without it. "
+             "Include everything it holds: the user's requests, preferences and constraints; progress so far and the "
+             "key decisions and why; files, commands and code involved; the current state; errors seen; and what "
+             "remains to be done. Do not call any tools; output only the handoff.")
 
 
 def fingerprint(value):
-    return blake2b(value.encode() if isinstance(value, str) else value, digest_size=12).digest()
+    return blake2b(value.encode() if isinstance(value, str) else value, digest_size=12).hexdigest()
 
 
 def encrypted_values(node):
@@ -75,70 +93,176 @@ def encrypted_rejected(status, body):
     return "encrypted" in text and ("content" in text or "organization" in text)
 
 
-class CodexRouter:
-    """The routing logic, independent of HTTP so it can be tested directly.
-
-    accounts: object with
-      route()                    -> account id to use now, or None to pass requests through
-      credentials(account_id)    -> (access_token, chatgpt_account_id)
-      limit_hit(account_id, resets_at) -> another account id to retry on, or None
-    """
-
-    def __init__(self, accounts):
-        self.accounts = accounts
-        self.seen = OrderedDict()     # fingerprint -> account id that produced it
-        self.lock = threading.Lock()
-
-    def record(self, account_id, payload):
-        """Remember which account produced the encrypted items in a response chunk."""
+def usage_headers(headers):
+    """Live usage from the service's response headers: [(window minutes, used %, reset time)]."""
+    windows = []
+    for name in ("primary", "secondary"):
+        used = headers.get(f"x-codex-{name}-used-percent")
+        minutes = headers.get(f"x-codex-{name}-window-minutes")
+        if used is None or minutes is None:
+            continue
         try:
-            data = json.loads(payload)
+            reset = headers.get(f"x-codex-{name}-reset-at")
+            windows.append((int(float(minutes)), float(used), float(reset) if reset else None))
         except ValueError:
+            continue
+    return windows
+
+
+def new_turn(items):
+    """A request that starts a turn ends with the user's message (not a tool result)."""
+    last = items[-1] if items else None
+    return isinstance(last, dict) and last.get("type", "message") == "message" and last.get("role") == "user"
+
+
+def checkpoint_message(text):
+    return {"type": "message", "role": "user", "content": [{"type": "input_text", "text": f"{SUMMARY_PREFIX}\n{text}"}]}
+
+
+def reasoning_message(item):
+    summary = " ".join(part.get("text", "") for part in item.get("summary") or [] if isinstance(part, dict)).strip()
+    if not summary:
+        return None
+    return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": summary}]}
+
+
+class ThreadState:
+    """Who produced each encrypted item, and plain-text versions of checkpoints."""
+
+    def __init__(self, load=None, save=None):
+        self.lock = threading.Lock()
+        self.owners, self.texts = OrderedDict(), OrderedDict()
+        self.save_hook = save
+        self.dirty = False
+        if load:
+            try:
+                data = load() or {}
+                self.owners.update(data.get("owners") or {})
+                self.texts.update(data.get("texts") or {})
+            except Exception:
+                pass
+
+    def owner(self, value):
+        with self.lock:
+            return self.owners.get(fingerprint(value))
+
+    def text(self, value):
+        with self.lock:
+            return self.texts.get(fingerprint(value))
+
+    def remember(self, value, account_id):
+        key = fingerprint(value)
+        with self.lock:
+            if self.owners.get(key) != account_id:
+                self.owners[key] = account_id
+                self.dirty = True
+            self.owners.move_to_end(key)
+            while len(self.owners) > MAX_OWNERS:
+                self.owners.popitem(last=False)
+
+    def write_out(self, value, text):
+        with self.lock:
+            self.texts[fingerprint(value)] = text
+            while len(self.texts) > MAX_TEXTS:
+                self.texts.popitem(last=False)
+            self.dirty = True
+        self.flush()
+
+    def flush(self):
+        if not (self.dirty and self.save_hook):
             return
         with self.lock:
-            for value in encrypted_values(data):
-                key = fingerprint(value)
-                self.seen[key] = account_id
-                self.seen.move_to_end(key)
-            while len(self.seen) > FINGERPRINTS:
-                self.seen.popitem(last=False)
-
-    def prepare(self, body, account_id, drop_unknown=False):
-        """Request body for account_id, without encrypted items it cannot read."""
-        if not body or b'"encrypted_content"' not in body:
-            return body
+            snapshot = {"owners": dict(self.owners), "texts": dict(self.texts)}
+            self.dirty = False
         try:
-            data = json.loads(body)
-        except ValueError:
-            return body
+            self.save_hook(snapshot)
+        except Exception:
+            pass
+
+
+class CodexRouter:
+    """Routing decisions, independent of HTTP so they can be tested directly.
+
+    accounts: object with
+      route()                       -> account id in use, or None to pass requests through
+      credentials(account_id)       -> (access_token, chatgpt_account_id)
+      limit_hit(account_id, resets) -> another account id to retry on, or None
+      turn_start(account_id)        -> account to use for a new turn (a planned switch)
+      usable(account_id)            -> whether this account can take a request now
+      observe(account_id, windows)  -> live usage from response headers
+    """
+
+    def __init__(self, accounts, state=None):
+        self.accounts = accounts
+        self.state = state or ThreadState()
+
+    def record(self, account_id, data, on_checkpoint=None):
+        """Note which account produced the encrypted items in a response event."""
+        items = []
+        stack = [data]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if isinstance(node.get("encrypted_content"), str) and node["encrypted_content"]:
+                    items.append(node)
+                stack.extend(v for v in node.values() if isinstance(v, (dict, list)))
+            elif isinstance(node, list):
+                stack.extend(node)
+        for item in items:
+            self.state.remember(item["encrypted_content"], account_id)
+            if item.get("type") in CHECKPOINTS and on_checkpoint and self.state.text(item["encrypted_content"]) is None:
+                on_checkpoint(item)
+
+    def prepare(self, data, target, drop_unknown=False):
+        """(input for `target`, account the request must go to instead or None).
+
+        Items `target` cannot read are replaced by their plain-text versions. A checkpoint
+        without one yet keeps the request on the checkpoint's own account while it can
+        take requests, so nothing is lost."""
         items = data.get("input") if isinstance(data, dict) else None
         if not isinstance(items, list):
-            return body
-        kept = []
-        with self.lock:
-            for item in items:
-                values = list(encrypted_values(item))
-                owners = {self.seen.get(fingerprint(v)) for v in values}
-                foreign = any(owner not in (None, account_id) for owner in owners)
-                unknown = None in owners
-                if values and (foreign or (drop_unknown and unknown)):
+            return data, None
+        prepared, changed = [], False
+        for item in items:
+            values = list(encrypted_values(item)) if isinstance(item, dict) else []
+            if not values:
+                prepared.append(item)
+                continue
+            owners = {self.state.owner(v) for v in values}
+            foreign = [o for o in owners if o not in (None, target)]
+            if not foreign and not (drop_unknown and None in owners):
+                prepared.append(item)
+                continue
+            kind = item.get("type")
+            if kind in CHECKPOINTS:
+                text = self.state.text(values[0])
+                if text is None:
+                    owner = foreign[0] if foreign else None
+                    if owner is not None and self.accounts.usable(owner):
+                        return data, owner  # stay with the account that can read it
                     continue
-                kept.append(item)
-        if len(kept) == len(items):
-            return body
-        data["input"] = kept
-        return json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode()
+                prepared.append(checkpoint_message(text))
+            elif kind == "reasoning":
+                replacement = reasoning_message(item)
+                if replacement:
+                    prepared.append(replacement)
+            changed = True
+        if not changed:
+            return data, None
+        return dict(data, input=prepared), None
 
 
 class CodexProxy:
-    def __init__(self, accounts, port=DEFAULT_PORT, upstream=UPSTREAM, secret=None):
-        self.router = CodexRouter(accounts)
+    def __init__(self, accounts, port=DEFAULT_PORT, upstream=UPSTREAM, secret=None, state=None):
+        self.router = CodexRouter(accounts, state)
         self.accounts = accounts
         self.port = port
         self.upstream = upstream.rstrip("/")
         self.secret = secret or secrets.token_urlsafe(18)
         self.server = None
         self.opener = build_opener(ProxyHandler())  # honours the system proxy settings
+        self.jobs = queue.Queue()
+        self.can_switch = lambda: True  # writing checkpoints out only matters with 2+ accounts
 
     @property
     def base_url(self):
@@ -169,9 +293,12 @@ class CodexProxy:
         self.server.daemon_threads = True
         self.port = self.server.server_port
         threading.Thread(target=self.server.serve_forever, daemon=True, name="codex-router").start()
+        threading.Thread(target=self._write_out_loop, daemon=True, name="codex-checkpoints").start()
         return self.base_url
 
     def close(self):
+        self.jobs.put(None)
+        self.router.state.flush()
         if self.server:
             self.server.shutdown()
             self.server.server_close()
@@ -194,46 +321,69 @@ class CodexProxy:
         headers["Accept-Encoding"] = "identity"
         own = {k: v for k, v in h.headers.items() if k.lower() in ("authorization", "chatgpt-account-id")}
         account = self.accounts.route()
-        if account is None:
-            headers.update(own)  # not routing: pass the session's login through unchanged
+        if account is None:  # not routing: pass the session's login through unchanged
+            return self.forward(h, path, dict(headers, **own), body, None, None)
+        data = None
+        if body and body.lstrip()[:1] == b"{" and (b'"input"' in body):
+            try:
+                data = json.loads(body)
+            except ValueError:
+                data = None
+        if isinstance(data, dict) and new_turn(data.get("input") or []):
+            account = self.accounts.turn_start(account)  # planned switches happen between turns
         tried, drop_unknown = set(), False
         while True:
+            target, payload = account, body
+            if data is not None:
+                prepared, stay = self.router.prepare(data, account, drop_unknown)
+                if stay is not None:
+                    target, prepared = stay, data
+                if prepared is not data:
+                    payload = json.dumps(prepared, separators=(",", ":"), ensure_ascii=False).encode()
             outgoing = dict(headers)
-            payload = body
-            if account is not None:
-                try:
-                    token, workspace = self.accounts.credentials(account)
-                except Exception:
-                    token, workspace = None, None
-                if token:
-                    outgoing["Authorization"] = "Bearer " + token
-                    if workspace:
-                        outgoing["ChatGPT-Account-Id"] = workspace
-                else:  # no usable saved login: send the session's own rather than none
-                    outgoing.update(own)
-                payload = self.router.prepare(body, account, drop_unknown)
             try:
-                response = self.opener.open(Request(self.upstream + path, data=payload if h.command != "GET" else None,
-                                                    headers=outgoing, method=h.command), timeout=TIMEOUT)
-            except HTTPError as error:
-                response = error
-            except (URLError, OSError) as error:
-                return self.reply(h, 502, json.dumps({"error": {"message": f"Could not reach ChatGPT: {error}"}}).encode())
-            status = response.status if hasattr(response, "status") else response.code
-            if status in (400, 429) and account is not None:
-                data = response.read()
-                limited, resets = usage_limit(status, data)
+                token, workspace = self.accounts.credentials(target)
+            except Exception:
+                token, workspace = None, None
+            if token:
+                outgoing["Authorization"] = "Bearer " + token
+                if workspace:
+                    outgoing["ChatGPT-Account-Id"] = workspace
+            else:  # no usable saved login: send the session's own rather than none
+                outgoing.update(own)
+            response, status = self.open(h.command, path, outgoing, payload)
+            if response is None:
+                return self.reply(h, 502, json.dumps({"error": {"message": f"Could not reach ChatGPT: {status}"}}).encode())
+            if status in (400, 429):
+                error_body = response.read()
+                limited, resets = usage_limit(status, error_body)
                 if limited:
-                    tried.add(account)
-                    following = self.accounts.limit_hit(account, resets)
+                    tried.add(target)
+                    following = self.accounts.limit_hit(target, resets)
                     if following is not None and following not in tried:
                         account, drop_unknown = following, False
                         continue
-                elif encrypted_rejected(status, data) and not drop_unknown:
+                elif encrypted_rejected(status, error_body) and not drop_unknown:
                     drop_unknown = True
                     continue
-                return self.reply(h, status, data, response.headers)
-            return self.stream(h, response, status, account)
+                return self.reply(h, status, error_body, response.headers)
+            return self.forward_response(h, response, status, target, data, outgoing)
+
+    def open(self, method, path, headers, payload):
+        try:
+            response = self.opener.open(Request(self.upstream + path, data=payload if method != "GET" else None,
+                                                headers=headers, method=method), timeout=TIMEOUT)
+        except HTTPError as error:
+            response = error
+        except (URLError, OSError) as error:
+            return None, error
+        return response, (response.status if hasattr(response, "status") else response.code)
+
+    def forward(self, h, path, headers, body, account, data):
+        response, status = self.open(h.command, path, headers, body)
+        if response is None:
+            return self.reply(h, 502, json.dumps({"error": {"message": f"Could not reach ChatGPT: {status}"}}).encode())
+        return self.forward_response(h, response, status, account, data, headers)
 
     def read_body(self, h):
         if h.headers.get("Transfer-Encoding", "").lower() == "chunked":
@@ -265,8 +415,15 @@ class CodexProxy:
         h.end_headers()
         h.wfile.write(data)
 
-    def stream(self, h, response, status, account):
-        """Pass the response through as it arrives, noting who produced encrypted items."""
+    def forward_response(self, h, response, status, account, data, request_headers):
+        """Pass the response through as it arrives; note usage and who produced what."""
+        if account is not None:
+            windows = usage_headers(response.headers)
+            if windows:
+                try:
+                    self.accounts.observe(account, windows)
+                except Exception:
+                    pass
         h.send_response(status)
         for key, value in response.headers.items():
             if key.lower() not in HOP_BY_HOP:
@@ -275,7 +432,10 @@ class CodexProxy:
         h.end_headers()
         h.close_connection = True
         pending = b""
-        watch = account is not None
+        on_checkpoint = None
+        if account is not None and isinstance(data, dict) and self.can_switch():
+            def on_checkpoint(item, account=account):
+                self.jobs.put((account, item, data, request_headers))
         try:
             while True:
                 chunk = response.read1(65536) if hasattr(response, "read1") else response.read(65536)
@@ -283,17 +443,80 @@ class CodexProxy:
                     break
                 h.wfile.write(chunk)
                 h.wfile.flush()
-                if watch:
+                if account is not None:
                     pending += chunk
                     *lines, pending = pending.split(b"\n")
                     for line in lines:
-                        if b'"encrypted_content"' in line:
-                            self.router.record(account, line[5:] if line.startswith(b"data:") else line)
+                        self._scan(account, line, on_checkpoint)
                     if len(pending) > MAX_BODY:
                         pending = b""
-            if watch and pending and b'"encrypted_content"' in pending:
-                self.router.record(account, pending[5:] if pending.startswith(b"data:") else pending)
+            if account is not None and pending:
+                self._scan(account, pending, on_checkpoint)
         except (ConnectionError, OSError):
             pass  # the client went away; stop reading
         finally:
             response.close()
+
+    def _scan(self, account, line, on_checkpoint):
+        if b'"encrypted_content"' not in line:
+            return
+        payload = line[5:] if line.startswith(b"data:") else line
+        try:
+            self.router.record(account, json.loads(payload), on_checkpoint)
+        except ValueError:
+            pass
+
+    # ---------- checkpoints written out by the account that made them ----------
+    def _write_out_loop(self):
+        while True:
+            job = self.jobs.get()
+            if job is None:
+                return
+            for attempt in range(3):
+                try:
+                    if self.write_out(*job):
+                        break
+                except Exception:
+                    pass
+                time.sleep(5 * (attempt + 1))
+
+    def write_out(self, account, item, request, request_headers):
+        """Ask the account that made a checkpoint to write it out as plain text. The request
+        is Codex's own compaction request (same model, instructions and settings, which the
+        service accepted) with only the input changed."""
+        if self.router.state.text(item["encrypted_content"]) is not None:
+            return True
+        token, workspace = self.accounts.credentials(account)
+        headers = {k: v for k, v in request_headers.items() if k.lower() not in HOP_BY_HOP}
+        headers.update({"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                        "Accept": "text/event-stream", "Accept-Encoding": "identity"})
+        if workspace:
+            headers["ChatGPT-Account-Id"] = workspace
+        body = {k: v for k, v in request.items() if k not in ("previous_response_id", "input")}
+        body.update(store=False, stream=True,
+                    input=[item, {"type": "message", "role": "user", "content": [{"type": "input_text", "text": WRITE_OUT}]}])
+        response, status = self.open("POST", "/backend-api/codex/responses", headers, json.dumps(body).encode())
+        if response is None or status != 200:
+            if response is not None:
+                response.close()
+            return False
+        parts, done = [], None
+        with response:
+            for raw in response:
+                if not raw.startswith(b"data:"):
+                    continue
+                try:
+                    event = json.loads(raw[5:])
+                except ValueError:
+                    continue
+                if event.get("type") == "response.output_text.delta":
+                    parts.append(event.get("delta", ""))
+                elif event.get("type") == "response.output_item.done":
+                    item_out = event.get("item") or {}
+                    if item_out.get("type") == "message":
+                        done = "".join(c.get("text", "") for c in item_out.get("content") or [] if isinstance(c, dict))
+        text = (done or "".join(parts)).strip()
+        if not text:
+            return False
+        self.router.state.write_out(item["encrypted_content"], text)
+        return True

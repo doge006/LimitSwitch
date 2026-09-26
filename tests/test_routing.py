@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 from urllib.error import HTTPError
@@ -15,7 +16,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 from account_switcher import afk_hook, claude_hooks, codex_config
-from account_switcher.codex_proxy import CodexProxy
+from account_switcher.codex_proxy import CodexProxy, ThreadState
 from account_switcher.integrations import Integrations, RoutedAccounts
 from account_switcher.live import LiveAccounts, LiveGateway
 from account_switcher.providers import Claude, Codex
@@ -32,6 +33,7 @@ class FakeChatGPT:
 
     def __init__(self):
         self.limited, self.seen = set(), []
+        self.usage = {}  # token -> primary used percent reported in response headers
         upstream = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -52,13 +54,27 @@ class FakeChatGPT:
                     if item.get("encrypted_content") and owner != token:
                         return self.send(400, {"error": {"code": "invalid_encrypted_content",
                                                          "message": "The encrypted content could not be verified."}})
-                events = [{"type": "response.output_item.done",
-                           "item": {"type": "reasoning", "encrypted_content": f"{token}:r{len(upstream.seen)}"}},
-                          {"type": "response.completed", "response": {"id": "r"}}]
+                items = body.get("input", [])
+                n = len(upstream.seen)
+                if any(i.get("type") == "compaction_trigger" for i in items):
+                    out = [{"type": "compaction", "encrypted_content": f"{token}:cmp{n}"}]
+                elif items and "plain-text handoff" in json.dumps(items[-1]):
+                    owned = items[0].get("encrypted_content", "")
+                    out = [{"type": "message", "role": "assistant",
+                            "content": [{"type": "output_text", "text": f"HANDOFF OF {owned}"}]}]
+                else:
+                    out = [{"type": "reasoning", "summary": [{"type": "summary_text", "text": f"thought {n}"}],
+                            "encrypted_content": f"{token}:r{n}"}]
+                events = [{"type": "response.output_item.done", "item": item} for item in out]
+                events.append({"type": "response.completed", "response": {"id": "r"}})
                 raw = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Content-Length", str(len(raw)))
+                if token in upstream.usage:
+                    self.send_header("x-codex-primary-used-percent", str(upstream.usage[token]))
+                    self.send_header("x-codex-primary-window-minutes", "300")
+                    self.send_header("x-codex-primary-reset-at", "1999999999")
                 self.end_headers()
                 self.wfile.write(raw)
 
@@ -164,7 +180,8 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(status, 200)
         sent = self.upstream.seen[-1]
         self.assertEqual(sent["token"], "at-y")
-        self.assertEqual([i["content"] for i in sent["input"]], ["hi", "go on"])  # x's reasoning dropped
+        self.assertNotIn("encrypted_content", json.dumps(sent["input"]))  # nothing y cannot read
+        self.assertEqual(len(sent["input"]), 3)  # x's reasoning is there, as its summary
 
     def test_unknown_encrypted_items_are_dropped_after_a_rejection(self):
         foreign = {"type": "reasoning", "encrypted_content": "someone-else:abc"}
@@ -188,6 +205,71 @@ class RouterTests(unittest.TestCase):
         status, _ = post(wrong, {"input": []})
         self.assertEqual(status, 403)
         self.assertEqual(self.upstream.seen, [])
+
+    def items_of(self, body):
+        return [json.loads(line[5:])["item"] for line in body.split(b"\n")
+                if line.startswith(b"data:") and b"output_item.done" in line]
+
+    def wait_for(self, check, seconds=5):
+        deadline = time.time() + seconds
+        while time.time() < deadline and not check():
+            time.sleep(0.05)
+        return check()
+
+    def test_checkpoint_is_written_out_and_carried_to_the_next_account(self):
+        _, body = post(self.url, {"model": "m", "instructions": "i", "input": [{"type": "message", "role": "user", "content": "hi"},
+                                                                          {"type": "compaction_trigger"}]})
+        checkpoint = self.items_of(body)[0]
+        self.assertTrue(self.wait_for(lambda: self.proxy.router.state.text(checkpoint["encrypted_content"])))
+        writer = next(s for s in self.upstream.seen if "plain-text handoff" in json.dumps(s["input"]))
+        self.assertEqual(writer["token"], "at-x")  # the account that made it wrote it out
+        self.manager.swap(self.y)
+        status, _ = post(self.url, {"input": [checkpoint, {"type": "message", "role": "user", "content": "go on"}]})
+        self.assertEqual(status, 200)
+        sent = self.upstream.seen[-1]
+        self.assertEqual(sent["token"], "at-y")
+        text = sent["input"][0]["content"][0]["text"]
+        self.assertIn("HANDOFF OF at-x:cmp", text)
+        self.assertTrue(text.startswith("Another language model started to solve this problem"))
+
+    def test_thread_stays_with_the_checkpoints_account_until_it_is_written_out(self):
+        self.proxy.can_switch = lambda: False  # no write-out
+        _, body = post(self.url, {"input": [{"type": "compaction_trigger"}]})
+        checkpoint = self.items_of(body)[0]
+        self.manager.swap(self.y)
+        post(self.url, {"input": [checkpoint, {"type": "message", "role": "user", "content": "go on"}]})
+        self.assertEqual(self.upstream.seen[-1]["token"], "at-x")  # x can still read it: stay
+        self.assertEqual(self.upstream.seen[-1]["input"][0], checkpoint)
+
+    def test_hidden_reasoning_travels_as_its_summary(self):
+        _, body = post(self.url, {"input": []})
+        reasoning = self.items_of(body)[0]
+        self.manager.swap(self.y)
+        post(self.url, {"input": [reasoning, {"type": "message", "role": "user", "content": "go on"}]})
+        sent = self.upstream.seen[-1]["input"]
+        self.assertEqual(sent[0], {"type": "message", "role": "assistant",
+                                   "content": [{"type": "output_text", "text": reasoning["summary"][0]["text"]}]})
+
+    def test_planned_switch_waits_for_the_next_turn(self):
+        self.upstream.usage["at-x"] = 97
+        post(self.url, {"input": [{"type": "message", "role": "user", "content": "task"}]})  # reports 97%
+        self.assertEqual(self.manager.active["codex"], self.x)
+        mid_turn = [{"type": "message", "role": "user", "content": "task"},
+                    {"type": "function_call", "call_id": "c", "name": "shell", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c", "output": "ok"}]
+        post(self.url, {"input": mid_turn})
+        self.assertEqual(self.upstream.seen[-1]["token"], "at-x")  # never in the middle of a turn
+        post(self.url, {"input": mid_turn + [{"type": "message", "role": "user", "content": "next"}]})
+        self.assertEqual(self.upstream.seen[-1]["token"], "at-y")
+        self.assertEqual(self.manager.active["codex"], self.y)
+
+    def test_thread_state_survives_a_restart(self):
+        saved = {}
+        state = ThreadState(save=saved.update)
+        state.remember("enc", "acct")
+        state.write_out("enc", "text")
+        again = ThreadState(load=lambda: saved)
+        self.assertEqual((again.owner("enc"), again.text("enc")), ("acct", "text"))
 
     def test_quitting_writes_the_chosen_account_into_the_login_file(self):
         self.manager.swap(self.y)
@@ -356,6 +438,38 @@ class AfkTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class ClaudeAheadOfLimitTests(AfkTests):
+    def test_switches_before_the_limit(self):
+        self.api.claude_usage["at-a"] = claude_usage(96, 50)
+        self.manager.refresh(force=True)
+        self.assertEqual(self.manager.auto_swap(), [self.manager.find("claude", "uuid-b")])
+        self.assertEqual(self.claude.read_live().email, "b@example.com")
+
+
+@unittest.skipIf(sys.platform == "win32", "stand-in CLI is a POSIX shell script")
+class CodexServerWatchTests(unittest.TestCase):
+    def test_stops_the_shared_server_only_when_idle(self):
+        from account_switcher.integrations import CodexServerWatch
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / "app-server-control").mkdir()
+            (home / "app-server-control" / "app-server-control.sock").write_text("")
+            day = home / "sessions" / "2026" / "09" / "26"
+            day.mkdir(parents=True)
+            log = day / "rollout.jsonl"
+            log.write_text("{}")
+            calls = home / "calls"
+            cli = home / "codex"
+            cli.write_text(f"#!/bin/sh\necho \"$*\" >> '{calls}'\n")
+            cli.chmod(0o755)
+            watch = CodexServerWatch(home, cli=str(cli))
+            self.assertFalse(watch.check())  # a session is active
+            os.utime(log, (time.time() - 600, time.time() - 600))
+            self.assertTrue(watch.check())
+            self.assertEqual(calls.read_text().split(), ["app-server", "daemon", "stop"])
+            self.assertFalse(watch.check())  # the same (stale) socket is not stopped twice
 
 
 class IntegrationTests(unittest.TestCase):
