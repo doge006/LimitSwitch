@@ -50,26 +50,29 @@ function subscriptionText(account) {
   const est = sub.estimated ? '~' : '';
   return `${sub.ends ? 'Ends' : 'Renews'} ${est}${dateText(sub.at)} · ${daysLeft(sub.at)}`;
 }
-function creditsText(account) {
+// Credits and banked resets as [label, value] pairs, one line each.
+function creditsItems(account) {
   const c = account.credits;
-  if (!c) return '';
-  const resets = typeof c.resets === 'number' ? `Usage limit resets · ${c.resets} available` : '';
+  if (!c) return [];
+  const items = [];
   const main = creditsMain(c);
-  return [main, resets].filter(Boolean).join('   ');
+  if (main) items.push(main);
+  if (typeof c.resets === 'number') items.push(['Usage limit resets', `${c.resets} available`]);
+  return items;
 }
 function creditsMain(c) {
-  if (c.kind === 'none') return '';
+  if (c.kind === 'none') return null;
   if (c.kind === 'credits') {
-    if (c.unlimited) return 'Credits · unlimited';
-    if (typeof c.balance === 'number') return `Credits · ${c.balance.toLocaleString([], { maximumFractionDigits: 2 })} available`;
-    return c.enabled ? 'Credits · available' : '';
+    if (c.unlimited) return ['Credits', 'unlimited'];
+    if (typeof c.balance === 'number') return ['Credits', c.balance.toLocaleString([], { maximumFractionDigits: 2 })];
+    return c.enabled ? ['Credits', 'available'] : null;
   }
-  if (!c.enabled) return 'Extra usage · off';
+  if (!c.enabled) return ['Extra usage', 'off'];
   if (typeof c.limit === 'number' && typeof c.used === 'number') {
     const left = Math.max(0, c.limit - c.used);
-    return `Extra usage · ${left.toLocaleString()} of ${c.limit.toLocaleString()} left`;
+    return ['Extra usage', `${left.toLocaleString()} of ${c.limit.toLocaleString()} left`];
   }
-  return 'Extra usage · on';
+  return ['Extra usage', 'on'];
 }
 function ago(ts) {
   const m = Math.floor((Date.now() / 1000 - ts) / 60);
@@ -268,9 +271,17 @@ function updateCards() {
     view.renew.classList.toggle('unset', !sub);
     view.renew.classList.toggle('ends', !!account.subscription?.ends && !!sub);
     view.renew.disabled = state.mode !== 'live';
-    const credit = creditsText(account);
-    view.credits.textContent = credit;
-    view.credits.hidden = !credit;
+    const items = creditsItems(account);
+    const key = JSON.stringify(items);
+    if (view.credits.dataset.key !== key) {
+      view.credits.dataset.key = key;
+      view.credits.replaceChildren(...items.map(([label, value]) => {
+        const line = node('div', 'credit');
+        line.append(node('span', 'credit-label', `${label}: `), node('span', 'credit-value', value));
+        return line;
+      }));
+    }
+    view.credits.hidden = !items.length;
     view.plan.textContent = account.plan || '';
     view.plan.hidden = !account.plan;
     for (const w of account.windows) {
