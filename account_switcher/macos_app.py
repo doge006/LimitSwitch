@@ -32,7 +32,7 @@ from WebKit import WKWebView, WKWebViewConfiguration
 from .tray import APP, PROVIDERS, active_accounts, short_name, tooltip, tray_level
 
 log = logging.getLogger("account_switcher.macos")
-PANEL_WIDTH = 340
+PANEL_WIDTH = 392
 ICON = Path(__file__).resolve().parent / "static" / "assets" / "switcher.png"
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
@@ -128,6 +128,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.popover.setContentViewController_(controller)
         self.popover.setContentSize_(NSMakeSize(PANEL_WIDTH, 420))
         self.popover.setBehavior_(NSPopoverBehaviorTransient)
+        from AppKit import NSAppearance
+        dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+        if dark is not None:
+            self.popover.setAppearance_(dark)  # the dark panel design, like the Windows tray
         self.popover.setAnimates_(True)
         self.popover.setDelegate_(self)
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the dashboard's Quit
@@ -252,7 +256,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         NSApp.activateIgnoringOtherApps_(True)
         self.popover.showRelativeToRect_ofView_preferredEdge_(button.bounds(), button, NSMinYEdge)
         try:
-            self.controller.action("refresh", {"ifOlderThan": 60})  # like opening the Windows panel
+            self.controller.action("refresh", {"ifOlderThan": 45})  # like opening the Windows panel
         except (RuntimeError, ValueError):
             pass
 

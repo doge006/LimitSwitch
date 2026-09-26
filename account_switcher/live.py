@@ -25,6 +25,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import random
 import shutil
 import subprocess
 import sys
@@ -37,8 +38,12 @@ from .core import Account, Router
 from .providers import PROVIDERS, ProviderError, _jwt_payload
 from .vault import Vault, atomic_write
 
-ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 300, 120, 1800
-FRESH_ENOUGH = 120          # opening the panel refreshes only data older than this
+# Near-live usage for the accounts in use, gently for the rest. Each account also has a pace
+# (1 = normal) that doubles when the provider rate limits it and eases back after successes,
+# so the app settles at whatever rate the provider accepts.
+ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 1800
+FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
+MAX_PACE = 8
 MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
 SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
@@ -64,7 +69,6 @@ class LiveAccounts:
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
         self.signatures = {}
-        self.backoff = {}  # account id -> (monotonic time before which we do not call, failures)
         self.last_refresh = 0.0
         self.last_manual = 0.0
         self.spacing = SPACING
@@ -143,14 +147,16 @@ class LiveAccounts:
         """Wall-clock time this account's usage should next be fetched."""
         updated = meta.get("updatedAt", 0.0)
         last = max(updated, meta.get("attemptedAt", 0.0))
+        held = meta.get("backoffUntil", 0.0)   # rate limited: not before this
+        pace = meta.get("pace", 1.0)
         if not last:
-            return 0.0                      # never fetched: now
+            return held                     # never fetched: now
         if meta.get("status") or not updated:
-            return last + ACTIVE_INTERVAL   # failing: retry gently, never in a loop
+            return max(held, last + max(ACTIVE_INTERVAL * pace, 300))   # failing: retry gently, never in a loop
         if is_active:
             usage = project(meta.get("usage") or [], now)
             near = any(w["scope"] == "account" and w["used"] >= 90 for w in usage)
-            return updated + (URGENT_INTERVAL if near else ACTIVE_INTERVAL)
+            return max(held, updated + (URGENT_INTERVAL if near else ACTIVE_INTERVAL) * pace)
         # Inactive: usage only changes when a window resets (or if used elsewhere).
         resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
         return min([updated + IDLE_INTERVAL] + resets)
@@ -159,7 +165,7 @@ class LiveAccounts:
         """Fetch usage for accounts that are due (or all/one when forced). Network calls happen
         outside the lock and are spaced out so bursts never hit the provider."""
         self.sync_live()
-        now, clock = time.time(), time.monotonic()
+        now = time.time()
         with self.lock:
             targets = []
             for i, m in self.meta["accounts"].items():
@@ -171,13 +177,10 @@ class LiveAccounts:
                     due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
                 else:
                     due = 0.0 if (force or only) else self.due(i, m, is_active, now)
-                if due <= now:
+                if due <= now and m.get("backoffUntil", 0.0) <= now:  # a rate limit holds even a forced refresh
                     targets.append((i, dict(m), is_active, is_live))
         fetched = False
         for account_id, meta, is_active, is_live in targets:
-            until, failures = self.backoff.get(account_id, (0, 0))
-            if until > clock:
-                continue
             provider = self.providers.get(meta["provider"])
             try:
                 secret = self.vault.read_secret(account_id)
@@ -194,9 +197,14 @@ class LiveAccounts:
                 # Never rotate the tokens in the official login file: the client owns those.
                 windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live))
             except ProviderError as error:
-                if error.retry_after:  # rate limited: exponential backoff, honouring Retry-After
-                    wait = min(MAX_BACKOFF, max(error.retry_after, 300 * 2 ** failures))
-                    self.backoff[account_id] = (time.monotonic() + wait, failures + 1)
+                if error.rate_limited:
+                    # Wait what the provider asks (Retry-After), else back off exponentially;
+                    # a little jitter, and a slower pace from now on. Kept across restarts.
+                    failures = meta.get("backoffFailures", 0)
+                    wait = error.retry_after or min(MAX_BACKOFF, 60 * 2 ** failures)
+                    wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
+                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
+                              pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
                 message = str(error)
                 if error.relogin and (is_active or is_live):
                     message = f"Waiting for {meta['provider'].title()} to refresh its login"
@@ -205,7 +213,8 @@ class LiveAccounts:
             except Exception as error:  # a malformed response must not stop the loop
                 self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                 continue
-            self.backoff.pop(account_id, None)
+            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.85)} if meta.get("pace", 1.0) > 1 else {}
+            self._set(account_id, backoffUntil=0.0, backoffFailures=0, **eased)
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
                 secret = updated

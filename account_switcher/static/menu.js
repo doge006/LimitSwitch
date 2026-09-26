@@ -36,20 +36,24 @@ async function api(path, body) {
 const act = (action, body) => api(`/api/${action}`, body).catch(() => {});
 
 function row(account) {
-  const r = el('div', 'row' + (account.eligible ? '' : ' spent'));
+  const switchable = account.eligible && !account.active && !pending && !state.busy;
+  const confirming = switchable && armed === account.id;
+  const r = el('div', 'row' + (account.active ? ' active' : '') + (account.eligible ? '' : ' spent')
+    + (switchable ? ' switchable' : '') + (confirming ? ' confirm' : ''));
   const head = el('div', 'head');
   head.append(el('span', 'email', account.name));
-  if (account.plan) head.append(el('span', 'plan', account.plan));
+  if (account.plan) head.append(el('span', `plan ${account.provider}`, account.plan));
+  const windows = account.windows.slice(0, 3);
   if (pending === account.id) head.append(el('span', 'state', 'Switching…'));
-  else if (account.active) head.append(el('span', 'state in-use', '✓ In use'));
-  else if (!account.eligible) head.append(el('span', 'state limit', 'Limit reached'));
-  else {
-    // Two clicks: the first asks for confirmation, so a stray click never switches.
-    const confirming = armed === account.id;
-    const b = el('button', 'switch-btn' + (confirming ? ' confirm' : ''), confirming ? 'Confirm' : 'Switch');
-    b.type = 'button';
-    b.disabled = !!pending || state.busy;
-    b.addEventListener('click', () => {
+  else if (confirming) head.append(el('span', 'state confirm', 'Click again'));
+  else if (account.active) head.append(el('span', 'state in-use', 'In use'));
+  else if (!account.eligible) head.append(el('span', 'state limit', 'Limit'));
+  else if (account.status && windows.length) head.append(el('span', 'state note', account.status));
+  else if (switchable) head.append(el('span', 'state hint', 'Switch'));
+  r.append(head);
+  if (switchable) {
+    // Two clicks, like the Windows panel: the first asks for confirmation, so a stray click never switches.
+    r.addEventListener('click', () => {
       clearTimeout(armedTimer);
       if (!confirming) {
         armed = account.id;
@@ -62,24 +66,23 @@ function row(account) {
       render();
       act('swap', { id: account.id });
     });
-    head.append(b);
   }
-  r.append(head);
-  const bars = el('div', 'bars');
-  for (const w of account.windows) {
-    const left = remaining(w.used), cell = el('div');
-    const label = el('div', 'bar-label');
-    label.append(el('span', '', short(w)));
-    const pct = el('b', `${level(left)}-text`, `${Math.round(left)}%`);
-    label.append(pct);
-    const track = el('span', 'track'), fill = el('span', `fill ${level(left)}`);
-    fill.style.width = `${left}%`;
-    track.append(fill);
-    cell.append(label, track, el('div', 'reset', w.resetsAt ? `resets in ${until(w.resetsAt)}` : ''));
-    bars.append(cell);
+  if (windows.length) {
+    const bars = el('div', 'bars');
+    bars.style.setProperty('--cols', windows.length);
+    for (const w of windows) {
+      const left = remaining(w.used), meter = el('div', 'meter');
+      const track = el('span', 'track'), fill = el('span', `fill ${level(left)}`);
+      fill.style.width = `${left}%`;
+      track.append(fill);
+      meter.append(el('span', 'label', short(w)), track, el('span', `pct ${level(left)}-text`, `${Math.round(left)}%`));
+      if (w.resetsAt) meter.append(el('span', 'reset', `resets in ${until(w.resetsAt)}`));
+      bars.append(meter);
+    }
+    r.append(bars);
+  } else {
+    r.append(el('div', 'loading', account.status || 'Usage not loaded yet'));
   }
-  if (account.windows.length) r.append(bars);
-  if (account.status) r.append(el('div', 'note', account.status));
   return r;
 }
 
@@ -89,16 +92,21 @@ function render() {
   for (const [id, name] of PROVIDERS) {
     const accounts = state.accounts.filter(a => a.provider === id);
     if (!accounts.length) continue;
-    const section = el('div', 'section');
-    const icon = el('img', id);
+    const section = el('div', `section ${id}`);
+    const icon = el('img');
     icon.src = `/assets/${id}.png`;
     icon.alt = '';
-    section.append(icon, document.createTextNode(name.toUpperCase()));
+    section.append(icon, document.createTextNode(name.toUpperCase()), el('span', 'count', String(accounts.length)));
     list.append(section, ...accounts.map(row));
   }
-  if (!state.accounts.length) list.append(el('div', 'empty', 'Sign in to Claude Code or Codex and it shows up here.'));
+  if (!state.accounts.length) {
+    const empty = el('div', 'empty');
+    empty.append(el('b', '', 'No accounts yet'), document.createTextNode('Sign in to Claude Code or Codex and it shows up here.'));
+    list.append(empty);
+  }
   $('auto').checked = state.autoSwap;
   $('afk').checked = state.afk;
+  $('auto').disabled = $('afk').disabled = !!state.busy;
   post({ type: 'height', value: Math.ceil(document.body.getBoundingClientRect().height) });
 }
 
