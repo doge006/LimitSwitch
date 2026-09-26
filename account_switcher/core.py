@@ -1,5 +1,5 @@
 """Small routing and recovery state machine, independent of the UI and client."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import time
 
 
@@ -20,11 +20,29 @@ class Account:
     reset_at: float
     weekly_reset_at: float
     exhausted: bool = False
+    plan: str = ""
+    email: str = ""
+    # Model-specific caps, e.g. ("Weekly · Fable", used_percent, reset_at).
+    # Shown in the UI; routing stays on the account-wide windows.
+    model_windows: tuple = field(default_factory=tuple)
 
     @property
     def eligible(self):
         # A reset timestamp alone is insufficient evidence of restored quota.
         return not self.exhausted and self.five_hour < 100 and self.weekly < 100
+
+    @property
+    def headroom(self):
+        """Remaining percent of the tightest account-wide window."""
+        return 100 - max(self.five_hour, self.weekly)
+
+    def windows(self):
+        """Provider-neutral usage windows (plan section 6: UsageWindow)."""
+        rows = [{"key": "five_hour", "label": "5-hour", "used": self.five_hour, "resetsAt": self.reset_at},
+                {"key": "weekly", "label": "Weekly", "used": self.weekly, "resetsAt": self.weekly_reset_at}]
+        rows += [{"key": f"model-{i}", "label": label, "used": used, "resetsAt": reset}
+                 for i, (label, used, reset) in enumerate(self.model_windows)]
+        return rows
 
 
 class Router:
@@ -52,10 +70,12 @@ class Router:
     def fallback(self, provider):
         if not self.auto_swap:
             return None
-        for account in self.accounts:
-            if account.provider == provider and account.eligible:
-                return self.swap(account.id)
-        return None
+        # Prefer the account with the most headroom rather than list order,
+        # so a failover does not land on an account that is nearly spent.
+        candidates = [a for a in self.accounts if a.provider == provider and a.eligible]
+        if not candidates:
+            return None
+        return self.swap(max(candidates, key=lambda a: a.headroom).id)
 
 
 class Recovery:
@@ -94,8 +114,12 @@ class Recovery:
 def demo_accounts():
     now = time.time()
     return [
-        Account("claude-a", "claude", "Claude · Personal (synthetic)", 64, 42, now + 7200, now + 3 * 86400),
-        Account("claude-b", "claude", "Claude · Second (synthetic)", 18, 27, now + 12600, now + 5 * 86400),
-        Account("codex-a", "codex", "Codex · Personal (synthetic)", 36, 51, now + 5400, now + 2 * 86400),
-        Account("codex-b", "codex", "Codex · Second (synthetic)", 8, 12, now + 14400, now + 6 * 86400),
+        Account("claude-a", "claude", "Claude · Personal (synthetic)", 64, 42, now + 7200, now + 3 * 86400,
+                plan="Max 5x", email="personal@example.com", model_windows=(("Weekly · Fable", 40, now + 3 * 86400),)),
+        Account("claude-b", "claude", "Claude · Second (synthetic)", 18, 27, now + 12600, now + 5 * 86400,
+                plan="Max 20x", email="second@example.com", model_windows=(("Weekly · Fable", 22, now + 5 * 86400),)),
+        Account("codex-a", "codex", "Codex · Personal (synthetic)", 36, 51, now + 5400, now + 2 * 86400,
+                plan="Pro", email="personal@example.com"),
+        Account("codex-b", "codex", "Codex · Second (synthetic)", 8, 12, now + 14400, now + 6 * 86400,
+                plan="Plus", email="second@example.com"),
     ]

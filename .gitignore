@@ -16,3 +16,4 @@ experiments/proxy/*.exe
 experiments/proxy/.cache/
 experiments/proxy/gocache/
 experiments/proxy/gomodcache/
+.runtime/

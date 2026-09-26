@@ -17,7 +17,7 @@ from tkinter import ttk, messagebox
 import webbrowser
 from pathlib import Path
 
-from .web import Controller, make_server
+from .web import Controller, make_server, write_url_file, clear_url_file
 from .tray_panel import StatusPanel, tooltip
 from .vitals_ui import SwitcherAccountRow
 from .native_controls import FluentButton, Motion
@@ -132,6 +132,9 @@ class Dashboard:
         self.panel = None
         self.tray_revision = -1
         self.root.bind("<<TrayCommand>>", lambda _: self.drain_commands())
+        self.root.bind("<<StateChanged>>", lambda _: self.poll())
+        self.refresh_queued = threading.Event()
+        self.minute_job = None
         self.callback_error = None
         self.root.report_callback_exception = self.report_error
         self.rows = {}
@@ -215,6 +218,7 @@ class Dashboard:
         self.setup_tray()
         if hidden:
             self.root.withdraw()
+        controller.listeners.append(self.state_changed)
         self.poll()
         if smoke:
             self.root.after(500, self.smoke_start)
@@ -247,6 +251,7 @@ class Dashboard:
         else:
             self.panel = StatusPanel(self)
             self.panel.show(focus=focus)
+        self.schedule_minute()
 
     def drain_commands(self):
         while not self.commands.empty() and not self.closing:
@@ -304,12 +309,36 @@ class Dashboard:
         self.window_motion.to(1., duration=180)
         self.root.lift()
         self.root.focus_force()
+        self.last_revision = -1
+        self.poll()
 
     def redraw_rows(self):
         for account in self.state.get("accounts", []):
             self.rows[account["id"]].update_account(account, self.state.get("busy", False))
 
+    def state_changed(self):
+        """Called from worker threads; coalesce bursts into one Tk refresh."""
+        if self.closing or self.refresh_queued.is_set():
+            return
+        self.refresh_queued.set()
+        try:
+            self.root.event_generate("<<StateChanged>>", when="tail")
+        except (RuntimeError, tk.TclError):
+            self.refresh_queued.clear()
+
+    def schedule_minute(self):
+        """Countdowns change once a minute; tick only while something is on screen."""
+        if self.minute_job:
+            self.root.after_cancel(self.minute_job)
+            self.minute_job = None
+        if self.closing or (self.root.state() == "withdrawn" and not self.panel):
+            return
+        delay = int((60 - time.time() % 60) * 1000) + 50
+        self.minute_job = self.root.after(delay, self.poll)
+
     def poll(self):
+        """Redraw from the controller snapshot. Runs on state change or minute tick, never idle."""
+        self.refresh_queued.clear()
         if self.closing:
             return
         self.drain_commands()
@@ -347,7 +376,7 @@ class Dashboard:
             for control in [self.reset_button, *self.buttons[:2]]:
                 control.configure(state="disabled" if state["busy"] else "normal")
             self.redraw_rows()
-        self.root.after(500 if visible or self.panel else 2000, self.poll)
+        self.schedule_minute()
 
     def smoke_start(self):
         assert len(self.controller.snapshot()["accounts"]) == 4
@@ -376,6 +405,10 @@ class Dashboard:
         if self.closing:
             return
         self.closing = True
+        if self.state_changed in self.controller.listeners:
+            self.controller.listeners.remove(self.state_changed)
+        if self.minute_job:
+            self.root.after_cancel(self.minute_job)
         self.window_motion.cancel()
         self.tools_motion.cancel()
         if self.panel:
@@ -404,9 +437,11 @@ def main():
     parser.add_argument("--simulator", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--tray", action="store_true", help="Start with the dashboard hidden in the system tray")
+    parser.add_argument("--url-file", help="Write the private launch URL here (used by the update script)")
     args = parser.parse_args()
     controller = Controller(args.simulator)
     server = make_server(controller, args.port, idle_seconds=0)
+    write_url_file(args.url_file, server.launch_url)
     if sys.stdout:
         print(server.launch_url, flush=True)
     def serve():
@@ -429,6 +464,7 @@ def main():
         if not app.closing:
             app.exit()
         thread.join(timeout=10)
+        clear_url_file(args.url_file, server.launch_url)
     if args.smoke_test:
         if app.callback_error:
             raise app.callback_error
