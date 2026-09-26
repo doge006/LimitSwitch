@@ -68,9 +68,18 @@ time.sleep(3)
 shot("1-desktop.png")
 found = windows(pid)
 print(json.dumps(found, indent=1))
-status = [w for w in found if w["layer"] == Quartz.kCGStatusWindowLevel]
-check(bool(status), "status item window exists")
-check(any(w["onscreen"] and (w["w"] or 0) > 0 for w in status), "status item is on screen with a width")
+status = [w for w in found if w["layer"] == Quartz.kCGStatusWindowLevel and w["onscreen"] and (w["w"] or 0) > 0]
+print("status item in the window list:", bool(status), "(macOS 26 draws status items elsewhere)")
+LOG = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+import re
+line = next((l for l in (LOG.read_text().splitlines() if LOG.exists() else []) if "status item:" in l), "")
+print(line)
+size = re.search(r"frame=\(([-\d.]+), ([-\d.]+), ([-\d.]+), ([-\d.]+)\)", line)
+check(bool(status) or bool(size and float(size.group(3)) > 0 and float(size.group(4)) > 0),
+      "the menu bar icon has a place in the menu bar")
+names = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+print("process:", names)
+check(names.endswith("Account Switcher"), "the process is Account Switcher, not Python")
 opened_by_install = [w for w in found if w["layer"] == 0 and w["onscreen"]]
 check(bool(opened_by_install), "opening the app shows its window")
 

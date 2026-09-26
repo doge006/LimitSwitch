@@ -159,6 +159,17 @@ def mac_app():
     build_mac_app(MAC_APP)
 
 
+def framework_interpreter():
+    """Python's app binary (Python.app/Contents/MacOS/Python) behind .venv, on the framework
+    builds from python.org and Homebrew; None on other builds."""
+    if not venv_python().exists():
+        return None
+    done = subprocess.run([str(venv_python()), "-c", "import os, sys; print(os.path.join(sys.base_prefix, "
+                           "'Resources', 'Python.app', 'Contents', 'MacOS', 'Python'))"], capture_output=True, text=True)
+    path = Path(done.stdout.strip()) if done.returncode == 0 else None
+    return path if path and path.is_file() else None
+
+
 def build_mac_app(app):
     contents = app / "Contents"
     (contents / "MacOS").mkdir(parents=True, exist_ok=True)
@@ -171,21 +182,39 @@ def build_mac_app(app):
              # silicon, and the .venv's native libraries can't load there.
              "LSArchitecturePriority": ["arm64", "x86_64"], "LSRequiresNativeExecution": True}
     (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
-    launcher = contents / "MacOS" / "AccountSwitcher"
+    macos = contents / "MacOS"
+    # The process should be Account Switcher itself, not "Python": macOS 26 only gives menu bar
+    # space to an app it can identify (and it names the app in Activity Monitor, the Dock and
+    # the menu bar settings). So the bundle carries its own copy of Python's small app binary,
+    # which runs the .venv through __PYVENV_LAUNCHER__, the way Python's own launcher does.
+    interpreter = framework_interpreter()
+    binary = macos / "Account Switcher"
+    if interpreter:
+        shutil.copy2(interpreter, binary)
+    elif binary.exists():
+        binary.unlink()
+    launcher = macos / "AccountSwitcher"
     log = log_path()
+    run = '"$HERE/Account Switcher"' if interpreter else '"$PY"'
     launcher.write_text(f"""#!/bin/sh
-# Starts Account Switcher from its folder (--show: opened by the user, so show the window). Anything it prints goes to app.log.
+# Starts Account Switcher from its folder. Anything it prints goes to app.log.
+# Opened by the user it shows its window; --at-login (the login item) starts it quietly.
+HERE="$(cd "$(dirname "$0")" && pwd)"
 PY="{venv_python()}"
 LOG="{log}"
+SHOW=--show
+if [ "$1" = "--at-login" ]; then SHOW=""; shift; fi
 if [ ! -x "$PY" ]; then
   /usr/bin/osascript -e 'display alert "Account Switcher did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
   exit 1
 fi
 mkdir -p "$(dirname "$LOG")"
+export __PYVENV_LAUNCHER__="$PY"
+export ACCOUNT_SWITCHER_APP="$(cd "$HERE/../.." && pwd)"
 if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
-  exec /usr/bin/arch -arm64 "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
+  exec /usr/bin/arch -arm64 {run} "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 fi
-exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
+exec {run} "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
@@ -198,6 +227,8 @@ exec "$PY" "{ROOT / "AccountSwitcher.pyw"}" --show "$@" >>"$LOG" 2>&1
                         f"Image.open(sys.argv[1]).save(sys.argv[2], sizes={sizes})", str(source), str(icon)], check=False)
     else:
         Image.open(source).save(icon, sizes=sizes)
+    if MAC:  # one consistent (local) signature for the bundle and the binary it now contains
+        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], capture_output=True, check=False)
     subprocess.run(["touch", str(app)], check=False)  # Finder picks up the new icon
 
 
