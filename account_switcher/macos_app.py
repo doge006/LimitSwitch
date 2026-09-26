@@ -13,21 +13,27 @@ import subprocess
 import threading
 import time
 
+import logging
+from pathlib import Path
+
 import objc
-from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSBackingStoreBuffered, NSColor,
+from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+                    NSBackingStoreBuffered, NSColor, NSEventModifierFlagCommand, NSEventModifierFlagOption,
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSMinYEdge, NSOffState, NSOnState,
                     NSPopover, NSPopoverBehaviorTransient, NSStatusBar, NSVariableStatusItemLength, NSViewController,
                     NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskFullSizeContentView,
-                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled,
-                    NSWindowOcclusionStateVisible)
+                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
 from WebKit import WKWebView, WKWebViewConfiguration
 
 from .tray import APP, PROVIDERS, active_accounts, short_name, tooltip, tray_level
 
+log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 340
+ICON = Path(__file__).resolve().parent / "static" / "assets" / "switcher.png"
+TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
            "warn": "arrow.triangle.2.circlepath", "bad": "exclamationmark.arrow.triangle.2.circlepath"}
 
@@ -88,9 +94,9 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
 
 
 class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
-    def initWithController_server_openNow_(self, controller, server, open_now):
+    def initWithController_server_openNow_cleanup_(self, controller, server, open_now, cleanup):
         self = objc.super(MenuBarApp, self).init()
-        self.controller, self.server, self.open_now = controller, server, open_now
+        self.controller, self.server, self.open_now, self.cleanup = controller, server, open_now, cleanup
         self.url = server.launch_url
         self.state = controller.snapshot()
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
@@ -100,6 +106,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
 
     # ---------- setup ----------
     def applicationDidFinishLaunching_(self, _note):
+        NSApp.setMainMenu_(self.main_menu())
+        icon = NSImage.alloc().initWithContentsOfFile_(str(ICON))
+        if icon is not None:
+            NSApp.setApplicationIconImage_(icon)  # Dock and ⌘-Tab while the window is open
         self.item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         button = self.item.button()
         button.setTarget_(self)
@@ -124,19 +134,55 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         threading.Thread(target=self.watch, daemon=True).start()
         if self.open_now:
             self.showFullView_(None)
-        AppHelper.callLater(3, self.check_icon)
 
     @objc.python_method
-    def check_icon(self):
-        """With a full menu bar (the notch on MacBooks), macOS hides status items that don't fit,
-        without telling the app. Then open the window instead, so the app isn't invisible."""
-        window = self.item.button().window()
-        if (window is None or not NSMenu.menuBarVisible()  # an auto-hidden menu bar hides it too
-                or window.occlusionState() & NSWindowOcclusionStateVisible):
-            return
-        self.showFullView_(None)
-        notify(APP, "The menu bar is full, so macOS is hiding the icon. Quit another menu bar app, "
-                    "or hold ⌘ and drag icons to make room.")
+    def main_menu(self):
+        """The standard app and Edit / Window menus: ⌘Q, ⌘W, copy and paste in the window."""
+        bar = NSMenu.alloc().init()
+
+        def submenu(title, items):
+            holder = bar.addItemWithTitle_action_keyEquivalent_(title, None, "")
+            menu = NSMenu.alloc().initWithTitle_(title)
+            for entry in items:
+                if entry is None:
+                    menu.addItem_(NSMenuItem.separatorItem())
+                    continue
+                label, action, key, *rest = entry
+                item = menu.addItemWithTitle_action_keyEquivalent_(label, action, key)
+                if rest and rest[0] == "self":
+                    item.setTarget_(self)
+                elif rest:
+                    item.setKeyEquivalentModifierMask_(rest[0])
+            holder.setSubmenu_(menu)
+            return menu
+
+        submenu(APP, [(f"About {APP}", "orderFrontStandardAboutPanel:", ""), None,
+                      (f"Hide {APP}", "hide:", "h"),
+                      ("Hide Others", "hideOtherApplications:", "h", NSEventModifierFlagCommand | NSEventModifierFlagOption),
+                      None, (f"Quit {APP}", "quit:", "q", "self")])
+        submenu("Edit", [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"), None, ("Cut", "cut:", "x"),
+                         ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")])
+        window = submenu("Window", [("Minimize", "performMiniaturize:", "m"), ("Close", "performClose:", "w"), None,
+                                    ("Show Account Switcher", "showFullView:", "0", "self")])
+        NSApp.setWindowsMenu_(window)
+        return bar
+
+    def applicationShouldTerminate_(self, _app):
+        """Every way of quitting (⌘Q, the Dock, the menus, logging out) ends here. Cocoa ends the
+        process right after, so undo the Codex / Claude changes now."""
+        try:
+            self.cleanup()
+        except Exception:
+            log.exception("cleanup on quit failed")
+        return TERMINATE_NOW
+
+    def applicationShouldHandleReopen_hasVisibleWindows_(self, _app, _visible):
+        self.showFullView_(None)  # clicked in the Dock or opened again
+        return False
+
+    def windowWillClose_(self, _note):
+        # Back to a menu bar app: no Dock icon once the window is closed.
+        AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
 
     def popoverShouldDetach_(self, _popover):
         return True  # drag it off the menu bar to keep it open as a floating panel
@@ -222,7 +268,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             window.setContentView_(web_view(self.url, NSMakeRect(0, 0, 1180, 860)))
             window.center()
             window.setFrameAutosaveName_("AccountSwitcherFullView")
+            window.setDelegate_(self)
             self.full_window = window
+        # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.
+        NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
         NSApp.activateIgnoringOtherApps_(True)
         self.full_window.makeKeyAndOrderFront_(None)
 
@@ -274,13 +323,13 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
     def quit_(self, _sender):
         if not self.quitting:
             self.quitting = True
-            NSStatusBar.systemStatusBar().removeStatusItem_(self.item)
-            AppHelper.stopEventLoop()  # returns to main(), which undoes the Codex / Claude changes
+            self.popover.performClose_(None)
+            NSApp.terminate_(None)  # -> applicationShouldTerminate_, which cleans up
 
 
-def run(controller, server, open_now=False):
+def run(controller, server, open_now=False, cleanup=lambda: None):
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # menu bar only, no Dock icon
-    delegate = MenuBarApp.alloc().initWithController_server_openNow_(controller, server, open_now)
+    delegate = MenuBarApp.alloc().initWithController_server_openNow_cleanup_(controller, server, open_now, cleanup)
     app.setDelegate_(delegate)
     AppHelper.runEventLoop(installInterrupt=True)
