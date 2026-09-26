@@ -1,0 +1,7 @@
+{
+  "workingSetMiB": 62.93,
+  "privateMiB": 34.11,
+  "cpuSeconds": 0.3438,
+  "durationSeconds": 30,
+  "scope": "Native dashboard, tray and local port; no proxy or Claude session"
+}

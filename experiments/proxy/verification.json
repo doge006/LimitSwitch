@@ -1,0 +1,230 @@
+{
+  "pid": 55288,
+  "model": "claude-sonnet-4-6",
+  "models": {
+    "data": [
+      {
+        "created": 1790375347,
+        "id": "claude-sonnet-4-6",
+        "object": "model",
+        "owned_by": "anthropic"
+      }
+    ],
+    "object": "list"
+  },
+  "first_response": {
+    "id": "msg_dummy",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "Response from A"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 1,
+      "output_tokens": 3
+    }
+  },
+  "manual_response": {
+    "id": "msg_dummy",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "Response from B"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 1,
+      "output_tokens": 3
+    }
+  },
+  "failover_response": {
+    "id": "msg_dummy",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "Response from B"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": {
+      "input_tokens": 1,
+      "output_tokens": 3
+    }
+  },
+  "failover_events": [
+    {
+      "account": "A",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    },
+    {
+      "account": "B",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    }
+  ],
+  "idle": {
+    "CpuSeconds": 0,
+    "DurationSeconds": 30,
+    "Samples": [
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50450432,
+        "PrivateBytes": 75378688
+      },
+      {
+        "WorkingSetBytes": 50491392,
+        "PrivateBytes": 75444224
+      },
+      {
+        "WorkingSetBytes": 50491392,
+        "PrivateBytes": 75444224
+      },
+      {
+        "WorkingSetBytes": 50491392,
+        "PrivateBytes": 75444224
+      },
+      {
+        "WorkingSetBytes": 50491392,
+        "PrivateBytes": 75444224
+      }
+    ]
+  },
+  "status": "PASS",
+  "all_events": [
+    {
+      "account": "A",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    },
+    {
+      "account": "B",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    },
+    {
+      "account": "A",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    },
+    {
+      "account": "B",
+      "model": "claude-sonnet-4-6",
+      "path": "/v1/messages?beta=true"
+    }
+  ]
+}

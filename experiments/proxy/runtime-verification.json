@@ -1,0 +1,8 @@
+[
+  "Manual A/B selection and auto-swap OFF across repeated client requests passed",
+  "Auto-swap ON can use reserve account passed",
+  "No Antigravity updater start or external attempt in patched startup log",
+  "Partial SSE, failed nonstream fallback, and settled B recovery passed",
+  "Recovery to A, retained selection when re-enabling, and reset without URL restart passed",
+  "All fixture processes stopped and validated temporary directories removed"
+]

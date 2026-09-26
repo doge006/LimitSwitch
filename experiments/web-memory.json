@@ -1,0 +1,7 @@
+{
+  "peakWorkingSetMiB": 72.77,
+  "peakPrivateMiB": 89.58,
+  "cpuSeconds": 0.0,
+  "durationSeconds": 30,
+  "scope": "Python Web UI backend plus compiled proxy; connected browser excluded; no Claude session running"
+}
