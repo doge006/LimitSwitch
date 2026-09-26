@@ -44,6 +44,7 @@ footer { border-top: 1px solid var(--separator); }
   padding: 1px 9px; font-size: 11.5px; cursor: pointer; box-shadow: 0 .5px 1px rgba(0, 0, 0, .12); }
 .switch-btn:hover { background: var(--fill-hover); }
 .switch-btn:disabled { opacity: .5; cursor: default; }
+.switch-btn.confirm { background: var(--accent, #0a84ff); border-color: transparent; color: #fff; }
 .bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 4px 12px; margin-top: 6px; }
 .bar-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--secondary); }
 .bar-label b { font-weight: 600; font-variant-numeric: tabular-nums; }

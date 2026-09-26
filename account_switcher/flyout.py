@@ -29,7 +29,8 @@ SW_SHOWNA, VK_ESCAPE, ULW_ALPHA, TME_LEAVE = 8, 0x1B, 0x2, 0x2
 IDC_ARROW, IDC_HAND = 32512, 32649
 MONITOR_DEFAULTTONEAREST = 2
 CLASS_NAME = "AccountSwitcherFlyout"
-TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS = 1, 2, 3, 4, 5
+TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS, TIMER_ARMED = 1, 2, 3, 4, 5, 6
+CONFIRM_MS = 4000  # how long a first click on an account waits for the confirming click
 log = logging.getLogger("account_switcher.flyout")
 
 
@@ -517,6 +518,9 @@ class Popup:
             elif wparam == TIMER_PENDING:
                 user32.KillTimer(hwnd, TIMER_PENDING)
                 self.pending_timeout()
+            elif wparam == TIMER_ARMED:
+                user32.KillTimer(hwnd, TIMER_ARMED)
+                self.armed_timeout()
             return 0
         if msg == WM_APP_CLOSE:
             self._destroy()
@@ -627,6 +631,7 @@ class Flyout(Popup):
         super().__init__(tray)
         self.pinned = False
         self.pending = None   # account id being switched to
+        self.armed = None     # account id clicked once: the next click on it switches
 
     @property
     def dismiss_on_deactivate(self):
@@ -652,7 +657,7 @@ class Flyout(Popup):
         state = self.tray.state
         if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
             self.pending = None  # the switch landed
-        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx)
+        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed)
 
     def drag_region(self, x, y):
         return self.pinned and y < fr.header_height()
@@ -664,10 +669,15 @@ class Flyout(Popup):
     def close(self):
         if self.pinned:
             self.pinned_at = (self.x, self.y)
+        self.armed = None
         super().close()
 
     def pending_timeout(self):
         self.pending = None
+        self.redraw()
+
+    def armed_timeout(self):
+        self.armed = None
         self.redraw()
 
     def activate(self, action):
@@ -687,10 +697,20 @@ class Flyout(Popup):
                 force_foreground(self.hwnd)
             else:
                 self.redraw()
+        elif action == "hide":
+            self.close()  # a popped-out panel comes back where it was on the next tray click
         elif action == "quit":
             self._destroy()
             tray.quit()
         elif action.startswith("swap:"):
+            # Two clicks: the first asks for confirmation, so a stray click never switches.
+            if self.armed != action[5:]:
+                self.armed = action[5:]
+                self.redraw()
+                user32.SetTimer(self.hwnd, TIMER_ARMED, CONFIRM_MS, None)
+                return
+            user32.KillTimer(self.hwnd, TIMER_ARMED)
+            self.armed = None
             self.pending = action[5:]
             self.redraw()
             user32.SetTimer(self.hwnd, TIMER_PENDING, 6000, None)

@@ -26,6 +26,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, ProxyHandler
 
+from . import tls
 from .local_http import LocalServer
 
 UPSTREAM = "https://chatgpt.com"
@@ -253,7 +254,7 @@ class CodexProxy:
         self.upstream = upstream.rstrip("/")
         self.secret = secret or secrets.token_urlsafe(18)
         self.server = None
-        self.opener = build_opener(ProxyHandler())  # honours the system proxy settings
+        self.opener = build_opener(ProxyHandler(), tls.https_handler())  # system proxy settings, working TLS
 
     @property
     def base_url(self):

@@ -4,6 +4,8 @@ on:
   push:
     branches: ["main", "claude/**"]
   workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly, so a new macOS image (macos-latest) is tested without a code change
 
 permissions:
   contents: write
@@ -13,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-26]
+        os: [macos-15, macos-26, macos-latest]  # latest: the newest macOS GitHub offers (27 once available)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -24,6 +26,16 @@ jobs:
           launchctl setenv ACCOUNT_SWITCHER_DEBUG 1
           sw_vers
           bash Install.command --skip-code
+      - name: HTTPS from the app's Python (usage APIs)
+        run: |
+          .venv/bin/python3 -c "
+          from account_switcher import providers
+          try:
+              providers._http('GET', providers.Claude.USAGE_URL, {'Authorization': 'Bearer invalid', 'anthropic-beta': 'oauth-2025-04-20'})
+          except providers.ProviderError as error:
+              print('usage API answered:', error)
+              assert 'unreachable' not in str(error) and 'certificate' not in str(error), error
+          "
       - name: Smoke test
         run: |
           python3 -m venv /tmp/probe
