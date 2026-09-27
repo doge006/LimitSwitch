@@ -21,13 +21,15 @@ except ImportError:
 
 
 def app_processes():
-    """The app's processes: Python running LimitSwitch.pyw or account_switcher.tray. A venv's
-    pythonw.exe is a launcher that starts the real Python as its child: both are counted."""
+    """The app's processes: LimitSwitch.exe (installed), or Python running LimitSwitch.pyw or
+    account_switcher.tray (from source; a venv's pythonw.exe starts the real Python as its child:
+    both are counted)."""
     found = []
     for process in psutil.process_iter(["name", "cmdline"]):
         line = " ".join(process.info.get("cmdline") or [])
-        if "python" in (process.info.get("name") or "").lower() and (
-                "LimitSwitch.pyw" in line or "account_switcher.tray" in line or "LimitSwitch" in line):
+        name = (process.info.get("name") or "").lower()
+        if name == "limitswitch.exe" or ("python" in name and (
+                "LimitSwitch.pyw" in line or "account_switcher.tray" in line or "LimitSwitch" in line)):
             found.append(process)
     return found
 

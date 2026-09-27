@@ -63,7 +63,7 @@ jobs:
           (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
           foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
-          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' })
           Write-Host "PASS updated in place and started again ($($running.Count) process(es))"
           $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
           if (-not $run) { throw 'start at sign-in was not set' }
@@ -85,7 +85,7 @@ jobs:
           foreach ($i in 1..120) { if (-not (Test-Path "$dir\unins000.exe")) { break }; Start-Sleep -Milliseconds 500 }
           Start-Sleep 2
           if (Test-Path "$dir\LimitSwitch.exe") { throw 'the exe is still there' }
-          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or ($_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw') })
           if ($left.Count) { throw 'the app is still running' }
           if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue) { throw 'start at sign-in was left behind' }
           $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\LimitSwitch.lnk'

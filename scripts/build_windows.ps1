@@ -30,10 +30,16 @@ Copy-Item -Recurse -LiteralPath account_switcher -Destination $app
 Get-ChildItem -LiteralPath (Join-Path $app 'account_switcher') -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 Copy-Item -LiteralPath LimitSwitch.pyw, README.md, THIRD-PARTY-NOTICES.txt -Destination $app
 
-# 4. LimitSwitch.exe, with the app icon.
-rc /nologo /fo (Join-Path $Out 'launcher.res') scripts\win_launcher.rc
+# 4. LimitSwitch.exe: runs the bundled Python in its own process (Task Manager shows LimitSwitch),
+#    with the app icon and version details.
+$version = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
+$numbers = (($version.Split('.') + @('0', '0', '0', '0'))[0..3]) -join ','
+Set-Content -LiteralPath (Join-Path $Out 'version.h') -Encoding ascii `
+    -Value @("#define VERSION_TEXT `"$version`"", "#define VERSION_NUMBERS $numbers")
+rc /nologo /i $Out /fo (Join-Path $Out 'launcher.res') scripts\win_launcher.rc
+if ($LASTEXITCODE -ne 0) { throw 'rc failed' }
 cl /nologo /O2 /W3 /DUNICODE /D_UNICODE scripts\win_launcher.c (Join-Path $Out 'launcher.res') `
-    /Fo"$Out\\" /Fe"$app\LimitSwitch.exe" /link /SUBSYSTEM:WINDOWS user32.lib
+    /Fo"$Out\\" /Fe"$app\LimitSwitch.exe" /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib
 if (-not (Test-Path -LiteralPath (Join-Path $app 'LimitSwitch.exe'))) { throw 'the launcher did not build' }
 Remove-Item -LiteralPath (Join-Path $Out 'launcher.res'), (Join-Path $Out 'win_launcher.obj') -ErrorAction SilentlyContinue
 
@@ -41,7 +47,6 @@ Remove-Item -LiteralPath (Join-Path $Out 'launcher.res'), (Join-Path $Out 'win_l
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
 if (-not $iscc) { $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe' }
 if (-not (Test-Path -LiteralPath $iscc)) { throw 'Inno Setup 6 is needed (choco install innosetup)' }
-$version = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
 & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path $app).Path)" "/O$((Resolve-Path $Out).Path)" scripts\LimitSwitch.iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed ($LASTEXITCODE)" }
 $setup = Join-Path $Out 'LimitSwitch-Setup.exe'

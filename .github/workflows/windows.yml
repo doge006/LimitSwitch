@@ -72,7 +72,7 @@ jobs:
         run: |
           $pythonw = Join-Path (Split-Path (Get-Command python).Source) 'pythonw.exe'
           function Sample([int]$seconds, [scriptblock]$during) {
-            $ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
+            $ids = (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
             $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum
             $end = (Get-Date).AddSeconds($seconds)
             while ((Get-Date) -lt $end) { & $during }

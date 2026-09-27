@@ -7,6 +7,10 @@ import sys
 root = os.path.dirname(os.path.abspath(__file__))
 os.chdir(root)
 sys.path.insert(0, root)
+if sys.platform == "win32" and os.path.basename(sys.executable).lower() == "limitswitch.exe":
+    # Started by LimitSwitch.exe, which runs Python in its own process (so Task Manager shows
+    # LimitSwitch). Helpers the app starts (Claude Code's hook and status line) need Python itself.
+    sys.executable = sys._base_executable = os.path.join(root, "runtime", "pythonw.exe")
 if sys.prefix == sys.base_prefix:  # started by the macOS app's launcher: use the .venv's packages
     import glob
     import site

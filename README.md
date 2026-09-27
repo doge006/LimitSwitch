@@ -54,13 +54,13 @@ Built to be barely noticeable:
 In PowerShell, with LimitSwitch running. This samples it over 60 seconds:
 
 ```powershell
-$ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
+$ids = (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
 $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum; Start-Sleep 60; $p = Get-Process -Id $ids
 '{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f (($p | Measure-Object WorkingSet64 -Sum).Sum / 1MB),
     (($p | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB), ((($p | Measure-Object CPU -Sum).Sum - $before) / 60 * 100)
 ```
 
-Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **pythonw.exe** under the Details tab.
+Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **LimitSwitch**.
 
 ### Measure it on macOS
 
