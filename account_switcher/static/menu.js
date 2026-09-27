@@ -149,9 +149,59 @@ function compactRow(account, first) {
   return r;
 }
 
+const slots = new Map();  // compact: provider -> {slot, row, id}, kept between renders so things can move
+
+function renderCompact(list) {
+  if (list.dataset.mode !== 'compact') {
+    list.replaceChildren();
+    list.dataset.mode = 'compact';
+    slots.clear();
+  }
+  const inUse = PROVIDERS.map(([id]) => state.accounts.find(a => a.provider === id && a.active)).filter(Boolean);
+  list.querySelector('.none')?.remove();
+  for (const [provider, entry] of [...slots]) {
+    if (!inUse.some(a => a.provider === provider)) { entry.slot.remove(); slots.delete(provider); }
+  }
+  inUse.forEach((account, index) => {
+    let entry = slots.get(account.provider);
+    if (!entry) {
+      entry = { slot: el('div', 'slot'), row: null, id: null };
+      slots.set(account.provider, entry);
+    }
+    list.append(entry.slot);  // keeps provider order
+    const next = compactRow(account, index === 0);
+    if (entry.row && entry.id !== account.id) {
+      // Swapped: the old account slides out to the left, then the new one slides in from the right.
+      const old = entry.row;
+      old.classList.add('leaving');
+      old.addEventListener('animationend', () => old.remove(), { once: true });
+      next.classList.add('entering');
+      entry.slot.append(next);
+    } else if (entry.row) {
+      // Same account: the meters glide from their old width to the new one.
+      const before = [...entry.row.querySelectorAll('.fill')].map(f => f.style.width);
+      const fills = [...next.querySelectorAll('.fill')];
+      const targets = fills.map(f => f.style.width);
+      fills.forEach((f, i) => { if (before[i]) f.style.width = before[i]; });
+      entry.slot.replaceChildren(next);
+      requestAnimationFrame(() => requestAnimationFrame(() => fills.forEach((f, i) => { f.style.width = targets[i]; })));
+    } else {
+      entry.slot.append(next);
+    }
+    entry.row = next;
+    entry.id = account.id;
+  });
+  if (!inUse.length) {
+    const none = el('div', 'row mini none');
+    const head = el('div', 'head');
+    head.append(el('span', 'email muted', 'No account in use'), compactTools());
+    none.append(head);
+    list.append(none);
+  }
+}
+
 function render() {
   const list = $('list');
-  list.replaceChildren();
   const compact = !!state.compact;
   document.body.classList.toggle('compact', compact);
   $('size-icon').setAttribute('d', compact ? EXPAND : COMPACT);
@@ -159,20 +209,15 @@ function render() {
   $('pop').hidden = !native;
   $('pop').title = popped ? 'Back to the menu bar' : 'Pop out';
   $('pop').querySelector('path').setAttribute('d', popped ? POP_IN : POP_OUT);
-  post({ type: 'width', value: compact ? 300 : 392 });
+  post({ type: 'width', value: compact ? 320 : 392 });
   if (compact) {
-    const inUse = PROVIDERS.flatMap(([id]) => state.accounts.filter(a => a.provider === id && a.active));
-    if (inUse.length) list.append(...inUse.map((a, i) => compactRow(a, i === 0)));
-    else {
-      const none = el('div', 'row mini');
-      const head = el('div', 'head');
-      head.append(el('span', 'email muted', 'No account in use'), compactTools());
-      none.append(head);
-      list.append(none);
-    }
+    renderCompact(list);
     post({ type: 'height', value: Math.ceil(document.body.getBoundingClientRect().height) });
     return;
   }
+  list.dataset.mode = 'full';
+  slots.clear();
+  list.replaceChildren();
   for (const [id, name] of PROVIDERS) {
     const accounts = state.accounts.filter(a => a.provider === id);
     if (!accounts.length) continue;
