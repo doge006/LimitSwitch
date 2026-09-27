@@ -154,6 +154,7 @@ class TrayTests(unittest.TestCase):
         thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .1}, daemon=True)
         thread.start()
         try:
+            self.server.show = None
             self.assertFalse(show_running(self.server.launch_url))  # no window of its own: use a browser
             shown = threading.Event()
             self.server.show = shown.set

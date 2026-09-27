@@ -133,6 +133,17 @@ def fit_window(hwnd, size):
                         width, height, 0x0004 | 0x0010)  # SWP_NOZORDER | SWP_NOACTIVATE
 
 
+def focus_full_view(address=None):
+    """Bring an open full view to the front (restored if minimised). False when none is open."""
+    user32 = ctypes.windll.user32
+    for hwnd in find_windows(address):
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return True
+    return False
+
+
 def brand_full_view(relaunch, icon, seconds=15, size=None, address=None):
     """Watch briefly for the full view's window (it takes Edge a moment to open), give it our
     identity and, when given, its size. Runs in the background; does nothing when there's no

@@ -132,6 +132,14 @@ def full_view_size():
 
 def open_dashboard(url):
     browser = app_browser()
+    address = url.split("//", 1)[-1].split("/", 1)[0]
+    if browser and sys.platform == "win32":  # one full view: bring an open one to the front
+        try:
+            from .win_window import focus_full_view
+            if focus_full_view(address):
+                return
+        except Exception:
+            logging.getLogger("account_switcher").exception("full view focus")
     if browser:
         # --app gives a window without tabs or address bar; it joins the browser's
         # existing process if one is running, and all of it goes away when closed.
@@ -144,7 +152,7 @@ def open_dashboard(url):
                 from .integrations import launcher
                 from .win_window import brand_full_view
                 brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico",
-                                size=(width, height), address=url.split("//", 1)[-1].split("/", 1)[0])
+                                size=(width, height), address=address)
             except Exception:
                 logging.getLogger("account_switcher").exception("full view taskbar identity")
     else:
@@ -203,6 +211,9 @@ class Tray:
                                  tooltip(self.state), pystray.Menu(self.menu_items))
         # The dashboard's "Quit" button quits the tray too.
         server.quit = self.quit
+        # Opened again (Start menu, shortcut): this copy opens the full view, so it is sized by
+        # the DPI-aware process and an open one is brought to the front instead of a second one.
+        server.show = self.open_full_view
         self.menu = self.taskbar = None
         if native:
             from .flyout import Flyout, TrayMenu
@@ -351,6 +362,9 @@ def main(argv=None):
     if args.url_file:
         running = existing_instance(args.url_file)
         if running:  # second launch: just bring up the dashboard of the running copy
+            if sys.platform == "win32":  # this launch may take the foreground; let the running copy
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
             if not show_running(running):
                 open_dashboard(running)
             return

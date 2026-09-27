@@ -53,6 +53,11 @@ if windows:
     ctypes.windll.user32.GetWindowRect(windows[0], rect)
     print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
     check(rect[3] - rect[1] <= 700, "the full view opens at its own size, not a remembered one")
+    ctypes.windll.user32.AllowSetForegroundWindow(-1)  # as a second launch does
+    api("/api/show")  # opened again (Start menu or tray): the open one comes to the front
+    time.sleep(3)
+    check(len(win_window.find_windows()) == 1, "opening again keeps one full view")
+    check(ctypes.windll.user32.GetForegroundWindow() == windows[0], "opening again brings it to the front")
 time.sleep(2)
 ImageGrab.grab().save(SHOTS / "1-full-view.png")
 config = Path.home() / ".codex" / "config.toml"
