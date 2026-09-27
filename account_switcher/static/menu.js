@@ -97,9 +97,39 @@ function row(account) {
   return r;
 }
 
+const COMPACT = 'M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5';  // corners pointing in
+const EXPAND = 'M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10';   // corners pointing out
+
+function compactRow(account) {
+  // Compact panel: the account in use, its meters and what's left; nothing to switch.
+  const r = el('div', 'row active');
+  const head = el('div', 'head');
+  const icon = el('img', 'provider-icon');
+  icon.src = `/assets/${account.provider}.png`;
+  icon.alt = '';
+  head.append(icon, el('span', 'email', account.name));
+  r.append(head);
+  const full = row(account);
+  const bars = full.querySelector('.bars') || full.querySelector('.loading');
+  if (bars) r.append(bars);
+  const relogin = full.querySelector('.state.relogin');
+  if (relogin) head.append(relogin);
+  return r;
+}
+
 function render() {
   const list = $('list');
   list.replaceChildren();
+  const compact = !!state.compact;
+  document.body.classList.toggle('compact', compact);
+  $('size-icon').setAttribute('d', compact ? EXPAND : COMPACT);
+  $('size').title = compact ? 'Show everything' : 'Compact: only the accounts in use';
+  if (compact) {
+    const inUse = PROVIDERS.flatMap(([id]) => state.accounts.filter(a => a.provider === id && a.active));
+    list.append(...(inUse.length ? inUse.map(compactRow) : [el('div', 'empty', 'No account in use')]));
+    post({ type: 'height', value: Math.ceil(document.body.getBoundingClientRect().height) });
+    return;
+  }
   for (const [id, name] of PROVIDERS) {
     const accounts = state.accounts.filter(a => a.provider === id);
     if (!accounts.length) continue;
@@ -139,6 +169,7 @@ for (const id of ['auto', 'afk']) {
   $(id).addEventListener('change', () => act('preferences', { autoSwap: $('auto').checked, afk: $('afk').checked }));
 }
 $('full').addEventListener('click', () => native ? post({ type: 'full' }) : window.open(`/#token=${token}`));
+$('size').addEventListener('click', () => { if (state) { state.compact = !state.compact; render(); act('compact', { on: state.compact }); } });
 $('quit').addEventListener('click', () => native ? post({ type: 'quit' }) : act('shutdown'));
 setInterval(() => state && render(), 60000);  // keep "resets in" current
 follow();

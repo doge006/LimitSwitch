@@ -29,6 +29,7 @@ class Controller:
         self.status = "Ready"
         self.pending = False
         self.afk = False
+        self.compact = False  # the tray / menu bar panel shows only the accounts in use
         self.closed = False
         self.session = None
         self.simulator = simulator
@@ -81,6 +82,7 @@ class Controller:
                 "mode": "live" if self.live else "demo",
                 "accounts": accounts,
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
+                "compact": bool(self.gateway.manager.meta.get("compactPanel")) if self.live else self.compact,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -92,8 +94,16 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription"}:
+        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription", "compact"}:
             raise ValueError("Unknown action")
+        if action == "compact":  # the tray / menu bar panel's size; instant
+            self.compact = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["compactPanel"] = self.compact
+                    self.gateway.manager.save()
+            self.notify("changed", None)
+            return
         if action == "refresh":  # cheap and lock-free: just nudges the usage refresher
             if hasattr(self.gateway, "poke"):
                 self.gateway.poke(body.get("ifOlderThan", 0) if isinstance(body.get("ifOlderThan", 0), (int, float)) else 0)

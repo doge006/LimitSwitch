@@ -660,7 +660,8 @@ class Flyout(Popup):
         return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed)
 
     def drag_region(self, x, y):
-        return self.pinned and y < fr.header_height()
+        # Popped out: drag by the header (anywhere outside a button when compact, which has none).
+        return self.pinned and (self.tray.state.get("compact") or y < fr.header_height())
 
     def toggle(self):
         # Clicking the tray icon always closes an open panel, pinned or not.
@@ -697,6 +698,8 @@ class Flyout(Popup):
                 force_foreground(self.hwnd)
             else:
                 self.redraw()
+        elif action in ("compact", "expand"):
+            tray.act("compact", {"on": action == "compact"})
         elif action == "hide":
             self.close()  # a popped-out panel comes back where it was on the next tray click
         elif action == "quit":
