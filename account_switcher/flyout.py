@@ -635,12 +635,21 @@ class Flyout(Popup):
     minute_ticks = True
 
     def __init__(self, tray):
+        self.only = None      # a provider: the panel lists only its accounts (opened from a taskbar block)
         super().__init__(tray)
         self.pinned = False
         self.pending = None   # account id being switched to
         self.armed = None     # account id clicked once: the next click on it switches
         self.origin = None    # (screen rect, provider) when opened from a taskbar block
-        self.only = None      # that provider: the panel lists only its accounts
+
+    @property
+    def pinned(self):
+        """Popped out: stays open, can be dragged. The compact panel always is."""
+        return self._pinned or (bool(self.tray.state.get("compact")) and not self.only)
+
+    @pinned.setter
+    def pinned(self, value):
+        self._pinned = value
 
     @property
     def dismiss_on_deactivate(self):

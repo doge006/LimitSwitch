@@ -8,6 +8,8 @@ import calendar
 import re
 import time
 
+from PIL import Image
+
 from . import fullview_render as vr
 
 LOCK_KINDS = ("swap:", "remove:")
@@ -30,6 +32,60 @@ def window_size(area_width, area_height):
     return max(720, round(area_width / 2)), max(480, min(920, round(area_height * .95)))
 
 
+def blend_region(image, before, box, t, scale):
+    """Fade a freshly drawn overlay (box, logical px, plus its shadow) in over what was there."""
+    m = vr.SHADOW + 8
+    x, y, w, h = box
+    region = tuple(round(v * scale) for v in (x - m, y - m, x + w + m, y + h + m))
+    region = (max(0, region[0]), max(0, region[1]), min(image.width, region[2]), min(image.height, region[3]))
+    if region[2] > region[0] and region[3] > region[1]:
+        image.paste(Image.blend(before.crop(region), image.crop(region), max(0.0, min(1.0, t))), region[:2])
+
+
+def ease(p):
+    """The web's ease-out (no overshoot)."""
+    return 1 - (1 - p) ** 3
+
+
+class Motion:
+    """Values that glide to a target over a short time. Only while something moves does the view
+    ask its host for frames (about 60 a second); at rest there are none."""
+
+    def __init__(self):
+        self.values, self.runs = {}, {}
+
+    def get(self, key, default=0.0):
+        return self.values.get(key, default)
+
+    def to(self, key, target, seconds, start=None, delay=0.0):
+        """Glide key to target. A key seen for the first time appears at its target, unless a start is given."""
+        if start is None:
+            if key not in self.values:
+                self.values[key] = target
+                return
+            start = self.values[key]
+        run = self.runs.get(key)
+        if (run[1] if run else self.values.get(key)) == target and start == self.values.get(key):
+            return
+        self.values[key] = start
+        self.runs[key] = (start, target, time.perf_counter() + delay, seconds)
+
+    def settle(self):
+        """Jump everything to where it is going."""
+        for key, run in self.runs.items():
+            self.values[key] = run[1]
+        self.runs.clear()
+
+    def step(self):
+        now = time.perf_counter()
+        for key, (start, end, began, seconds) in list(self.runs.items()):
+            p = min(1.0, max(0.0, (now - began) / seconds))
+            self.values[key] = start + (end - start) * ease(p)
+            if p >= 1:
+                del self.runs[key]
+        return bool(self.runs)
+
+
 class UI:
     """What the drawing needs to know beyond the app state."""
 
@@ -44,6 +100,7 @@ class UI:
         self.editor = None         # the renewal date editor's state
         self.signing_in = ()
         self.anchors = {}
+        self.fades = {}            # what is animating right now: hover amounts, toggle positions, the spin
 
 
 class FullView:
@@ -62,6 +119,8 @@ class FullView:
         self.last_log = None
         self.pointer = None
         self.pressed = None
+        self.motion = Motion()
+        self.seen = set()          # tiles already on screen (new ones rise in, like the web page)
         self.take_log(state)
         try:
             controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
@@ -101,23 +160,24 @@ class FullView:
                 self.toast(entry["text"], "error" if kind == "fail" else "ok" if kind == "ok" else "")
 
     def toast(self, text, kind=""):
-        self.toast_list.append((text, kind, time.monotonic() + (6.0 if kind == "error" else 3.8)))
+        now = time.monotonic()
+        self.toast_list.append((text, kind, now + (6.0 if kind == "error" else 3.8), now))
         self.toast_list = self.toast_list[-4:]
         self.schedule_toasts()
         self.host.invalidate()
 
     def schedule_toasts(self):
-        if self.toast_list:
-            wait = min(t[2] for t in self.toast_list) - time.monotonic()
-            self.host.set_timer("toast", max(50, int(wait * 1000) + 20))
+        if self.toast_list:  # wake when the first one starts fading out
+            wait = min(t[2] for t in self.toast_list) - 0.2 - time.monotonic()
+            self.host.set_timer("toast", max(20, int(wait * 1000)))
         else:
             self.host.kill_timer("toast")
 
     def timer(self, name):
-        if name == "toast":
-            now = time.monotonic()
-            self.toast_list = [t for t in self.toast_list if t[2] > now]
-            self.schedule_toasts()
+        if name == "anim":
+            pass  # just the next frame
+        elif name == "toast":
+            self.host.kill_timer("toast")  # frames take over until it has faded out
         elif name == "pending":
             self.host.kill_timer("pending")
             self.ui.pending = None
@@ -163,8 +223,8 @@ class FullView:
             cache = vr.card_key(data, ui, bool(state.get("nameMode")), live, locked)
             make = lambda: vr.draw_card(data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
         elif kind == "topbar":
-            cache = (w, ui.hover if ui.hover in ("settings", "add", "refresh") else None, ui.menu, live,
-                     state.get("busy"), state.get("afk"), state.get("autoSwap"))
+            cache = (w, tuple(vr.quantize(ui.fades.get(k, 0.0)) for k in ("settings", "add", "refresh")),
+                     ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"))
             make = lambda: vr.draw_topbar(state, w, self.scale, ui)
         elif kind == "group":
             cache = (w, data)
@@ -181,39 +241,98 @@ class FullView:
 
     def frame(self):
         """The window's pixels (RGB, device px) and the clickable regions."""
-        s = self.scale
+        s, motion, ui = self.scale, self.motion, self.ui
+        moving = motion.step()
+        ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
+        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar")}
+        for key, on in prefs.items():
+            motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
+            ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
         image = vr.backdrop(self.width, self.height, s).copy()
+        canvas = vr.Canvas(image, s, vr.BG)
         hits = []
         keep = set()
-        for kind, key, x, y, w, h, data in self.items:
+        fresh = []
+        for index, (kind, key, x, y, w, h, data) in enumerate(self.items):
             keep.add(key)
-            top = y - self.scroll
+            if key not in self.seen:  # rises in: 4 px up and fades in, 25 ms after the one before
+                self.seen.add(key)
+                motion.to(("rise", key), 1.0, 0.3, start=0.0, delay=0.025 * min(index, 12))
+                fresh.append((key, 0.025 * min(index, 12)))
+                moving = True
+            rise = motion.get(("rise", key), 1.0)
+            top = y - self.scroll + 4 * (1 - rise)
             if top > self.height or top + h < -vr.SHADOW:
                 continue  # off screen: not drawn (still cached)
             t = self.tile(kind, key, w, h, data)
-            image.paste(t.image, (round(x * s) - t.margin, round(top * s) - t.margin), t.image)
+            mask = t.image if rise >= 1 else t.image.getchannel("A").point(lambda v: round(v * rise))
+            image.paste(t.image, (round(x * s) - t.margin, round(top * s) - t.margin), mask)
+            for part in t.live:  # bars fill and percentages count, on top of the cached card
+                moving |= self.draw_live(canvas, part, x, top, rise)
             for (hx, hy, hw, hh), action, cursor in t.hits:
                 hits.append(((x + hx, y + hy, hw, hh), action, cursor, key))
         for key in list(self.tiles):  # accounts that went away
             if key not in keep:
                 del self.tiles[key]
+        now = time.perf_counter()
+        for key, delay in fresh:  # drawing them took a moment: start their rise from here
+            start, end, _, seconds = motion.runs[("rise", key)]
+            motion.runs[("rise", key)] = (start, end, now + delay, seconds)
         self.page_hits = hits
         self.overlay_hits = []
-        self.draw_overlays(image)
+        moving |= self.draw_overlays(image)
+        moving |= bool(motion.runs)
+        if moving:
+            self.host.set_timer("anim", 16)
+        else:
+            self.host.kill_timer("anim")
         return image
 
+    def draw_live(self, canvas, part, x, top, rise):
+        """One bar fill or percentage, at its animated value. True while it still moves."""
+        kind, key, px, py, *rest = part
+        motion = self.motion
+        spent = rest[-1]
+        alpha = rise * (0.72 if spent else 1.0)
+        if kind == "bar":
+            width, target = rest[0], rest[1]
+            if ("bar", key) not in motion.values:
+                motion.to(("bar", key), target, 0.5, start=0.0)  # fills from empty when it first shows
+            else:
+                motion.to(("bar", key), target, 0.5)
+            value = motion.get(("bar", key))
+            if value > 0.3:
+                canvas.rect(x + px, top + py, max(6, width * value / 100), 6, 3, vr.level(target) + (round(255 * alpha),))
+        else:
+            target = rest[0]
+            motion.to(("pct", key), target, 0.35)
+            value = motion.get(("pct", key))
+            canvas.text(x + px, top + py, f"{value:.0f}%", 13, vr.level(target) + (round(255 * alpha),), True, anchor="rs")
+        return ("bar", key) in motion.runs or ("pct", key) in motion.runs
+
     def draw_overlays(self, image):
-        ui, s = self.ui, self.scale
+        """Menus, the date editor and toasts, fading in (and toasts out). True while any moves."""
+        ui, s, motion = self.ui, self.scale, self.motion
         top = next((y for kind, _, _, y, *_ in self.items if kind == "topbar"), vr.PAD) - self.scroll
         left = next((x for kind, _, x, *_ in self.items if kind == "topbar"), vr.PAD)
+        moving = False
+
+        def faded(key, draw):
+            t = motion.get(("open", key), 1.0)
+            before = image.copy() if t < 1 else None
+            box, hits = draw(4 * (1 - t))  # rises 4 px as it fades in, like the web menus
+            self.overlay_hits.append((box, hits))
+            if before is not None:
+                blend_region(image, before, box, t, s)
+            return t < 1
+
         if ui.menu == "settings" and "settings" in ui.anchors:
             ax, aw = ui.anchors["settings"]
-            box, hits = vr.settings_menu(image, s, self.state, ui, left + ax + aw - 320, top + 17 + 32 + 6, self.prefs)
-            self.overlay_hits.append((box, hits))
+            moving |= faded("settings", lambda dy: vr.settings_menu(image, s, self.state, ui, left + ax + aw - 320,
+                                                                    top + 17 + 32 + 6 + dy, self.prefs))
         elif ui.menu == "add" and "add" in ui.anchors:
             ax, aw = ui.anchors["add"]
-            box, hits = vr.add_menu(image, s, ui, left + ax + aw - 260, top + 17 + 32 + 6)
-            self.overlay_hits.append((box, hits))
+            moving |= faded("add", lambda dy: vr.add_menu(image, s, ui, left + ax + aw - 260, top + 17 + 32 + 6 + dy))
         if ui.editor:
             anchor = next((h for h in self.page_hits if h[1] == "renew:" + ui.editor["id"]), None)
             if anchor is None:
@@ -225,10 +344,15 @@ class FullView:
                 height = 12 + 28 + 10 + 30 + 22 + len(calendar.Calendar(0).monthdayscalendar(ui.editor["year"], ui.editor["month"])) * 30 + 8 + 34 + 12 + 32 + 12
                 if y + height > self.height - 8:  # no room below: open above the date
                     y = max(8, hy - self.scroll - 6 - height)
-                box, hits = vr.date_editor(image, s, ui, x, y)
-                self.overlay_hits.append((box, hits))
+                moving |= faded("editor", lambda dy: vr.date_editor(image, s, ui, x, y + dy))
+        now = time.monotonic()
+        self.toast_list = [t for t in self.toast_list if t[2] > now]
         if self.toast_list:
-            vr.toasts(image, s, self.toast_list, self.width, self.height)
+            shown = [(text, kind, min(1.0, (now - born) / 0.2, (gone - now) / 0.2)) for text, kind, gone, born in self.toast_list]
+            vr.toasts(image, s, shown, self.width, self.height)
+            moving |= any(alpha < 1 for _, _, alpha in shown)
+        self.schedule_toasts()
+        return moving
 
     # ---------- hit testing ----------
     def hit_at(self, x, y):
@@ -261,16 +385,27 @@ class FullView:
         self.pointer = (x, y)
         action, cursor, where = self.hit_at(x, y)
         card = None if where == "overlay" else self.card_at(x, y)
-        if (action, card) != (self.ui.hover, self.ui.hover_card):
-            self.ui.hover, self.ui.hover_card = action, card
-            self.host.invalidate()
+        self.hover_to(action, card)
         self.host.set_cursor(cursor)
+
+    def hover_to(self, action, card):
+        """Hover fades like the web's transitions: .15 s for buttons, .25 s for a card's border."""
+        ui, motion = self.ui, self.motion
+        if (action, card) == (ui.hover, ui.hover_card):
+            return
+        for old, new, key, seconds in ((ui.hover, action, lambda a: a, 0.15),
+                                       (ui.hover_card, card, lambda c: "card:" + c, 0.25)):
+            if old != new:
+                if old:
+                    motion.to(("h", key(old)), 0.0, seconds, start=motion.get(("h", key(old))))
+                if new:
+                    motion.to(("h", key(new)), 1.0, seconds, start=motion.get(("h", key(new))))
+        ui.hover, ui.hover_card = action, card
+        self.host.invalidate()
 
     def mouse_leave(self):
         self.pointer = None
-        if self.ui.hover or self.ui.hover_card:
-            self.ui.hover = self.ui.hover_card = None
-            self.host.invalidate()
+        self.hover_to(None, None)
 
     def mouse_down(self, x, y):
         self.pressed = self.hit_at(x, y)[0]
@@ -301,13 +436,16 @@ class FullView:
         if kind == "settings":
             ui.menu = None if ui.menu == "settings" else "settings"
             ui.editor = None
+            self.motion.to(("open", "settings"), 1.0, 0.18, start=0.0)
         elif kind == "add" and not arg:
             ui.menu = None if ui.menu == "add" else "add"
             ui.editor = None
+            self.motion.to(("open", "add"), 1.0, 0.18, start=0.0)
         elif kind == "add":
             ui.menu = None
             self.act("add", {"provider": arg})
         elif kind == "refresh":
+            self.motion.to(("spin", "spin"), 1.0, 0.45, start=0.0)
             self.act("reset")
         elif kind == "set":
             if arg in ("autoSwap", "afk"):
@@ -372,6 +510,7 @@ class FullView:
         at = sub.get("at") or time.time() + 30 * 86400
         t = time.localtime(at)
         self.ui.menu = None
+        self.motion.to(("open", "editor"), 1.0, 0.18, start=0.0)
         self.ui.editor = {"id": account_id, "year": t.tm_year, "month": t.tm_mon, "date": (t.tm_year, t.tm_mon, t.tm_mday),
                           "ends": bool(sub.get("ends")), "source": sub.get("source")}
 
