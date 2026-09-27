@@ -27,7 +27,7 @@ header { display: flex; align-items: center; gap: 9px; padding: 13px 12px 8px 14
 .pill:hover { background: var(--pill-hover); }
 .pill:hover span { transform: translateX(2px); }
 
-#list { padding: 0 6px 48px; }  /* room above the switches */
+#list { padding: 0 6px 8px; }
 .section { display: flex; align-items: center; gap: 6px; padding: 10px 10px 5px; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .section img { width: 13px; height: 13px; }
 .section .count { color: var(--faint); font-weight: 600; }
