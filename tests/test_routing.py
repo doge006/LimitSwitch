@@ -564,6 +564,21 @@ class CodexServerWatchTests(unittest.TestCase):
             self.assertTrue(watch.check_older())
             self.assertEqual(ended, [10])
             self.assertEqual(sum("before LimitSwitch, doesn't go through it" in n for n in notes), 1)  # said once
+        # VS Code's own Codex, started before the router: named, mentioned once, never ended.
+        editor = [Process(20, 21, "codex", now - 600, "codex.exe app-server --analytics-default-enabled")]
+        tree = {21: (22, "code"), 22: (1, "explorer")}
+        notes, ended = [], []
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(integrations, "codex_home_path", lambda home=None: Path(tmp)), \
+                mock.patch.object(processes, "listing", lambda names: editor), \
+                mock.patch.object(processes, "family", lambda: tree), \
+                mock.patch.object(processes, "end_tree", ended.append):
+            watch = integrations.CodexServerWatch(tmp, lambda kind, text: notes.append(text), routed_since=now - 60)
+            watch.check_older(quiet=0)
+            watch.check_older(quiet=0)
+            self.assertEqual(ended, [])
+            self.assertEqual(len(notes), 1)
+            self.assertIn("Codex in VS Code started", notes[0])
         with mock.patch.object(processes, "listing", lambda names: found):
             other = integrations.CodexServerWatch("/somewhere/else", routed_since=now)
             self.assertEqual(other.older_codex(), [])  # another Codex folder: not ours to judge

@@ -64,6 +64,11 @@ def codex_present(codex_home=None):
     return codex_home_path(codex_home).exists() or shutil.which("codex") is not None
 
 
+# Apps that run their own Codex app-server (named in the notice when one started too early).
+EDITORS = {"code": "VS Code", "code - insiders": "VS Code Insiders", "cursor": "Cursor", "windsurf": "Windsurf",
+           "codium": "VSCodium", "codex": "the Codex app", "chatgpt": "the ChatGPT app", "electron": "an app"}
+
+
 class CodexServerWatch:
     """Stops Codex's shared background server once it is idle.
 
@@ -111,15 +116,32 @@ class CodexServerWatch:
         if not self.routed_since or self.home != codex_home_path():
             return []  # processes can't be told apart by their Codex folder: only the usual one's
         from . import processes
-        found = []
+        found, servers = [], []
         for process in processes.listing({"node", "codex"}):
             if process.started >= self.routed_since - 2:
                 continue
             command = process.command.replace("\\", "/")
             if process.name == "node" and "app-server-broker" in command and " serve" in command:
                 found.append((process, "broker"))
-            elif process.name == "codex" and not any(word in command for word in ("app-server", " login", " mcp", "exec ")):
+            elif process.name == "codex" and "app-server" in command:
+                servers.append(process)
+            elif process.name == "codex" and not any(word in command for word in (" login", " mcp", "exec ")):
                 found.append((process, "session"))
+        if servers:  # an editor's or app's own Codex (VS Code, Cursor, the Codex app), not the plugin's
+            brokers = {p.pid for p, kind in found if kind == "broker"}
+            tree = processes.family()
+            for server in servers:
+                owner, pid, seen = None, server.parent, set()
+                while pid in tree and pid not in seen and pid not in brokers:
+                    seen.add(pid)
+                    parent, name = tree[pid]
+                    if name in EDITORS and owner is None:
+                        owner = EDITORS[name]
+                    pid = parent
+                if pid in brokers:
+                    continue  # the plugin's: handled with its broker
+                server.owner = owner or "an editor or app"
+                found.append((server, "embedded"))
         return found
 
     def check_older(self, quiet=None):
@@ -142,11 +164,16 @@ class CodexServerWatch:
             self.notify("log", "Restarted the Claude Code Codex plugin's background Codex (it started before LimitSwitch), "
                                "so its jobs switch accounts too")
         for process, kind in older:
-            if kind == "session" and process.pid not in self.told:
+            if kind in ("session", "embedded") and process.pid not in self.told:
                 self.told.add(process.pid)
                 when = time.strftime("%H:%M", time.localtime(process.started))
-                self.notify("log", f"A Codex window opened at {when}, before LimitSwitch, doesn't go through it, so it "
-                                   "won't switch accounts. Restart that Codex session to fix it.")
+                if kind == "session":
+                    self.notify("log", f"A Codex window opened at {when}, before LimitSwitch, doesn't go through it, so "
+                                       "it won't switch accounts. Restart that Codex session to fix it.")
+                else:
+                    self.notify("log", f"Codex in {process.owner} started at {when}, before LimitSwitch, so it doesn't go "
+                                       f"through it and won't switch accounts. Reload {process.owner} (or restart its "
+                                       "Codex) to fix it.")
         return ended
 
     @property

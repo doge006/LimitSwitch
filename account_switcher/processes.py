@@ -41,6 +41,19 @@ def descendants(pid):
     return found
 
 
+def family():
+    """{pid: (parent pid, executable name in lower case without .exe)} for every process."""
+    try:
+        if sys.platform == "win32":
+            rows = {pid: (parent, exe.lower()) for pid, parent, exe in _snapshot()}
+        else:
+            rows = {pid: (parent, os.path.basename(command.split()[0]).lower() if command.split() else "")
+                    for pid, parent, _, command in _ps()}
+    except Exception:
+        return {}
+    return {pid: (parent, name[:-4] if name.endswith(".exe") else name) for pid, (parent, name) in rows.items()}
+
+
 def end_tree(pid):
     """End a process and everything it started (children first)."""
     for target in reversed([pid] + descendants(pid)):
