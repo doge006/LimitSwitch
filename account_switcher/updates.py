@@ -18,6 +18,7 @@ import tempfile
 import time
 from urllib.request import Request, urlopen
 
+from . import tls
 from .version import REPO, ROOT, VERSION, install_kind, newer
 
 log = logging.getLogger("account_switcher.updates")
@@ -29,7 +30,7 @@ def latest_release(timeout=10):
     """{"version", "url", "zip", "notes"} of the newest release, or None when there is none."""
     request = Request(API, headers={"Accept": "application/vnd.github+json", "User-Agent": "AccountSwitcher/" + VERSION})
     try:
-        with urlopen(request, timeout=timeout, context=_ssl_context()) as response:
+        with urlopen(request, timeout=timeout, context=tls.context()) as response:
             data = json.load(response)
     except OSError as error:
         if getattr(error, "code", None) == 404:
@@ -38,15 +39,6 @@ def latest_release(timeout=10):
     zip_url = next((a.get("browser_download_url") for a in data.get("assets") or [] if a.get("name") == ASSET), None)
     return {"version": str(data.get("tag_name") or "").lstrip("vV"), "url": data.get("html_url"),
             "zip": zip_url, "notes": (data.get("body") or "")[:2000]}
-
-
-def _ssl_context():
-    import ssl
-    try:
-        import certifi  # the macOS Python has no system certificates
-        return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        return ssl.create_default_context()
 
 
 def check():
@@ -78,7 +70,7 @@ def install(release):
     try:
         target = Path(tempfile.gettempdir()) / f"AccountSwitcher-{release['latest']}.zip"
         request = Request(release["zip"], headers={"User-Agent": "AccountSwitcher/" + VERSION})
-        with urlopen(request, timeout=120, context=_ssl_context()) as response, open(target, "wb") as out:
+        with urlopen(request, timeout=120, context=tls.context()) as response, open(target, "wb") as out:
             while True:
                 chunk = response.read(1 << 16)
                 if not chunk:
