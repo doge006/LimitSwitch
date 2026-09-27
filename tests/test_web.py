@@ -63,6 +63,19 @@ class WebTests(unittest.TestCase):
             self.request("/api/preferences", {"afk": "false", "autoSwap": True})
         self.assertEqual(invalid.exception.code, 400)
 
+    def test_taskbar_view_switch_and_display(self):
+        self.assertTrue(self.controller.snapshot()["taskbar"])
+        with self.request("/api/taskbar", {"on": False}) as response:
+            self.assertEqual(response.status, 202)
+        with self.request("/api/taskbar", {"display": "right"}):
+            pass
+        snapshot = self.controller.snapshot()
+        self.assertFalse(snapshot["taskbar"])
+        self.assertEqual(snapshot["taskbarDisplay"], "right")
+        with self.assertRaises(HTTPError) as invalid:
+            self.request("/api/taskbar", {"display": 3})
+        self.assertEqual(invalid.exception.code, 400)
+
     def wait_idle(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:

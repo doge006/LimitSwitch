@@ -343,6 +343,20 @@ function render(next) {
   if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
   $('auto-swap').checked = pendingPrefs?.autoSwap ?? state.autoSwap;
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
+  const taskbar = !!state.taskbarAvailable;
+  $('taskbar-settings').hidden = !taskbar;
+  if (taskbar) {
+    $('taskbar-view').checked = state.taskbar;
+    const displays = state.taskbarDisplays || [];
+    const select = $('taskbar-display');
+    const key = displays.map(d => d.id + '=' + d.label).join('|');
+    if (select.dataset.key !== key) {
+      select.dataset.key = key;
+      select.replaceChildren(...displays.map(d => new Option(d.label, d.id)));
+    }
+    select.value = displays.some(d => d.id === state.taskbarDisplay) ? state.taskbarDisplay : 'main';
+    $('taskbar-display-row').hidden = displays.length < 2 || !state.taskbar;
+  }
   const locked = state.busy || !!submitting;
   const pill = $('automation-state');
   pill.textContent = state.busy ? 'Working…' : state.afk ? 'AFK armed' : state.autoSwap ? 'Watching' : 'Manual';
@@ -481,6 +495,8 @@ setLab(false);
 const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked });
 $('auto-swap').addEventListener('change', sendPrefs);
 $('afk').addEventListener('change', sendPrefs);
+$('taskbar-view').addEventListener('change', () => act('taskbar', { on: $('taskbar-view').checked }));
+$('taskbar-display').addEventListener('change', () => act('taskbar', { display: $('taskbar-display').value }));
 $('run').addEventListener('click', () => act('run', { scenario: $('scenario').value }, $('run')));
 $('continue').addEventListener('click', () => act('continue', {}, $('continue')));
 $('stop').addEventListener('click', () => act('stop'));

@@ -23,7 +23,7 @@
     <div class="topbar-tools">
       <div class="auto-wrap">
         <button type="button" class="button" id="auto-button" aria-haspopup="true" aria-expanded="false" aria-controls="auto-menu">
-          Automation <span class="state-pill" id="automation-state">Idle</span>
+          Settings <span class="state-pill" id="automation-state">Idle</span>
           <svg viewBox="0 0 24 24" aria-hidden="true" class="caret"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div class="auto-menu" id="auto-menu" hidden>
@@ -37,6 +37,17 @@
             <span class="track"><span class="thumb"></span></span>
             <span class="toggle-text"><strong>AFK mode</strong><small>Continue a session by itself after a usage limit</small></span>
           </label>
+          <div id="taskbar-settings" class="menu-section" hidden>
+            <label class="toggle">
+              <input type="checkbox" role="switch" id="taskbar-view">
+              <span class="track"><span class="thumb"></span></span>
+              <span class="toggle-text"><strong>Taskbar view</strong><small>The accounts in use, right on the taskbar</small></span>
+            </label>
+            <label class="menu-select" id="taskbar-display-row" hidden>
+              <span>Show on</span>
+              <select id="taskbar-display"></select>
+            </label>
+          </div>
         </div>
       </div>
       <div class="add-wrap">

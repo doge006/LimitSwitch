@@ -106,7 +106,7 @@ class DEVMODEW(ctypes.Structure):
 mode = DEVMODEW(dmSize=ctypes.sizeof(DEVMODEW), dmFields=0x80000 | 0x100000, dmPelsWidth=1920, dmPelsHeight=1080)
 print("display 1920x1080:", user32.ChangeDisplaySettingsW(ctypes.byref(mode), 0), flush=True)  # 0 = changed
 time.sleep(3)
-info = taskbar.read_bar()
+info = taskbar.read_bar(*taskbar.taskbars()[0])
 print("taskbar:", info and {"rect": info.rect, "scale": info.scale, "free from": info.left, "to": info.right,
                             "buttons": sorted(info.occupied), "measured": info.measured, "light": info.light}, flush=True)
 subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "AccountSwitcher.pyw", "--demo"], cwd=ROOT)
@@ -128,6 +128,22 @@ if found:
         check(found[0][2] <= found[1][0], "the blocks do not overlap")
     for a, b, *_ in (info.occupied if info and info.measured else []):
         check(not any(r[0] < b and a < r[2] for r in found), f"no block covers the taskbar button at {a}-{b}")
+    owner = user32.FindWindowW("Shell_TrayWnd", None)
+    owned = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def owned_by_taskbar(hwnd, _):
+        name = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, name, 64)
+        if name.value == "AccountSwitcherFlyout" and user32.IsWindowVisible(hwnd) and user32.GetWindow(hwnd, 4) == owner:
+            owned.append(hwnd)  # GW_OWNER: kept above the taskbar by Windows, no re-raising (no flicker)
+        return True
+
+    user32.EnumWindows(owned_by_taskbar, 0)
+    check(len(owned) == len(found), "the blocks are owned by the taskbar")
+    user32.SetForegroundWindow(owner)  # focus moves to the taskbar and back: the blocks stay put
+    time.sleep(0.3)
+    check(blocks() == found, "the blocks stay put when focus changes")
 time.sleep(1)
 screen = ImageGrab.grab()
 height = info.rect[3] - info.rect[1] if info else 48
@@ -137,6 +153,14 @@ time.sleep(0.2)
 ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "3-taskbar-swapping.png")
 time.sleep(1)
 ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "4-taskbar-swapped.png")
+if len(found) == 2:  # a click on the Codex block opens the panel with only the Codex accounts
+    right = found[1]
+    user32.SetCursorPos((right[0] + right[2]) // 2, (right[1] + right[3]) // 2)
+    user32.mouse_event(2, 0, 0, 0, 0)
+    user32.mouse_event(4, 0, 0, 0, 0)
+    time.sleep(1)
+    ImageGrab.grab().crop((screen.width // 2, screen.height // 2, screen.width, screen.height)).save(SHOTS / "5-codex-panel.png")
+    user32.SetCursorPos(10, 10)
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):

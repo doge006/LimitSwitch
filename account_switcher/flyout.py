@@ -310,6 +310,7 @@ class Popup:
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
     modal = True             # closes on a click elsewhere, hides the tray tooltip (not the taskbar blocks)
     ex_style = 0
+    owner = None             # window this one stays above (the taskbar, for its blocks)
     dismiss_on_deactivate = True
     minute_ticks = False
     FX_SECONDS = {"hover": 0.12, "toggle": 0.18, "active": 0.4, "bar": 0.45}
@@ -392,7 +393,7 @@ class Popup:
         try:
             self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | self.ex_style, CLASS_NAME,
                                                "Account Switcher", WS_POPUP, self.x, self.y, *image.size,
-                                               None, None, kernel32.GetModuleHandleW(None), None)
+                                               self.owner, None, kernel32.GetModuleHandleW(None), None)
         finally:
             Popup._creating = None
         if not self.hwnd:
@@ -638,7 +639,8 @@ class Flyout(Popup):
         self.pinned = False
         self.pending = None   # account id being switched to
         self.armed = None     # account id clicked once: the next click on it switches
-        self.origin = None    # screen rect it opens from when not the tray icon (a taskbar block)
+        self.origin = None    # (screen rect, provider) when opened from a taskbar block
+        self.only = None      # that provider: the panel lists only its accounts
 
     @property
     def dismiss_on_deactivate(self):
@@ -646,11 +648,12 @@ class Flyout(Popup):
 
     def prepare(self):
         self.tray.poke()  # fetch fresh usage if the numbers are older than a minute
-        if self.origin:  # opened from a taskbar block: above it
-            box, self.origin = self.origin, None
+        if self.origin:  # opened from a taskbar block: above it, with just that provider's accounts
+            (box, self.only), self.origin = self.origin, None
             self.anchor, self.icon_box = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), box
             self.monitor, self.work, self.scale = monitor_at(*self.anchor)
             return
+        self.only = None
         rect = icon_rect(getattr(self.tray, "icon", None))
         self.anchor = ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) if rect else cursor()
         ax, ay = self.anchor
@@ -669,11 +672,12 @@ class Flyout(Popup):
         state = self.tray.state
         if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
             self.pending = None  # the switch landed
-        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed)
+        return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed,
+                         only=self.only)
 
     def drag_region(self, x, y):
         # Popped out: drag by the header (anywhere outside a button when compact, which has none).
-        return self.pinned and (self.tray.state.get("compact") or y < fr.header_height())
+        return self.pinned and ((self.tray.state.get("compact") and not self.only) or y < fr.header_height())
 
     def toggle(self):
         # Clicking the tray icon always closes an open panel, pinned or not.
@@ -730,6 +734,8 @@ class Flyout(Popup):
             self.redraw()
             user32.SetTimer(self.hwnd, TIMER_PENDING, 6000, None)
             tray.act("swap", {"id": self.pending})
+        elif action == "toggle:taskbar":
+            tray.act("taskbar", {"on": not tray.state.get("taskbar", True)})
         elif action.startswith("toggle:"):
             key = action[7:]
             prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
@@ -755,6 +761,13 @@ class TrayMenu(Popup):
                 {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]}]
         if getattr(self.tray, "taskbar", None):
             rows += ["-", {"action": "toggle:taskbar", "label": "Taskbar view", "checked": state.get("taskbar", True)}]
+            displays = state.get("taskbarDisplays") or []
+            if len(displays) > 1 and state.get("taskbar", True):  # which display's taskbar
+                chosen = state.get("taskbarDisplay") or "main"
+                if chosen not in {d["id"] for d in displays}:
+                    chosen = "main"
+                rows += [{"action": "display:" + d["id"], "label": "On " + d["label"][0].lower() + d["label"][1:],
+                          "checked": d["id"] == chosen} for d in displays]
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
     opener = "right"
@@ -775,10 +788,12 @@ class TrayMenu(Popup):
 
     def activate(self, action):
         tray = self.tray
-        if action.startswith("toggle:"):  # toggles keep the menu open, showing the new state
-            key = action[7:]
+        if action.startswith(("toggle:", "display:")):  # toggles keep the menu open, showing the new state
+            key = action[7:] if action.startswith("toggle:") else action
             if key == "taskbar":
                 tray.act("taskbar", {"on": not tray.state.get("taskbar", True)})
+            elif key.startswith("display:"):
+                tray.act("taskbar", {"display": key[8:]})
             else:
                 prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
                 prefs[key] = not prefs[key]
