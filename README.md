@@ -130,6 +130,7 @@ Try it idle in the menu bar, with the panel open, and with the full view open. A
     - *Compaction checkpoints* (the summary Codex keeps instead of old history): the thread stays on the checkpoint's account while that account has quota. Once it's used up, the thread moves on without that older summary; the recent conversation is kept.
 - **Auto resume:** while it's on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
   - The app adds a `StopFailure` hook to `~/.claude/settings.json` while Auto swap or Auto resume is on. Only its own entry is added, and it's removed when both are off.
+  - While Auto resume is on, it also turns off Claude Code's own "continuing automatically at …" wait (`autoContinueAtUsageLimit`): LimitSwitcher already continues the session, and Claude Code's wait would otherwise stay on screen and continue it a second time at the reset. Your own setting is put back when Auto resume is off or the app quits.
   - When the hook fires, the app switches to an account with room (Auto swap) and Claude Code is told to continue where it left off.
   - If no account has room, it waits for the earliest reset (up to 6 hours) and then continues.
   - Codex needs no hook: its requests are retried on the next account automatically.

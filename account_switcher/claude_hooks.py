@@ -111,6 +111,58 @@ def install(state_file, root=None):
     return True
 
 
+# Claude Code's own "continuing automatically at <reset>" wait after a usage limit. With Auto
+# resume on, LimitSwitcher continues the session itself (on another account, or at the reset),
+# so Claude Code's wait would stay on screen and continue the task a second time at the reset.
+AUTO_CONTINUE = "autoContinueAtUsageLimit"
+
+
+def _auto_continue_backup(state_file):
+    return Path(state_file).with_name("autocontinue-previous.json")
+
+
+def pause_auto_continue(state_file, root=None):
+    """Turn Claude Code's own wait off while Auto resume is on; the user's value is kept aside."""
+    path = (Path(root) if root else settings_path()) / "settings.json"
+    data = _load(path)
+    backup = _auto_continue_backup(state_file)
+    if data.get(AUTO_CONTINUE) is False and backup.exists():
+        return False  # already ours
+    atomic_write(backup, json.dumps({"present": AUTO_CONTINUE in data, "value": data.get(AUTO_CONTINUE)}).encode())
+    if data.get(AUTO_CONTINUE) is False:
+        return False  # the user's own choice already
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, (json.dumps(dict(data, **{AUTO_CONTINUE: False}), indent=2) + "\n").encode("utf-8"))
+    return True
+
+
+def restore_auto_continue(state_file, root=None):
+    """Put the user's own autoContinueAtUsageLimit back (Auto resume off, or the app quits)."""
+    backup = _auto_continue_backup(state_file)
+    try:
+        saved = json.loads(backup.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    path = (Path(root) if root else settings_path()) / "settings.json"
+    try:
+        data = _load(path)
+    except (ValueError, OSError):
+        return False
+    if data.get(AUTO_CONTINUE) is False:  # still ours: the user didn't change it meanwhile
+        updated = dict(data)
+        if saved.get("present"):
+            updated[AUTO_CONTINUE] = saved.get("value")
+        else:
+            updated.pop(AUTO_CONTINUE, None)
+        if updated != data:
+            atomic_write(path, (json.dumps(updated, indent=2) + "\n").encode("utf-8"))
+    try:
+        backup.unlink()
+    except OSError:
+        pass
+    return True
+
+
 def uninstall(root=None):
     path = (Path(root) if root else settings_path()) / "settings.json"
     try:

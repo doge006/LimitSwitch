@@ -352,6 +352,23 @@ class ClaudeHookTests(unittest.TestCase):
             claude_hooks.uninstall_statusline(state, tmp)
             self.assertEqual(json.loads(path.read_text()), {"model": "opus"})
 
+    def test_auto_resume_pauses_claude_codes_own_wait_and_puts_it_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path, state = Path(tmp) / "settings.json", Path(tmp) / "state.json"
+            for theirs in ({"model": "opus"}, {"model": "opus", "autoContinueAtUsageLimit": True}):
+                path.write_text(json.dumps(theirs))
+                claude_hooks.pause_auto_continue(state, tmp)
+                claude_hooks.pause_auto_continue(state, tmp)  # again: the backup still holds theirs
+                self.assertIs(json.loads(path.read_text())["autoContinueAtUsageLimit"], False)
+                claude_hooks.restore_auto_continue(state, tmp)
+                self.assertEqual(json.loads(path.read_text()), theirs)
+            # Changed by the user meanwhile: theirs stays.
+            path.write_text(json.dumps({"model": "opus"}))
+            claude_hooks.pause_auto_continue(state, tmp)
+            path.write_text(json.dumps({"model": "opus", "autoContinueAtUsageLimit": True}))
+            claude_hooks.restore_auto_continue(state, tmp)
+            self.assertTrue(json.loads(path.read_text())["autoContinueAtUsageLimit"])
+
     def test_invalid_settings_are_never_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
