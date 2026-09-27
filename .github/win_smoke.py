@@ -93,6 +93,24 @@ if windows:
     time.sleep(2)
     check(len(full_views()) == 1, "opening again keeps one full view")
     check(ctypes.windll.user32.GetForegroundWindow() == windows[0], "opening again brings it to the front")
+    first = tuple(rect)
+    # What a user does: close it, open it again (the tray), then launch the app again (the Start
+    # menu shortcut). Always one window, the same size each time, and never a browser.
+    ctypes.windll.user32.PostMessageW(ctypes.c_void_p(windows[0]), 0x0010, 0, 0)  # WM_CLOSE
+    time.sleep(1)
+    check(not full_views(), "closing the full view closes it")
+    api("/api/show")
+    time.sleep(2)
+    again = full_views()
+    check(len(again) == 1, "opening it again opens one window")
+    if again:
+        ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(again[0]), rect)
+        print("reopened size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
+        check(tuple(rect) == first, "it opens again at the same size and place")
+        windows = again
+    subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "AccountSwitcher.pyw"], cwd=ROOT)
+    time.sleep(6)
+    check(len(full_views()) == 1, "launching the app again keeps one full view")
     ws, private = memory(windows[0])
     print(f"app memory with the full view open: working set {ws} MB, private {private} MB", flush=True)
     edge = subprocess.run(["tasklist", "/FI", "IMAGENAME eq msedge.exe"], capture_output=True, text=True).stdout
