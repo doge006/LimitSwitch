@@ -190,10 +190,12 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     for _ in range(12):
         pump(0.5)
         back = blocks()
-        if back == found:
+        if len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2]:
             break
     print("after full screen:", back, "· taskbar on top:", bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
-    check(back == found, "the blocks are back, in place, when it closes")
+    # Claude is anchored by its left edge, Codex by its right (its width changed with the swap above).
+    check(len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2],
+          "the blocks are back, in place, when it closes")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):
