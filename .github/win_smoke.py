@@ -52,7 +52,7 @@ if windows:
     rect = (ctypes.c_long * 4)()
     ctypes.windll.user32.GetWindowRect(windows[0], rect)
     print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
-    check(rect[3] - rect[1] <= 700, "the full view opens at its own size (90% of this short screen), not a remembered one")
+    check(rect[3] - rect[1] <= 700, "the full view opens at its own size, not a remembered one")
 time.sleep(2)
 ImageGrab.grab().save(SHOTS / "1-full-view.png")
 config = Path.home() / ".codex" / "config.toml"

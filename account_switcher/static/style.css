@@ -332,8 +332,7 @@ main { padding-bottom: 32px; }
 .alias-input::placeholder { color: var(--muted); font-weight: 500; }
 .alias-input:hover { border-color: var(--line-strong); }
 .alias-input:focus { outline: none; border-color: var(--focus); background: var(--surface-2); }
-.email-reveal { display: block; margin-top: 3px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer;
-  letter-spacing: .5px; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-reveal { display: block; margin: 1px 0 5px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .email-reveal.shown { letter-spacing: 0; }
 .email-reveal:hover { color: var(--text); }
 

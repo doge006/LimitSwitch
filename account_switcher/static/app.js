@@ -22,7 +22,8 @@ function node(tag, className, text) {
 const remaining = used => Math.max(0, Math.min(100, 100 - used));
 const level = left => left > 30 ? 'level-good' : left > 10 ? 'level-warn' : 'level-bad';
 const displayName = account => account.name || account.email || account.alias;
-const REDACTED = '•••••••••••••••';
+// d**********@gmail.com: the first letter and the domain stay, the rest of the name is starred.
+const redact = email => { const [user, domain] = (email || '').split('@'); return user ? user[0] + '*'.repeat(Math.max(1, user.length - 1)) + (domain ? '@' + domain : '') : ''; };
 const accountById = id => state.accounts.find(a => a.id === id);
 function relative(ts) {
   const m = Math.max(0, Math.round((ts * 1000 - Date.now()) / 60000));
@@ -139,12 +140,12 @@ function buildCard(account, index) {
     const save = () => { if (name.value.trim() !== (accountById(account.id)?.label || '')) act('rename', { id: account.id, name: name.value }); };
     name.addEventListener('change', save);
     name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); if (e.key === 'Escape') { name.value = accountById(account.id)?.label || ''; name.blur(); } });
-    email = node('button', 'email-reveal', REDACTED);
+    email = node('button', 'email-reveal', redact(account.email));
     email.type = 'button';
     email.title = 'Show email';
     email.addEventListener('click', () => {
       const shown = email.classList.toggle('shown');
-      email.textContent = shown ? (accountById(account.id)?.email || '') : REDACTED;
+      email.textContent = shown ? (accountById(account.id)?.email || '') : redact(accountById(account.id)?.email);
       email.title = shown ? 'Hide email' : 'Show email';
     });
   } else {
@@ -154,9 +155,15 @@ function buildCard(account, index) {
   line.append(name);
   const plan = node('span', 'plan', account.plan || '');
   plan.hidden = !account.plan;
-  line.append(plan);
   identity.append(line);
-  if (email) identity.append(email);
+  if (email) {  // name mode: name, then the email, then the plan
+    identity.append(email);
+    const planLine = node('div', 'alias-line');
+    planLine.append(plan);
+    identity.append(planLine);
+  } else {
+    line.append(plan);
+  }
   const side = node('div', 'card-side'), renew = node('button', 'renew num'), badge = node('span', 'badge', 'In use');
   renew.type = 'button';
   renew.title = 'Set the renewal or end date';
