@@ -113,7 +113,7 @@ def app_browser():
 
 
 def full_view_size():
-    """Half the work area's width, and tall enough for two rows of cards (880, or 95% of a
+    """Half the work area's width, and tall enough for two rows of cards (920, or 95% of a
     shorter screen), in the browser's own units so a scaled display gets the same share."""
     if sys.platform != "win32":
         return 1080, 800
@@ -125,7 +125,7 @@ def full_view_size():
         scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
         width, height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
         # Tall enough for two rows of account cards without scrolling, never taller than the screen.
-        return max(720, round(width / 2)), max(480, min(880, round(height * .95)))
+        return max(720, round(width / 2)), max(480, min(920, round(height * .95)))
     except (OSError, AttributeError, ZeroDivisionError):
         return 1080, 800
 
@@ -144,7 +144,7 @@ def open_dashboard(url):
                 from .integrations import launcher
                 from .win_window import brand_full_view
                 brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico",
-                                size=(width, height))
+                                size=(width, height), address=url.split("//", 1)[-1].split("/", 1)[0])
             except Exception:
                 logging.getLogger("account_switcher").exception("full view taskbar identity")
     else:

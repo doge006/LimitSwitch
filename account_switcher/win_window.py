@@ -96,8 +96,9 @@ def set_icon(hwnd, icon):
             user32.SendMessageW(hwnd, WM_SETICON, which, handle)
 
 
-def find_windows():
-    """Top-level Edge windows showing the full view (its page title is the app's name)."""
+def find_windows(address=None):
+    """Top-level Edge windows showing the full view: its page title is the app's name, or, before
+    the page has loaded, its address (e.g. 127.0.0.1:52100)."""
     user32 = ctypes.windll.user32
     found = []
 
@@ -107,7 +108,7 @@ def find_windows():
             cls, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, cls, 64)
             user32.GetWindowTextW(hwnd, title, 256)
-            if cls.value == WINDOW_CLASS and title.value.startswith(TITLE):
+            if cls.value == WINDOW_CLASS and (title.value.startswith(TITLE) or (address and title.value.startswith(address))):
                 found.append(hwnd)
         return True
 
@@ -132,7 +133,7 @@ def fit_window(hwnd, size):
                         width, height, 0x0004 | 0x0010)  # SWP_NOZORDER | SWP_NOACTIVATE
 
 
-def brand_full_view(relaunch, icon, seconds=15, size=None):
+def brand_full_view(relaunch, icon, seconds=15, size=None, address=None):
     """Watch briefly for the full view's window (it takes Edge a moment to open), give it our
     identity and, when given, its size. Runs in the background; does nothing when there's no
     such window."""
@@ -142,19 +143,25 @@ def brand_full_view(relaunch, icon, seconds=15, size=None):
         deadline = time.monotonic() + seconds
         done = set()
         while time.monotonic() < deadline:
-            for hwnd in find_windows():
+            for hwnd in find_windows(address):
                 if hwnd in done:
                     continue
+                # One change instead of several visible ones: the taskbar button would otherwise
+                # vanish and come back (new identity) and the window jump (new size).
+                done.add(hwnd)  # once only, even if a step fails
+                user32.ShowWindow(hwnd, 0)  # SW_HIDE
                 try:
                     set_identity(hwnd, relaunch, icon)
                     set_icon(hwnd, icon)
                     if size and user32.IsZoomed(hwnd) == 0:
                         fit_window(hwnd, size)
-                    done.add(hwnd)
                 except OSError:
                     pass
+                finally:
+                    user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                    user32.SetForegroundWindow(hwnd)
             if done:
                 return
-            time.sleep(0.25)
+            time.sleep(0.03)  # catch the window the moment Edge shows it
 
     threading.Thread(target=work, daemon=True, name="full-view-identity").start()
