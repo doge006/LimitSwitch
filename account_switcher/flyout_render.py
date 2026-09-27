@@ -573,7 +573,11 @@ def paint(layout, width, height, scale):
         kind = op[0]
         if kind == "rect":
             _, x, y, w, h, r, fill = op
+            if w <= 0 or h <= 0:
+                continue  # an animated bar at (or eased just past) zero size: nothing to draw
             box = (P(M + x), P(M + y), P(M + x + w) - 1, P(M + y + h) - 1)
+            if box[2] < box[0] or box[3] < box[1]:
+                continue
             if r:
                 d.rounded_rectangle(box, P(r), fill=fill)
             else:
