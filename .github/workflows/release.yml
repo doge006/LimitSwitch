@@ -70,7 +70,11 @@ jobs:
             $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
             if ($run) { break }; Start-Sleep -Milliseconds 250
           }
-          if (-not $run) { throw 'start at sign-in was not set' }
+          if (-not $run) {
+            Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -ErrorAction SilentlyContinue
+            Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Format-List
+            throw 'start at sign-in was not set'
+          }
           if ($run -notmatch 'LimitSwitch[.]exe') { throw "start at sign-in runs '$run', not LimitSwitch.exe" }
           Write-Host "PASS start at sign-in: $run"
       - name: The README's measuring snippet works
