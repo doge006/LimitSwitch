@@ -79,7 +79,8 @@ def update_code(branch, force):
         git("branch", "--quiet", f"--set-upstream-to=origin/{target}")
         return "updated", None
     current = git("rev-parse", "--abbrev-ref", "HEAD")
-    target = branch or (current if current != "HEAD" else "main")
+    # main unless asked otherwise: a folder left on a working branch must not keep running old code
+    target = branch or "main"
     say(f"Checking GitHub for updates to {target}...", "dim")
     git("fetch", "--quiet", "origin", target)
     before = git("rev-parse", "HEAD")
