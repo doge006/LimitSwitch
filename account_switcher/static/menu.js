@@ -1,7 +1,9 @@
 'use strict';
 // Menu bar popover (macOS). Same local API as the full view; the native host listens for
-// {type: 'height' | 'full' | 'quit'} messages and resizes / opens windows accordingly.
-const token = new URLSearchParams(location.hash.slice(1)).get('token');
+// {type: 'height' | 'width' | 'full' | 'popout' | 'popin' | 'quit'} messages and resizes / opens windows accordingly.
+const hash = new URLSearchParams(location.hash.slice(1));
+const token = hash.get('token');
+const popped = hash.get('popped') === '1';  // in the floating window, not the menu bar popover
 const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.app;
 const $ = id => document.getElementById(id);
 const PROVIDERS = [['claude', 'Claude'], ['codex', 'Codex']];
@@ -100,20 +102,50 @@ function row(account) {
 const COMPACT = 'M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5';  // corners pointing in
 const EXPAND = 'M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10';   // corners pointing out
 
-function compactRow(account) {
+const POP_OUT = 'M8.5 2.5h5v5M13.5 2.5 7.5 8.5M11.5 9.5v3.5a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h3.5';
+const POP_IN = 'M13.5 2.5 8 8M8 4v4h4M11.5 9.5v3.5a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h3.5';
+const QUIT = ['M5.2 3.8a5.5 5.5 0 1 0 5.6 0', 'M8 1.6v6'];
+
+function toolButton(paths, title, onClick) {
+  const b = el('button', 'icon-btn tiny');
+  b.type = 'button';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  for (const d of [].concat(paths)) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  b.append(svg);
+  b.addEventListener('click', event => { event.stopPropagation(); onClick(); });
+  return b;
+}
+
+function compactTools() {
+  // Compact: its buttons sit in line with the first account, top right (no header or footer).
+  const tools = el('span', 'tools');
+  if (native) tools.append(toolButton(popped ? POP_IN : POP_OUT, popped ? 'Back to the menu bar' : 'Pop out', popToggle));
+  tools.append(toolButton(EXPAND, 'Show everything', toggleSize), toolButton(QUIT, 'Quit Account Switcher', quit));
+  return tools;
+}
+
+function compactRow(account, first) {
   // Compact panel: the account in use, its meters and what's left; nothing to switch.
-  const r = el('div', 'row active');
+  const r = el('div', 'row mini');
   const head = el('div', 'head');
   const icon = el('img', 'provider-icon');
   icon.src = `/assets/${account.provider}.png`;
   icon.alt = '';
   head.append(icon, el('span', 'email', account.name));
-  r.append(head);
   const full = row(account);
-  const bars = full.querySelector('.bars') || full.querySelector('.loading');
-  if (bars) r.append(bars);
   const relogin = full.querySelector('.state.relogin');
   if (relogin) head.append(relogin);
+  if (first) head.append(compactTools());
+  r.append(head);
+  const bars = full.querySelector('.bars') || full.querySelector('.loading');
+  if (bars) r.append(bars);
   return r;
 }
 
@@ -124,9 +156,20 @@ function render() {
   document.body.classList.toggle('compact', compact);
   $('size-icon').setAttribute('d', compact ? EXPAND : COMPACT);
   $('size').title = compact ? 'Show everything' : 'Compact: only the accounts in use';
+  $('pop').hidden = !native;
+  $('pop').title = popped ? 'Back to the menu bar' : 'Pop out';
+  $('pop').querySelector('path').setAttribute('d', popped ? POP_IN : POP_OUT);
+  post({ type: 'width', value: compact ? 300 : 392 });
   if (compact) {
     const inUse = PROVIDERS.flatMap(([id]) => state.accounts.filter(a => a.provider === id && a.active));
-    list.append(...(inUse.length ? inUse.map(compactRow) : [el('div', 'empty', 'No account in use')]));
+    if (inUse.length) list.append(...inUse.map((a, i) => compactRow(a, i === 0)));
+    else {
+      const none = el('div', 'row mini');
+      const head = el('div', 'head');
+      head.append(el('span', 'email muted', 'No account in use'), compactTools());
+      none.append(head);
+      list.append(none);
+    }
     post({ type: 'height', value: Math.ceil(document.body.getBoundingClientRect().height) });
     return;
   }
@@ -169,7 +212,11 @@ for (const id of ['auto', 'afk']) {
   $(id).addEventListener('change', () => act('preferences', { autoSwap: $('auto').checked, afk: $('afk').checked }));
 }
 $('full').addEventListener('click', () => native ? post({ type: 'full' }) : window.open(`/#token=${token}`));
-$('size').addEventListener('click', () => { if (state) { state.compact = !state.compact; render(); act('compact', { on: state.compact }); } });
+function toggleSize() { if (state) { state.compact = !state.compact; render(); act('compact', { on: state.compact }); } }
+function popToggle() { post({ type: popped ? 'popin' : 'popout' }); }
+function quit() { native ? post({ type: 'quit' }) : act('shutdown'); }
+$('size').addEventListener('click', toggleSize);
+$('pop').addEventListener('click', popToggle);
 $('quit').addEventListener('click', () => native ? post({ type: 'quit' }) : act('shutdown'));
 setInterval(() => state && render(), 60000);  // keep "resets in" current
 follow();
