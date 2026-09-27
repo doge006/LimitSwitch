@@ -460,6 +460,8 @@ class FullView:
                 self.act("taskbar", {"on": not state.get("taskbar")})
             elif arg == "launchAtLogin":
                 self.act("startup", {"on": not state.get("launchAtLogin")})
+        elif kind == "update":  # Settings: check for updates / update now
+            self.act("installUpdate" if arg == "install" else "checkUpdate")
         elif kind == "display":
             self.act("taskbar", {"display": arg})
         elif kind == "swap":

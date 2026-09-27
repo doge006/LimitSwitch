@@ -2,6 +2,11 @@ name: Windows app
 
 on:
   workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
+    inputs:
+      portable:
+        description: "Also build and test the portable copy (as the release does)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -50,3 +55,28 @@ jobs:
           git -c user.name=ci -c user.email=ci@example.com add -A
           git -c user.name=ci -c user.email=ci@example.com commit -qm "screenshots ${{ github.sha }}"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-shots/${{ matrix.os }}"
+
+  portable:
+    if: inputs.portable
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build the portable copy
+        run: ./scripts/build_portable.ps1
+      - name: Install it with install.ps1 and run it (demo accounts)
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'installed'
+          ./install.ps1 -Zip build/AccountSwitcher-windows.zip -Dir $dir -NoStart
+          if (-not (Test-Path "$dir\Account Switcher.exe")) { throw 'install.ps1 did not install the exe' }
+          Start-Process -FilePath "$dir\Account Switcher.exe" -ArgumentList '--demo', '--show'
+          $url = "$dir\.runtime\tray.url"
+          foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
+          if (-not (Test-Path $url)) { throw 'the app did not start' }
+          Start-Sleep 4
+          python .github/release_check.py $dir
