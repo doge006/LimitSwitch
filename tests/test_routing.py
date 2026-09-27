@@ -563,7 +563,7 @@ class CodexServerWatchTests(unittest.TestCase):
             os.utime(log, (now - 600, now - 600))
             self.assertTrue(watch.check_older())
             self.assertEqual(ended, [10])
-            self.assertEqual(sum("before LimitSwitch, doesn't go through it" in n for n in notes), 1)  # said once
+            self.assertEqual(sum("before LimitSwitcher, doesn't go through it" in n for n in notes), 1)  # said once
         # VS Code's own Codex, started before the router: named, mentioned once, never ended.
         editor = [Process(20, 21, "codex", now - 600, "codex.exe app-server --analytics-default-enabled")]
         tree = {21: (22, "code"), 22: (1, "explorer")}

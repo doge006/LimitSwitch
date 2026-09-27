@@ -113,7 +113,7 @@ class Profiler:
         self.stop.set()
         self.thread.join(timeout=1)
         elapsed = time.monotonic() - self.started
-        lines = [f"LimitSwitch profile: {elapsed:.0f} s, {self.samples} samples while working (every {INTERVAL * 1000:.0f} ms)", ""]
+        lines = [f"LimitSwitcher profile: {elapsed:.0f} s, {self.samples} samples while working (every {INTERVAL * 1000:.0f} ms)", ""]
         if self.clock.ok:
             lines.append("CPU time per thread (from Windows):")
             rows = []

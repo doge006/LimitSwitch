@@ -1,6 +1,6 @@
 name: Release
 
-# Builds LimitSwitch-Setup.exe, tests it (installs silently, the app starts and its full view
+# Builds LimitSwitcher-Setup.exe, tests it (installs silently, the app starts and its full view
 # opens, installing again over the running copy works, the uninstaller removes it), builds the
 # macOS DMGs and tests the Apple silicon one through scripts/install-mac.sh (the README's install
 # command), then publishes all three as release v<version> (account_switcher/version.py).
@@ -38,35 +38,35 @@ jobs:
         run: ./scripts/build_windows.ps1
       - name: Install silently and run it (demo accounts)
         run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startmenu').WaitForExit()
-          if (-not (Test-Path "$dir\LimitSwitch.exe")) { throw 'the exe was not installed' }
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitcher'
+          (Start-Process -PassThru -FilePath build\LimitSwitcher-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startmenu').WaitForExit()
+          if (-not (Test-Path "$dir\LimitSwitcher.exe")) { throw 'the exe was not installed' }
           if (-not (Test-Path "$dir\unins000.exe")) { throw 'no uninstaller' }
           # A silent install starts the app in the tray; close it and start it in demo mode instead.
           $url = "$dir\.runtime\tray.url"
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
-          & "$dir\runtime\python.exe" "$dir\LimitSwitch.pyw" --quit
-          Start-Process -FilePath "$dir\LimitSwitch.exe" -ArgumentList '--demo', '--show'
+          & "$dir\runtime\python.exe" "$dir\LimitSwitcher.pyw" --quit
+          Start-Process -FilePath "$dir\LimitSwitcher.exe" -ArgumentList '--demo', '--show'
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           Start-Sleep 4
           python .github/release_check.py $dir
       - name: Install again over a running copy (what an update does)
         run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          Start-Process -FilePath "$dir\LimitSwitch.exe"
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitcher'
+          Start-Process -FilePath "$dir\LimitSwitcher.exe"
           $url = "$dir\.runtime\tray.url"
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           $before = (Get-Content $url -Raw).Trim()
-          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
+          (Start-Process -PassThru -FilePath build\LimitSwitcher-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
           foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
-          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' })
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitcher.exe' })
           Write-Host "PASS updated in place and started again ($($running.Count) process(es))"
           # The app's own setting (on at first run) writes the entry once it has started.
           foreach ($i in 1..60) {
-            $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
+            $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitcher -ErrorAction SilentlyContinue).LimitSwitcher
             if ($run) { break }; Start-Sleep -Milliseconds 250
           }
           if (-not $run) {
@@ -74,7 +74,7 @@ jobs:
             Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue | Format-List
             throw 'start at sign-in was not set'
           }
-          if ($run -notmatch 'LimitSwitch[.]exe') { throw "start at sign-in runs '$run', not LimitSwitch.exe" }
+          if ($run -notmatch 'LimitSwitcher[.]exe') { throw "start at sign-in runs '$run', not LimitSwitcher.exe" }
           Write-Host "PASS start at sign-in: $run"
       - name: The README's measuring snippet works
         run: |
@@ -87,22 +87,22 @@ jobs:
           if ($out -notmatch 'MB memory') { throw 'the snippet printed nothing useful' }
       - name: Uninstall
         run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitcher'
           # The uninstaller hands over to a copy of itself in %TEMP%: wait for its files to go.
           Start-Process -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
           foreach ($i in 1..120) { if (-not (Test-Path "$dir\unins000.exe")) { break }; Start-Sleep -Milliseconds 500 }
           Start-Sleep 2
-          if (Test-Path "$dir\LimitSwitch.exe") { throw 'the exe is still there' }
-          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or ($_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw') })
+          if (Test-Path "$dir\LimitSwitcher.exe") { throw 'the exe is still there' }
+          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitcher.exe' -or ($_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitcher[.]pyw') })
           if ($left.Count) { throw 'the app is still running' }
-          if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue) { throw 'start at sign-in was left behind' }
-          $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\LimitSwitch.lnk'
+          if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitcher -ErrorAction SilentlyContinue) { throw 'start at sign-in was left behind' }
+          $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\LimitSwitcher.lnk'
           if (Test-Path $link) { throw 'the Start menu shortcut was left behind' }
           Write-Host 'PASS uninstalled cleanly'
       - uses: actions/upload-artifact@v4
         with:
-          name: LimitSwitch-Setup
-          path: build/LimitSwitch-Setup.exe
+          name: LimitSwitcher-Setup
+          path: build/LimitSwitcher-Setup.exe
           retention-days: 7
 
   macos:
@@ -123,28 +123,28 @@ jobs:
       - name: Install with the README's command (from this build's DMG), run it, install again over it
         run: |
           mkdir -p ~/.codex
-          bash scripts/install-mac.sh --dmg build/LimitSwitch-AppleSilicon.dmg
+          bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           url="$HOME/Library/Application Support/AccountSwitcher/running.url"
           for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
           [ -f "$url" ] || { cat "$HOME/Library/Application Support/AccountSwitcher/app.log"; exit 1; }
           before=$(cat "$url")
-          pgrep -fl MacOS/LimitSwitch
-          bash scripts/install-mac.sh --dmg build/LimitSwitch-AppleSilicon.dmg
+          pgrep -fl MacOS/LimitSwitcher
+          bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           for i in $(seq 1 80); do [ -f "$url" ] && [ "$(cat "$url")" != "$before" ] && break; sleep 0.25; done
           [ "$(cat "$url")" != "$before" ] || { echo "the app did not start again after the update"; exit 1; }
-          [ "$(pgrep -f MacOS/LimitSwitch | wc -l | tr -d ' ')" = 1 ] || { echo "not exactly one copy running"; exit 1; }
+          [ "$(pgrep -f MacOS/LimitSwitcher | wc -l | tr -d ' ')" = 1 ] || { echo "not exactly one copy running"; exit 1; }
           for i in $(seq 1 40); do grep -q account-switcher ~/.codex/config.toml 2>/dev/null && break; sleep 0.25; done
           grep -q account-switcher ~/.codex/config.toml || { echo "Codex is not routed while running"; exit 1; }
-          /Applications/LimitSwitch.app/Contents/Resources/runtime/bin/python3 -B \
-            /Applications/LimitSwitch.app/Contents/Resources/app/LimitSwitch.pyw --quit
+          /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B \
+            /Applications/LimitSwitcher.app/Contents/Resources/app/LimitSwitcher.pyw --quit
           sleep 1
-          ! pgrep -f MacOS/LimitSwitch || { echo "quit left it running"; exit 1; }
+          ! pgrep -f MacOS/LimitSwitcher || { echo "quit left it running"; exit 1; }
           ! grep -q account-switcher ~/.codex/config.toml || { echo "quit left Codex routed"; exit 1; }
-          codesign --verify --deep --strict /Applications/LimitSwitch.app
+          codesign --verify --deep --strict /Applications/LimitSwitcher.app
           echo "PASS installed, updated in place and quit cleanly"
       - uses: actions/upload-artifact@v4
         with:
-          name: LimitSwitch-mac
+          name: LimitSwitcher-mac
           path: build/*.dmg
           retention-days: 7
 
@@ -163,11 +163,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(python3 -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)")
-          tag="v$v"; title="LimitSwitch $v"; extra=""
+          tag="v$v"; title="LimitSwitcher $v"; extra=""
           if [ "${{ inputs.prerelease }}" = true ]; then
-            tag="v$v-test.${{ github.run_number }}"; title="LimitSwitch $v (test build ${{ github.run_number }})"; extra="--prerelease"
+            tag="v$v-test.${{ github.run_number }}"; title="LimitSwitcher $v (test build ${{ github.run_number }})"; extra="--prerelease"
           fi
           if gh release view "$tag" >/dev/null 2>&1; then echo "$tag is already released: bump VERSION in account_switcher/version.py"; exit 1; fi
           ls -la build
-          gh release create "$tag" build/LimitSwitch-Setup.exe build/LimitSwitch-AppleSilicon.dmg build/LimitSwitch-Intel.dmg \
+          gh release create "$tag" build/LimitSwitcher-Setup.exe build/LimitSwitcher-AppleSilicon.dmg build/LimitSwitcher-Intel.dmg \
             --title "$title" --generate-notes --target "${{ github.sha }}" $extra

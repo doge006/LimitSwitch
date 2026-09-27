@@ -603,7 +603,7 @@ def draw_topbar(state, w, scale, ui):
     rounded = Image.new("RGBA", mark.size, (0, 0, 0, 0))
     rounded.paste(mark, (0, 0), Image.composite(mark.getchannel("A"), Image.new("L", mark.size, 0), rr_mask(*mark.size, c.px(12))))
     image.alpha_composite(rounded, (0, c.px(11)))
-    c.text(58, 30, "LimitSwitch", 22, TEXT, True)
+    c.text(58, 30, "LimitSwitcher", 22, TEXT, True)
     c.text(58, 51, "Every Claude and Codex limit, at a glance.", 13, MUTED)
     live = state.get("mode") == "live"
     x = w
@@ -721,7 +721,8 @@ def toggle(c, x, y, pos, hot, bg):
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
-            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
+            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"),
+            ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):

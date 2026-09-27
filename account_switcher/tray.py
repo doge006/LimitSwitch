@@ -1,4 +1,4 @@
-"""LimitSwitch: a notification-area icon is the whole resident app.
+"""LimitSwitcher: a notification-area icon is the whole resident app.
 
 Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / Auto resume) with a
 "Full view" button that opens the dashboard (the local Web UI) in a browser app window.
@@ -24,7 +24,7 @@ from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loa
 
 from .web import Controller, clear_url_file, make_server, write_url_file
 
-APP = "LimitSwitch"
+APP = "LimitSwitcher"
 PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 ASSETS = Path(__file__).with_name("static") / "assets"
 LEVEL_RGB = {"good": (76, 195, 138), "warn": (229, 181, 74), "bad": (239, 106, 91)}

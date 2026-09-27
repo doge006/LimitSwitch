@@ -1,4 +1,4 @@
-"""Claude Code status line (installed by LimitSwitch while it runs).
+"""Claude Code status line (installed by LimitSwitcher while it runs).
 
 Claude Code runs the status line command after each reply and passes it the session's data,
 including the live 5-hour and weekly usage of the signed-in account (rate_limits). That is how
@@ -29,7 +29,7 @@ def report(state, data):
         return None
 
 
-MARKER = "\x1b[2m⇄ LimitSwitch\x1b[0m"  # dim: shown at the end of the user's own line while the app runs
+MARKER = "\x1b[2m⇄ LimitSwitcher\x1b[0m"  # dim: shown at the end of the user's own line while the app runs
 
 
 def run_previous(command, raw):

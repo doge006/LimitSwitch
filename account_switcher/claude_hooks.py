@@ -98,8 +98,8 @@ def install(state_file, root=None):
     path = (Path(root) if root else settings_path()) / "settings.json"
     data = _load(path)
     entry = {"type": "command", "command": hook_command(state_file), "asyncRewake": True, "timeout": TIMEOUT,
-             "rewakeMessage": "LimitSwitch:",
-             "rewakeSummary": "LimitSwitch: continuing after a usage limit"}
+             "rewakeMessage": "LimitSwitcher:",
+             "rewakeSummary": "LimitSwitcher: continuing after a usage limit"}
     updated = _without_ours(json.loads(json.dumps(data)))  # a real copy: data stays the original
     hooks = dict(updated.get("hooks") or {})
     hooks[EVENT] = list(hooks.get(EVENT) or []) + [{"hooks": [entry]}]
