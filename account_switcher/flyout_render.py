@@ -209,7 +209,7 @@ def dim_row(layout, marks):
         layout.texts[i] = (x, y, value, size, bold, fade(fill, DIM), anchor)
 
 
-def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
+def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, compact=None):
     """Lay out the flyout. Returns (layout, panel_height). Coordinates exclude MARGIN.
 
     fx holds in-between animation values (see targets()); missing keys use resting values.
@@ -219,8 +219,11 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
     rest = targets(state, hover)
     fx = {**rest, **(fx or {})}
     h = lambda action: fx.get(("hover", action), 0.0)
+    compact = state.get("compact") if compact is None else compact  # only the accounts in use
 
-    # Header: mark, title, pop-out, "Full view".
+    # Header: mark, title, pop-out, "Full view" (none when compact).
+    if compact:
+        return _build_compact(L, W, state, fx, h, pinned)
     L.image(16, 16, "switcher", 22)
     L.text(46, 27, "Account Switcher", 14, TEXT, bold=True)
     pill_w = 92
@@ -368,7 +371,65 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None):
         if not busy:
             L.hit(x - 4, cy - 14, width, 28, action)
         x += width + 4
+    icon_button(L, W - 16 - 64, cy - 15, 30, "compact", "compact", h("compact"))
     icon_button(L, W - 16 - 30, cy - 15, 30, "power", "quit", h("quit"))
+    return L, y + footer_h
+
+
+def _build_compact(L, W, state, fx, h, pinned):
+    """Compact panel: the account in use for each provider (its meters and what's left), and
+    a footer with the buttons to expand and to quit. Nothing to switch or toggle."""
+    y = 8
+    shown = [a for provider, _ in PROVIDERS for a in state["accounts"] if a["provider"] == provider and a["active"]]
+    if not shown:
+        L.text(W / 2, y + 20, "No account in use", 12, MUTED, anchor="mm")
+        y += 40
+    for account in shown:
+        provider, top = account["provider"], y
+        cy = top + 16
+        L.image(22, cy - 7, provider, 14)
+        note = status_note(account)
+        right = W - 22
+        if note:
+            L.text(right, cy, note, 11, WARN, anchor="rm")
+            if note == "Sign in again":
+                L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
+            right -= text_w(note, 11) + 12
+        L.text(42, cy, fit(display_name(account), 13, True, right - 42), 13, TEXT, bold=True)
+        windows = account["windows"][:3]
+        if not windows:
+            L.text(22, top + 38, account.get("status") or "Usage not loaded yet", 11, FAINT)
+        else:
+            col_w = (W - 44 + 14) / len(windows)
+            for i, window in enumerate(windows):
+                left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
+                x0, ly = 22 + i * col_w, top + 36
+                label = short_label(window)
+                label_w = max(20, text_w(label, 11) + 7)
+                L.text(x0, ly, label, 11, MUTED)
+                bar_x, bar_w = x0 + label_w, col_w - label_w - 52
+                L.rect(bar_x, ly - 2, bar_w, 4, 2, TRACK)
+                if left > 0.5:
+                    L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
+                L.text(x0 + col_w - 14, ly, f"{remaining(window['used']):.0f}%", 11, level_rgb(remaining(window["used"])),
+                       bold=True, anchor="rm")
+                L.text(x0 + col_w - 14, ly + 14, "left", 10, FAINT, anchor="rm")
+                if window.get("resetsAt"):
+                    room = x0 + col_w - 14 - text_w("left", 10) - 6 - bar_x
+                    full = "resets in " + until(window["resetsAt"])
+                    if text_w(full, 10) <= room:
+                        L.text(bar_x, ly + 14, full, 10, FAINT)
+                    else:
+                        L.icon("clock", bar_x + 4, ly + 14, 3.6, FAINT)
+                        L.text(bar_x + 11, ly + 14, until(window["resetsAt"]), 10, FAINT)
+        y += ROW_H + 2
+    footer_h = 40
+    y += 2
+    L.rect(0, y, W, footer_h, 0, FOOTER)
+    L.rect(0, y, W, 1, 0, BORDER)
+    cy = y + footer_h / 2
+    icon_button(L, W - 16 - 62, cy - 14, 28, "expand", "expand", h("expand"))
+    icon_button(L, W - 16 - 28, cy - 14, 28, "power", "quit", h("quit"))
     return L, y + footer_h
 
 
@@ -439,6 +500,16 @@ def paint(layout, width, height, scale):
             if kind == "power":
                 d.arc((cx - r, cy - r + P(1), cx + r, cy + r + P(1)), 300, 240, fill=fill, width=line)
                 d.line((cx, cy - r - P(1), cx, cy + P(1)), fill=fill, width=line)
+            elif kind in ("compact", "expand"):
+                # Four corners: pointing out (expand) or in (compact).
+                arm = r * .55
+                for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                    if kind == "expand":
+                        px, py = cx + sx * r, cy + sy * r
+                        d.line((px - sx * arm, py, px, py, px, py - sy * arm), fill=fill, width=line, joint="curve")
+                    else:
+                        px, py = cx + sx * r * .35, cy + sy * r * .35
+                        d.line((px + sx * arm, py, px, py, px, py + sy * arm), fill=fill, width=line, joint="curve")
             elif kind == "clock":
                 d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=fill, width=line)
                 d.line((cx, cy - r * .55, cx, cy, cx + r * .45, cy + r * .3), fill=fill, width=line, joint="curve")
@@ -476,8 +547,8 @@ def paint(layout, width, height, scale):
     return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
 
-def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None):
-    layout, height = build(state, hover, pending, pinned, fx, armed)
+def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None):
+    layout, height = build(state, hover, pending, pinned, fx, armed, compact)
     return paint(layout, WIDTH, height, scale)
 
 

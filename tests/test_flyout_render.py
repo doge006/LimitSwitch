@@ -24,7 +24,7 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertEqual(image.mode, "RGBA")
         self.assertEqual(image.width, fr.WIDTH + 2 * fr.MARGIN)
         # Only accounts you can switch to are clickable; active ones are not.
-        self.assertEqual(actions, ["full", "pin", "swap:claude-b", "swap:codex-b", "toggle:autoSwap", "toggle:afk", "quit"])
+        self.assertEqual(actions, ["full", "pin", "swap:claude-b", "swap:codex-b", "toggle:autoSwap", "toggle:afk", "compact", "quit"])
 
     def test_hit_test_finds_rows(self):
         _, hits = fr.render(self.state)
@@ -51,7 +51,7 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertNotIn("swap:claude-b", actions)
         state["busy"] = True
         _, actions = self.actions(state)
-        self.assertEqual(actions, ["full", "pin", "quit"])
+        self.assertEqual(actions, ["full", "pin", "compact", "quit"])
 
     def test_grows_with_more_accounts_without_scrolling(self):
         state = self.controller.snapshot()
@@ -100,6 +100,17 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertNotIn("hide", [a for _, a in fr.build(self.state)[0].hits])
         self.assertIn("hide", [a for _, a in fr.build(self.state, pinned=True)[0].hits])
         fr.render(self.state, pinned=True)  # draws the minimize icon
+
+    def test_compact_panel_shows_only_the_accounts_in_use(self):
+        full_image, _ = fr.render(self.state)
+        state = dict(self.state, compact=True)
+        layout, _ = fr.build(state)
+        names = [t[2] for t in layout.texts]
+        self.assertIn("personal@example.com", names)
+        self.assertNotIn("second@example.com", names)  # not in use: not shown
+        self.assertEqual([a for _, a in layout.hits], ["expand", "quit"])  # no switching, no toggles
+        image, _ = fr.render(state)
+        self.assertLess(image.size[1], full_image.size[1] * 0.7)
 
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])
