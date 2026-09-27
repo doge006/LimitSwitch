@@ -146,6 +146,17 @@ def show_running(url):
         return False
 
 
+def quit_running(url):
+    try:
+        base, token = url.split("/#token=")
+        request = Request(base + "/api/shutdown", data=b"{}", method="POST",
+                          headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        with _local.open(request, timeout=5):
+            pass
+    except (OSError, ValueError):
+        pass
+
+
 def existing_instance(url_file):
     """Launch URL of an already-running copy, or None."""
     try:
@@ -358,7 +369,18 @@ def main(argv=None):
     parser.add_argument("--url-file", help="Where the private dashboard URL is kept while running")
     parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the full view")
     parser.add_argument("--show", action="store_true", help="Open the full view even with --quiet (opened by the user)")
+    parser.add_argument("--quit", action="store_true", help="Close the running copy (the installer and uninstaller use it)")
     args = parser.parse_args(argv)
+
+    if args.quit:  # closes cleanly: Codex and Claude Code settings are put back first
+        running = existing_instance(args.url_file) if args.url_file else None
+        if running:
+            quit_running(running)
+            for _ in range(60):
+                if not Path(args.url_file).exists():
+                    break
+                time.sleep(0.25)
+        return
 
     if args.url_file:
         running = existing_instance(args.url_file)

@@ -87,9 +87,12 @@ def clock_12h():
         return False
 
 
+CLOCK_24 = None  # the Settings switch: True / False, or None to follow the system
+
+
 def clock(ts):
     t = time.localtime(ts)
-    if clock_12h():
+    if (not CLOCK_24) if CLOCK_24 is not None else clock_12h():
         return time.strftime("%I:%M %p", t).lstrip("0")
     return time.strftime("%H:%M", t)
 
@@ -154,6 +157,14 @@ def credits_items(account):
     if isinstance(c.get("resets"), int):
         items.append(("Usage limit resets", str(c["resets"])))
     return items
+
+
+STALE_AFTER = 1800  # numbers older than this show their age (they're kept, not guessed)
+
+
+def ago(seconds):
+    minutes = int(seconds // 60)
+    return f"{minutes}m" if minutes < 60 else f"{minutes // 60}h {minutes % 60}m" if minutes < 1440 else f"{minutes // 1440}d"
 
 
 def display_name(account):
@@ -359,7 +370,7 @@ def card_key(account, ui, name_mode, live, locked):
     editing = ui.editing if ui.editing and ui.editing[0] == aid else None
     fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
     return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
-                       name_mode, live, locked, int(time.time() // 60)], sort_keys=True, default=str)
+                       name_mode, live, locked, CLOCK_24, int(time.time() // 60)], sort_keys=True, default=str)
 
 
 def draw_card(account, w, h, scale, ui, name_mode, live, locked):
@@ -500,7 +511,10 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
             if not signing:
                 hit(18, fy + 4, fr.text_w(label, 12), 22, "relogin")
         else:
-            hint = status or ("All sessions use this account" if active else "Waiting for reset" if not eligible else "")
+            age = time.time() - (account.get("updated_at") or 0)
+            old = live and account.get("updated_at") and age > STALE_AFTER
+            hint = status or (f"Numbers from {ago(age)} ago · checking" if old else
+                              "All sessions use this account" if active else "Waiting for reset" if not eligible else "")
             c.text(18, fy + 21, fr.fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:
@@ -673,7 +687,8 @@ def toggle(c, x, y, pos, hot, bg):
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
-            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"))
+            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
+            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
