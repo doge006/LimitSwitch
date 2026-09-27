@@ -88,6 +88,24 @@ def blocks():
     return sorted(found)
 
 
+class DEVMODEW(ctypes.Structure):
+    _fields_ = [("dmDeviceName", wintypes.WCHAR * 32), ("dmSpecVersion", wintypes.WORD), ("dmDriverVersion", wintypes.WORD),
+                ("dmSize", wintypes.WORD), ("dmDriverExtra", wintypes.WORD), ("dmFields", wintypes.DWORD),
+                ("dmPositionX", wintypes.LONG), ("dmPositionY", wintypes.LONG), ("dmDisplayOrientation", wintypes.DWORD),
+                ("dmDisplayFixedOutput", wintypes.DWORD), ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+                ("dmYResolution", ctypes.c_short), ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short),
+                ("dmFormName", wintypes.WCHAR * 32), ("dmLogPixels", wintypes.WORD), ("dmBitsPerPel", wintypes.DWORD),
+                ("dmPelsWidth", wintypes.DWORD), ("dmPelsHeight", wintypes.DWORD), ("dmDisplayFlags", wintypes.DWORD),
+                ("dmDisplayFrequency", wintypes.DWORD), ("dmICMMethod", wintypes.DWORD), ("dmICMIntent", wintypes.DWORD),
+                ("dmMediaType", wintypes.DWORD), ("dmDitherType", wintypes.DWORD), ("dmReserved1", wintypes.DWORD),
+                ("dmReserved2", wintypes.DWORD), ("dmPanningWidth", wintypes.DWORD), ("dmPanningHeight", wintypes.DWORD)]
+
+
+# The runner's screen is 1024 px wide, too narrow for the blocks beside its taskbar buttons: use a
+# typical 1920 x 1080 (the app itself would simply not show a block that does not fit).
+mode = DEVMODEW(dmSize=ctypes.sizeof(DEVMODEW), dmFields=0x80000 | 0x100000, dmPelsWidth=1920, dmPelsHeight=1080)
+print("display 1920x1080:", user32.ChangeDisplaySettingsW(ctypes.byref(mode), 0), flush=True)  # 0 = changed
+time.sleep(3)
 info = taskbar.read_bar()
 print("taskbar:", info and {"rect": info.rect, "scale": info.scale, "free from": info.left, "to": info.right,
                             "buttons": sorted(info.occupied), "measured": info.measured, "light": info.light}, flush=True)
