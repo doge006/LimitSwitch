@@ -16,6 +16,7 @@ where git >nul 2>&1 || (
 )
 "%PY%" "%~dp0scripts\installer.py" %*
 set "RC=%ERRORLEVEL%"
-rem Keep the window open when started by double-click.
-echo %cmdcmdline% | find /i "%~0" >nul && pause
+rem Keep the window open when started by double-click (also through Update.cmd): Explorer runs
+rem "cmd /c", a console someone typed in does not.
+echo %cmdcmdline% | find /i " /c " >nul && pause
 exit /b %RC%

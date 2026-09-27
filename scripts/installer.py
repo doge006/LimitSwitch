@@ -369,7 +369,35 @@ def start():
                      start_new_session=not WINDOWS)
 
 
+class Tee:
+    """Everything the installer prints also goes to update.log next to app.log, so what an update
+    said can be read afterwards (the window may have closed)."""
+
+    def __init__(self, stream, path):
+        self.stream, self.file = stream, None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.file = open(path, "w", encoding="utf-8")
+            self.file.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+        except OSError:
+            pass
+
+    def write(self, text):
+        self.stream.write(text)
+        if self.file:
+            self.file.write(text)
+            self.file.flush()
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 def main(argv=None):
+    sys.stdout = Tee(sys.stdout, log_path().with_name("update.log"))
     parser = argparse.ArgumentParser(description="Install or update Account Switcher.")
     parser.add_argument("--branch", default="")
     parser.add_argument("--force", action="store_true")
