@@ -334,6 +334,28 @@ class LiveTests(unittest.TestCase):
         five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
         self.assertEqual(five["used"], 77.0)
 
+    def test_stale_status_line_numbers_never_undo_newer_ones(self):
+        """After a limit, Claude Code keeps sending its last numbers with every reply: they must not
+        overwrite newer ones, and must not keep the API at its slow 'followed live' pace."""
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        m.live_since["claude"] = 0
+        reset = time.time() + 3600
+        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}})
+        m.observe(a.id, [(300, 100.0, reset)])  # newer: the limit was reached
+        meta = m.meta["accounts"][a.id]
+        meta["liveAt"] = time.time() - 1000  # the last real change was a while ago
+        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}})  # the stale repeat
+        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 100.0)
+        now = time.time()
+        self.assertLess(m.due(a.id, meta, True, now) - now, 400)  # back to the normal API pace
+        m.statusline({"five_hour": {"used_percentage": 3, "resets_at": reset + 5 * 3600}})  # a new window
+        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 3.0)
+
     def test_mac_sign_in_opens_in_terminal(self):
         m = self.manager()
         started = []

@@ -24,6 +24,12 @@ def classify(text):
     return "ok" if OK.search(text) else ""
 
 
+def window_size(area_width, area_height):
+    """Half the work area's width, and tall enough for two rows of cards (920, or 95% of a shorter
+    screen), in logical px."""
+    return max(720, round(area_width / 2)), max(480, min(920, round(area_height * .95)))
+
+
 class UI:
     """What the drawing needs to know beyond the app state."""
 

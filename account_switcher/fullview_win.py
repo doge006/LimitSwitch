@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 
 from . import fullview_render as vr
-from .fullview import FullView
+from .fullview import FullView, window_size
 
 log = logging.getLogger("account_switcher.fullview")
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -182,13 +182,13 @@ class FullViewWindow:
         except Exception:
             log.warning("full view taskbar identity", exc_info=True)
         self.on_size()
+        self.fit_content(x, y, width, height)
         user32.ShowWindow(self.hwnd, SW_SHOW)
         from .flyout import force_foreground
         force_foreground(self.hwnd)
 
     def placement(self):
         """Size (the app's full-view size) and centre on the display with the pointer, in device px."""
-        from .tray import full_view_size
         point = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(point))
         monitor = user32.MonitorFromPoint(point, 2)
@@ -204,9 +204,18 @@ class FullViewWindow:
             pass
         work = info.rcWork
         area_w, area_h = work.right - work.left, work.bottom - work.top
-        logical_w, logical_h = full_view_size(area_w / scale, area_h / scale)
+        logical_w, logical_h = window_size(area_w / scale, area_h / scale)
         width, height = min(area_w, round(logical_w * scale)), min(area_h, round(logical_h * scale))
         return width, height, work.left + (area_w - width) // 2, work.top + (area_h - height) // 2, scale
+
+    def fit_content(self, x, y, width, height):
+        """No empty space under the cards: open only as tall as the page (keeping it centred)."""
+        rect = wintypes.RECT()
+        user32.GetClientRect(self.hwnd, ctypes.byref(rect))
+        spare = rect.bottom - round(max(self.view.content_h, 420) * self.scale)
+        if spare > 0:
+            user32.SetWindowPos(self.hwnd, None, x, y + spare // 2, width, height - spare, 0x0014)  # NOZORDER|NOACTIVATE
+            self.on_size()
 
     def style_title_bar(self):
         """Dark title bar in our background colour, so the window reads as one surface."""

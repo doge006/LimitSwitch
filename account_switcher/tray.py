@@ -128,8 +128,8 @@ def full_view_size(area_width=None, area_height=None):
             area_width, area_height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
         except (OSError, AttributeError, ZeroDivisionError):
             return 1080, 800
-    # Tall enough for two rows of account cards without scrolling, never taller than the screen.
-    return max(720, round(area_width / 2)), max(480, min(920, round(area_height * .95)))
+    from .fullview import window_size
+    return window_size(area_width, area_height)
 
 
 def open_dashboard(url):
@@ -245,6 +245,13 @@ class Tray:
                 logging.getLogger("account_switcher").exception("taskbar view unavailable")
                 self.taskbar = None
         self.flyout = flyout
+        if sys.platform.startswith("linux") and icon_factory is pystray.Icon:
+            try:  # the full view: a Tk window drawn like the Windows one (no browser)
+                import tkinter  # noqa: F401  (python3-tk; without it the browser is used)
+                from .fullview_tk import TkFullView
+                self.full_view = TkFullView(self)
+            except ImportError:
+                self.full_view = None
 
     # Right-click menu; account swaps live in the flyout. Rebuilt only when it changes.
     def menu_items(self):

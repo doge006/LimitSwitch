@@ -27,7 +27,7 @@ A first install from nothing: `git clone https://github.com/doge006/Account-Swit
 - **Menu bar:** the tray becomes a menu bar icon.
   - Click it for the panel, a native popover that follows light and dark mode.
   - Drag the panel away from the menu bar and it stays open as a floating window.
-  - Right-click (or Control-click) for the menu; **Full View…** opens the dashboard in its own window.
+  - Right-click (or Control-click) for the menu; **Full View…** opens the full view in its own native window.
   - There's no Dock icon.
 - **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
 - **Codex** works exactly as on Windows (the local router, `~/.codex/auth.json`).
@@ -98,7 +98,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 - **Motion:** hovers fade, switches slide, the "in use" marker cross-fades on a switch, and bars glide to new values. Animation frames are drawn only while something moves.
 - **The panel:**
   - **Pop out** (next to **Full view ›**) pins the panel: it stays open and you can drag it by its header. Click it again to put it back.
-  - **Full view ›** opens the dashboard in a borderless Edge/Chrome app window.
+  - **Full view ›** opens the full view: a native window of the app's own (no browser), drawn like the panel.
   - Esc or clicking elsewhere closes an unpinned panel.
 - **Right-click:** a menu in the same style: Open panel, Full view, Auto swap, AFK and Quit. Toggling Auto swap or AFK keeps the menu open.
 - **Hover:** the tooltip shows the account in use per provider and what's left.
@@ -146,7 +146,8 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/integrations.py`: sets all of that up while the app runs and undoes it on quit.
 - `account_switcher/providers.py`: Claude Code / Codex login files and usage APIs.
 - `account_switcher/vault.py`: DPAPI-encrypted storage.
-- `account_switcher/web.py` + `static/`: controller and full view.
+- `account_switcher/fullview.py` + `fullview_render.py`: the full view (behaviour and Pillow drawing), shown by `fullview_win.py` (Win32), `fullview_mac.py` (AppKit) and `fullview_tk.py` (Linux, Tk).
+- `account_switcher/web.py` + `static/`: controller, local API and the web full view (fallback, and the Recovery lab in demo mode).
 - `account_switcher/core.py`: account model, routing and AFK recovery rules.
 - `account_switcher/client.py`, `demo.py`, `proxy_demo.py`: Recovery lab (demo mode).
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): the installer and updater.
