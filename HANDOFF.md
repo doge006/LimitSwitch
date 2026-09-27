@@ -68,6 +68,7 @@ It is Python stdlib plus pystray and Pillow on Windows, and PyObjC on macOS. A l
   - Has no bottom gap.
   - Fixed the open/close/open blink.
 
+- **Full view blink, root cause (traced on CI with `experiments/win_trace.py`):** Edge creates the app window hidden, titled `127.0.0.1_/` (not host:port), and shows it ~0.3 s later. We only matched it after the page loaded, then hid, moved and re-showed it: seen as "one closes, another opens". `brand_full_view` now catches the new window (not in `before`) while still hidden and never hides it. Edge ignores moves while hidden, so it is fitted again within ~1 frame of showing.
 - **One full view:** opening it again (tray, flyout, Start menu) brings the open window to the front (`win_window.focus_full_view`) instead of a second Edge window. A second launch hands off to the running copy (`server.show` → `Tray.open_full_view`, with `AllowSetForegroundWindow`), so the DPI-aware process sizes it the same as the tray does.
 
 ## Open / to verify with the user

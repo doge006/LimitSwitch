@@ -1,5 +1,6 @@
 """Windows CI experiment: log every change to Edge top-level windows while the full view opens,
-to see exactly which windows appear, hide, show and close."""
+to see exactly which windows appear, hide, show and close. Run it on Windows from the repo root,
+after the installer (it starts and quits the app itself)."""
 import ctypes
 from ctypes import wintypes
 import json

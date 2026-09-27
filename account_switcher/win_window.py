@@ -194,7 +194,7 @@ def brand_full_view(relaunch, icon, seconds=15, size=None, address=None, before=
         placed = (rect.left, rect.top, rect.right, rect.bottom)
         end = time.monotonic() + 5
         while time.monotonic() < end and user32.IsWindow(hwnd) and not user32.IsWindowVisible(hwnd):
-            time.sleep(0.005)
+            time.sleep(0.001)  # fit it within a frame of appearing
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
         if size and (rect.left, rect.top, rect.right, rect.bottom) != placed and user32.IsZoomed(hwnd) == 0:
             fit_window(hwnd, size)
