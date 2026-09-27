@@ -379,7 +379,8 @@ class TaskbarView:
             self.stale = True
             self.sync()
         elif wparam == TIMER_COVER:
-            user32.KillTimer(self.hwnd, TIMER_COVER)
+            if not self.covered:
+                user32.KillTimer(self.hwnd, TIMER_COVER)
             self.follow_taskbar()
 
     def on_shell(self, wparam, lparam):
@@ -388,7 +389,8 @@ class TaskbarView:
             self.later()  # a taskbar button came or went: the free space moved
         elif code == HSHELL_WINDOWACTIVATED:  # includes full-screen ("rude") apps
             self.follow_taskbar()
-            user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
+            if not self.covered:
+                user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
 
     def follow_taskbar(self):
         """Hide with the taskbar when a full-screen app takes over, and come back with it.
@@ -401,6 +403,8 @@ class TaskbarView:
         if covered == self.covered:
             return
         self.covered = covered
+        if covered:  # the full-screen app may leave without activating anything: look again each second
+            user32.SetTimer(self.hwnd, TIMER_COVER, 1000, None)
         for block in self.blocks.values():
             if block.hwnd and not block.closing:
                 user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)

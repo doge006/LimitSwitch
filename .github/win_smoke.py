@@ -186,8 +186,14 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "6-under-full-screen.png")
     check(not blocks(), "the blocks go down with the taskbar under a full-screen window")
     user32.DestroyWindow(full)
-    pump(1.5)
-    check(blocks() == found, "the blocks are back, in place, when it closes")
+    back = []
+    for _ in range(12):
+        pump(0.5)
+        back = blocks()
+        if back == found:
+            break
+    print("after full screen:", back, "· taskbar on top:", bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
+    check(back == found, "the blocks are back, in place, when it closes")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):
