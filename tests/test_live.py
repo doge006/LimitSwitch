@@ -419,6 +419,31 @@ class LiveTests(unittest.TestCase):
         again = self.manager()  # restarting keeps the backoff
         self.assertEqual(again.meta["accounts"][a.id]["backoffUntil"], meta["backoffUntil"])
 
+    def test_a_hiccup_never_blocks_refresh_or_outlives_a_restart(self):
+        """Offline at sign-in: the quiet back-off must not keep old numbers (e.g. 0% left after a
+        reset) on screen through Refresh or the next start."""
+        from account_switcher.providers import ProviderError
+        m = self.manager()
+        m.sync_live()
+        real = self.providers["claude"].fetch
+        calls = []
+        def offline(secret, allow_refresh):
+            calls.append(1)
+            raise ProviderError("offline", transient=True)
+        self.providers["claude"].fetch = offline
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        self.assertGreater(m.meta["accounts"][a.id]["backoffUntil"], time.time())
+        self.assertEqual(m.meta["accounts"][a.id]["backoffKind"], "transient")
+        m.refresh(force=True)  # Refresh: tries again at once
+        self.assertEqual(len(calls), 2)
+        again = self.manager()  # a restart forgets it
+        self.assertEqual(again.meta["accounts"][a.id]["backoffUntil"], 0.0)
+        self.providers["claude"].fetch = real
+        again.sync_live()
+        again.refresh(force=True)
+        self.assertEqual(self.by_email(again, "a@example.com").status, "")
+
     def test_rate_limit_without_retry_after_backs_off_exponentially_and_recovers(self):
         from account_switcher.providers import ProviderError
         m = self.manager()

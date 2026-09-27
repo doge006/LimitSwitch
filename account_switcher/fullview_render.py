@@ -159,6 +159,14 @@ def credits_items(account):
     return items
 
 
+STALE_AFTER = 1800  # numbers older than this show their age (they're kept, not guessed)
+
+
+def ago(seconds):
+    minutes = int(seconds // 60)
+    return f"{minutes}m" if minutes < 60 else f"{minutes // 60}h {minutes % 60}m" if minutes < 1440 else f"{minutes // 1440}d"
+
+
 def display_name(account):
     return account.get("name") or account.get("email") or account.get("alias", "")
 
@@ -503,7 +511,10 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
             if not signing:
                 hit(18, fy + 4, fr.text_w(label, 12), 22, "relogin")
         else:
-            hint = status or ("All sessions use this account" if active else "Waiting for reset" if not eligible else "")
+            age = time.time() - (account.get("updated_at") or 0)
+            old = live and account.get("updated_at") and age > STALE_AFTER
+            hint = status or (f"Numbers from {ago(age)} ago · checking" if old else
+                              "All sessions use this account" if active else "Waiting for reset" if not eligible else "")
             c.text(18, fy + 21, fr.fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:

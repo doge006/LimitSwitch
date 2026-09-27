@@ -42,6 +42,7 @@ from .vault import Vault, atomic_write
 # so the app settles at whatever rate the provider accepts.
 ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 300  # idle: may be in use in a cloud session or elsewhere
 FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
+STALE_AFTER = 1800          # older numbers are shown with their age
 MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
 # gently and follows live through Claude Code's status line instead (no tokens, no API calls).
@@ -67,6 +68,9 @@ class LiveAccounts:
         self.lock = threading.RLock()
         meta = self.vault.load_meta()
         # Every saved setting comes back (panel size, taskbar view and its display, ...), not just these.
+        for entry in (meta.get("accounts") or {}).values():  # a hiccup's back-off doesn't outlive the app
+            if entry.get("backoffKind") == "transient":
+                entry.update(backoffUntil=0.0, backoffFailures=0, backoffKind=None)
         self.meta = {**meta, "accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
@@ -189,7 +193,10 @@ class LiveAccounts:
                     due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
                 else:
                     due = 0.0 if (force or only) else self.due(i, m, is_active, now)
-                if due <= now and m.get("backoffUntil", 0.0) <= now:  # a rate limit holds even a forced refresh
+                held = m.get("backoffUntil", 0.0) > now
+                if held and force and m.get("backoffKind") != "rate":
+                    held = False  # Refresh retries after a hiccup (offline, timeout); only a real 429 holds
+                if due <= now and not held:
                     targets.append((i, dict(m), is_active, is_live))
         fetched = False
         for account_id, meta, is_active, is_live in targets:
@@ -216,13 +223,14 @@ class LiveAccounts:
                     wait = error.retry_after or min(MAX_BACKOFF, 60 * 2 ** failures)
                     wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
                     self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
-                              pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
+                              backoffKind="rate", pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
                 if error.transient:
                     # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
                     # 1, 2, 4... min. Only a problem that lasts gets shown.
                     failures = meta.get("backoffFailures", 0)
                     wait = min(900, 60 * 2 ** failures) * random.uniform(1.0, 1.15)
-                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1)
+                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
+                              backoffKind="transient")
                     if failures + 1 < 3:
                         continue
                     self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
@@ -239,7 +247,7 @@ class LiveAccounts:
                 self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                 continue
             eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.85)} if meta.get("pace", 1.0) > 1 else {}
-            self._set(account_id, backoffUntil=0.0, backoffFailures=0, **eased)
+            self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
                 secret = updated
@@ -598,6 +606,7 @@ class LiveAccounts:
                 continue
             best = self._best_other(name, current.id)
             if best is None:
+                self.recheck_spent(name, current.id)
                 continue
             try:
                 self.swap(best.id, reason="auto")
@@ -605,6 +614,20 @@ class LiveAccounts:
             except (RuntimeError, ValueError, OSError) as error:
                 self.notify("log", f"Automatic switch failed: {error}")
         return moved
+
+    def recheck_spent(self, name, current_id):
+        """No other account has room: before giving up, ask again about the ones that only look used
+        up because their numbers are over a minute old (at most once a minute; 429 holds stay)."""
+        now = time.time()
+        if now - getattr(self, "last_recheck", 0.0) < 60:
+            return
+        self.last_recheck = now
+        stale = [i for i, m in self.meta["accounts"].items() if m["provider"] == name and i != current_id
+                 and now - m.get("updatedAt", 0.0) > 60 and m.get("backoffKind") != "rate"]
+        for account_id in stale:
+            self.refresh(only=account_id)
+        if stale and self._best_other(name, current_id) is not None:
+            self.auto_swap()
 
     def remove(self, account_id):
         with self.lock:

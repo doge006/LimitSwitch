@@ -72,6 +72,10 @@ def status_note(account):
     """Short text when usage could not be fetched, else None."""
     status = account.get("status") or ""
     if not status:
+        updated = account.get("updated_at") or 0
+        if updated and time.time() - updated > 1800:  # old numbers say so rather than pass as current
+            minutes = int((time.time() - updated) // 60)
+            return f"{minutes}m old" if minutes < 60 else f"{minutes // 60}h old"
         return None
     if "sign in" in status.lower() or "missing" in status.lower():
         return "Sign in again"
