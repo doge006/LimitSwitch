@@ -206,6 +206,15 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     # Claude is anchored by its left edge, Codex by its right (its width changed with the swap above).
     check(len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2],
           "the blocks are back, in place, when it closes")
+    # A screenshot tool's overlay covers the screen too, but is a tool window: the blocks stay.
+    overlay = user32.CreateWindowExW(0x80 | 0x8, "Static", "Overlay", 0x80000000 | 0x10000000, 0, 0,
+                                     screen.width, screen.height, None, None, None, None)  # TOOLWINDOW|TOPMOST
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.SetForegroundWindow(overlay)
+    user32.keybd_event(0x12, 0, 2, 0)
+    pump(1.5)
+    user32.DestroyWindow(overlay)
+    check(len(blocks()) == len(found), "a screenshot overlay does not hide the blocks")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):
