@@ -163,6 +163,41 @@ if len(found) == 2:  # a click on the Codex block opens the panel with only the 
     time.sleep(1)
     ImageGrab.grab().crop((screen.width // 2, screen.height // 2, screen.width, screen.height)).save(SHOTS / "5-codex-panel.png")
     user32.SetCursorPos(10, 10)
+if found:  # a full-screen window (a game, a video) covers the taskbar, and the blocks go down with it
+    msg = wintypes.MSG()
+
+    def pump(seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            time.sleep(0.02)
+
+    user32.CreateWindowExW.restype = wintypes.HWND
+    full = user32.CreateWindowExW(0, "Static", "Full screen", 0x80000000 | 0x10000000, 0, 0,
+                                  screen.width, screen.height, None, None, None, None)
+    user32.keybd_event(0x12, 0, 0, 0)  # an Alt tap lets this process take the foreground
+    user32.SetForegroundWindow(full)
+    user32.keybd_event(0x12, 0, 2, 0)
+    pump(2)
+    print("full-screen window in front:", user32.GetForegroundWindow() == full, flush=True)
+    ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "6-under-full-screen.png")
+    covered = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def still_topmost(hwnd, _):
+        name = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, name, 64)
+        if name.value == "AccountSwitcherFlyout" and user32.IsWindowVisible(hwnd):
+            covered.append(bool(user32.GetWindowLongW(hwnd, -20) & 0x8))  # WS_EX_TOPMOST
+        return True
+
+    user32.EnumWindows(still_topmost, 0)
+    check(covered and not any(covered), "a full-screen window covers the blocks with the taskbar")
+    user32.DestroyWindow(full)
+    pump(1.5)
+    check(blocks() == found, "the blocks are back, in place, when it closes")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):

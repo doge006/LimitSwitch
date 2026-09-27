@@ -7,8 +7,9 @@ click opens the panel above the block, a right-click opens the menu.
 
 Nothing polls. The layout is worked out again only when the taskbar can have changed
 (a window opened or closed, display or theme settings changed, Explorer restarted) and once
-a minute with the reset times; the blocks step back above the taskbar when the foreground
-window changes, and hide while something runs full screen.
+a minute with the reset times. The blocks are owned by the taskbar, so Windows keeps them
+just above it and takes them down with it when a full-screen app covers it; screenshot
+tools and other overlays never make them hide and come back.
 """
 import ctypes
 from ctypes import wintypes
@@ -29,12 +30,8 @@ WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
 WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
 TIMER_LAYOUT, TIMER_MINUTE = 71, 72
-EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT = 0x0003, 0
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
 PROVIDER_ORDER = ("claude", "codex")
-
-WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
-                                  wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
 
 
 class APPBARDATA(ctypes.Structure):
@@ -47,11 +44,6 @@ sig(user32.FindWindowW, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
 sig(user32.FindWindowExW, wintypes.HWND, wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
 sig(user32.GetWindowRect, wintypes.BOOL, wintypes.HWND, ctypes.POINTER(wintypes.RECT))
 sig(user32.IsWindowVisible, wintypes.BOOL, wintypes.HWND)
-sig(user32.SetWindowPos, wintypes.BOOL, wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-    ctypes.c_int, ctypes.c_int, wintypes.UINT)
-sig(user32.SetWinEventHook, wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE,
-    WINEVENTPROC, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD)
-sig(user32.UnhookWinEvent, wintypes.BOOL, wintypes.HANDLE)
 sig(user32.RegisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
@@ -233,32 +225,6 @@ def read_bar(hwnd, key="main", label="Main display"):
                light_taskbar(), measured)
 
 
-DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
-sig(user32.MonitorFromWindow, wintypes.HANDLE, wintypes.HWND, wintypes.DWORD)
-
-
-def full_screen_on(bar):
-    """Is the foreground window covering the whole display this taskbar is on (a game, a video)?"""
-    if bar is None:
-        return False
-    window = user32.GetForegroundWindow()
-    if not window:
-        return False
-    window = user32.GetAncestor(window, 2) or window  # GA_ROOT
-    name = ctypes.create_unicode_buffer(64)
-    user32.GetClassNameW(window, name, 64)
-    rect = window_rect(window)
-    if name.value in DESKTOP_CLASSES or not rect:
-        return False
-    info = fl.MONITORINFO()
-    info.cbSize = ctypes.sizeof(info)
-    if not user32.GetMonitorInfoW(user32.MonitorFromWindow(window, 2), ctypes.byref(info)):
-        return False
-    screen = info.rcMonitor
-    covers = rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right and rect[3] >= screen.bottom
-    return covers and screen.left <= bar.rect[0] < screen.right and screen.top <= bar.rect[1] < screen.bottom
-
-
 class TaskbarBlock(fl.Popup):
     """One provider's block on the taskbar."""
     modal = False            # other popups ignore it; it never closes on outside clicks
@@ -348,9 +314,7 @@ class TaskbarView:
         self.stale = True        # re-read the taskbar's layout on the next sync
         self.hwnd = None
         self.hooked = False
-        self.win_event = None
         self.shell_message = None
-        self.hidden_full_screen = False
 
     # ---------- wiring into pystray's hidden window ----------
     def attach(self, icon):
@@ -389,9 +353,6 @@ class TaskbarView:
         if self.hooked:
             return
         self.hwnd = self.icon._hwnd
-        self.win_event_proc = WINEVENTPROC(self.on_foreground)  # kept alive while hooked
-        self.win_event = user32.SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None,
-                                                self.win_event_proc, 0, 0, WINEVENT_OUTOFCONTEXT)
         user32.RegisterShellHookWindow(self.hwnd)
         user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self.hooked = True
@@ -399,9 +360,6 @@ class TaskbarView:
     def unhook(self):
         if not self.hooked:
             return
-        if self.win_event:
-            user32.UnhookWinEvent(self.win_event)
-            self.win_event = None
         user32.DeregisterShellHookWindow(self.hwnd)
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
@@ -419,14 +377,6 @@ class TaskbarView:
     def on_shell(self, wparam, lparam):
         if wparam & 0x7FFF in (HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED):
             self.later()  # a taskbar button came or went: the free space moved
-
-    def on_foreground(self, *_):
-        """Only a change in full-screen state matters; the blocks' z-order follows the taskbar."""
-        try:
-            if full_screen_on(self.bar) != self.hidden_full_screen:
-                self.sync()
-        except Exception:
-            log.exception("taskbar foreground check failed")
 
     # ---------- layout ----------
     def enabled(self):
@@ -454,12 +404,12 @@ class TaskbarView:
             if displays != getattr(self.tray.controller, "taskbar_displays", None):
                 self.tray.controller.taskbar_displays = displays  # the settings list them
                 self.tray.controller.notify("changed", None)
-            chosen = next((t for t in found if t[1] == wanted_key), found[0] if found else None)
+            # The chosen display's taskbar, else the main one; never some other display by accident.
+            chosen = next((t for t in found if t[1] == wanted_key), None) or next((t for t in found if t[1] == "main"), None)
             self.bar, self.stale = (read_bar(*chosen) if chosen else None), False
         bar = self.bar
-        self.hidden_full_screen = full_screen_on(bar)
         in_use = [p for p in PROVIDER_ORDER if any(a["provider"] == p and a["active"] for a in state["accounts"])]
-        if bar is None or self.hidden_full_screen or not in_use:
+        if bar is None or not in_use:
             self.close_all()
             return
         wanted = []

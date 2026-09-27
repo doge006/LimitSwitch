@@ -637,10 +637,10 @@ BLOCK_PAD, BLOCK_PAD_R = 12, 16   # generous on the right: the block sits in ope
 BLOCK_COL, BLOCK_GAP = 104, 16    # one column per limit
 THEMES = {
     False: {"text": TEXT, "muted": MUTED, "faint": FAINT, "track": (255, 255, 255, 34),
-            "plate": (255, 255, 255, 10), "plate_hover": (255, 255, 255, 26),
+            "plate": (22, 22, 22, 84), "plate_hover": (58, 58, 58, 130),  # a light backing: readable on translucent taskbars
             "good": GOOD, "warn": WARN, "bad": BAD, "accent": ACCENT},
     True: {"text": (26, 26, 26, 255), "muted": (84, 84, 84, 255), "faint": (104, 104, 104, 255),
-           "track": (0, 0, 0, 30), "plate": (0, 0, 0, 8), "plate_hover": (0, 0, 0, 20),
+           "track": (0, 0, 0, 30), "plate": (252, 252, 252, 110), "plate_hover": (236, 236, 236, 170),
            "good": (24, 138, 86, 255), "warn": (168, 116, 0, 255), "bad": (196, 58, 46, 255),
            "accent": {"claude": (186, 92, 58, 255), "codex": (108, 88, 214, 255)}},
 }
