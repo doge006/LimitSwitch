@@ -22,6 +22,8 @@ function node(tag, className, text) {
 const remaining = used => Math.max(0, Math.min(100, 100 - used));
 const level = left => left > 30 ? 'level-good' : left > 10 ? 'level-warn' : 'level-bad';
 const displayName = account => account.name || account.email || account.alias;
+const REDACTED = '•••••••••••••••';
+const accountById = id => state.accounts.find(a => a.id === id);
 function relative(ts) {
   const m = Math.max(0, Math.round((ts * 1000 - Date.now()) / 60000));
   if (m < 1) return 'now';
@@ -128,13 +130,33 @@ function buildCard(account, index) {
   logo.src = `/assets/${account.provider}.png`; logo.alt = '';
   avatar.append(logo);
   const identity = node('div', 'identity'), line = node('div', 'alias-line');
-  const name = node('span', 'alias', displayName(account));
-  name.title = displayName(account);
+  let name, email = null;
+  if (state.nameMode) {
+    // Name mode: a name to type, and the email under it, redacted until clicked.
+    name = node('input', 'alias alias-input');
+    Object.assign(name, { type: 'text', value: account.label || '', placeholder: 'Name this account', maxLength: 40,
+                          spellcheck: false, ariaLabel: 'Account name' });
+    const save = () => { if (name.value.trim() !== (accountById(account.id)?.label || '')) act('rename', { id: account.id, name: name.value }); };
+    name.addEventListener('change', save);
+    name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); if (e.key === 'Escape') { name.value = accountById(account.id)?.label || ''; name.blur(); } });
+    email = node('button', 'email-reveal', REDACTED);
+    email.type = 'button';
+    email.title = 'Show email';
+    email.addEventListener('click', () => {
+      const shown = email.classList.toggle('shown');
+      email.textContent = shown ? (accountById(account.id)?.email || '') : REDACTED;
+      email.title = shown ? 'Hide email' : 'Show email';
+    });
+  } else {
+    name = node('span', 'alias', displayName(account));
+    name.title = displayName(account);
+  }
   line.append(name);
   const plan = node('span', 'plan', account.plan || '');
   plan.hidden = !account.plan;
   line.append(plan);
   identity.append(line);
+  if (email) identity.append(email);
   const side = node('div', 'card-side'), renew = node('button', 'renew num'), badge = node('span', 'badge', 'In use');
   renew.type = 'button';
   renew.title = 'Set the renewal or end date';
@@ -329,7 +351,7 @@ function updateLog() {
 function render(next) {
   state = next;
   // Rebuild only when the set of accounts or their usage windows changes.
-  const key = state.mode + '|' + state.accounts.map(a => a.id + ':' + a.windows.map(w => w.key).join(',')).join(';');
+  const key = state.mode + '|' + !!state.nameMode + '|' + state.accounts.map(a => a.id + ':' + a.windows.map(w => w.key).join(',')).join(';');
   if (key !== layoutKey) {
     layoutKey = key;
     build();
@@ -343,6 +365,7 @@ function render(next) {
   if (pendingPrefs && !state.busy && state.afk === pendingPrefs.afk && state.autoSwap === pendingPrefs.autoSwap) pendingPrefs = null;
   $('auto-swap').checked = pendingPrefs?.autoSwap ?? state.autoSwap;
   $('afk').checked = pendingPrefs?.afk ?? state.afk;
+  $('name-mode').checked = !!state.nameMode;
   const taskbar = !!state.taskbarAvailable;
   $('taskbar-settings').hidden = !taskbar;
   if (taskbar) {
@@ -495,6 +518,7 @@ setLab(false);
 const sendPrefs = () => act('preferences', { autoSwap: $('auto-swap').checked, afk: $('afk').checked });
 $('auto-swap').addEventListener('change', sendPrefs);
 $('afk').addEventListener('change', sendPrefs);
+$('name-mode').addEventListener('change', () => act('names', { on: $('name-mode').checked }));
 $('taskbar-view').addEventListener('change', () => act('taskbar', { on: $('taskbar-view').checked }));
 $('taskbar-display').addEventListener('change', () => act('taskbar', { display: $('taskbar-display').value }));
 $('run').addEventListener('click', () => act('run', { scenario: $('scenario').value }, $('run')));

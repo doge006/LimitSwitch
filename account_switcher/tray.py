@@ -113,8 +113,8 @@ def app_browser():
 
 
 def full_view_size():
-    """At most a quarter of the screen: half the work area's width and height (in the
-    browser's own units, so a scaled display gets the same share)."""
+    """Half the work area's width, and tall enough for two rows of cards (900, or 90% of a
+    shorter screen), in the browser's own units so a scaled display gets the same share."""
     if sys.platform != "win32":
         return 1080, 800
     try:
@@ -124,7 +124,8 @@ def full_view_size():
         ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
         scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
         width, height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
-        return max(720, round(width / 2)), max(480, min(760, round(height / 2)))
+        # Tall enough for two rows of account cards without scrolling, never taller than the screen.
+        return max(720, round(width / 2)), max(480, min(900, round(height * .9)))
     except (OSError, AttributeError, ZeroDivisionError):
         return 1080, 800
 
