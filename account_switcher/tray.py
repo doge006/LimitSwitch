@@ -201,11 +201,18 @@ class Tray:
                                  tooltip(self.state), pystray.Menu(self.menu_items))
         # The dashboard's "Quit" button quits the tray too.
         server.quit = self.quit
-        self.menu = None
+        self.menu = self.taskbar = None
         if native:
             from .flyout import Flyout, TrayMenu
             flyout, self.menu = Flyout(self), TrayMenu(self)
             self.icon.popups = (flyout, self.menu)  # left/right clicks open our own popups
+            try:  # the accounts in use, shown on the taskbar itself
+                from .taskbar import TaskbarView
+                self.taskbar = TaskbarView(self)
+                self.taskbar.attach(self.icon)
+            except Exception:
+                logging.getLogger("account_switcher").exception("taskbar view unavailable")
+                self.taskbar = None
         self.flyout = flyout
 
     # Right-click menu; account swaps live in the flyout. Rebuilt only when it changes.
@@ -274,6 +281,8 @@ class Tray:
         for popup in (self.flyout, self.menu):
             if popup:
                 popup.state_changed()
+        if self.taskbar:
+            self.taskbar.post()
         self.announce_failovers(state)
 
     def announce_failovers(self, state):
@@ -312,6 +321,8 @@ class Tray:
             for popup in (self.flyout, self.menu):
                 if popup:
                     popup.dismiss()
+            if self.taskbar:
+                self.taskbar.dismiss()
             self.icon.stop()
 
     def run(self, open_now=False):

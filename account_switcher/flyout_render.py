@@ -5,12 +5,13 @@ Pure Pillow; no windowing. Shapes are drawn at 2x on an opaque canvas and downsa
 Everything is in logical pixels times `scale`.
 """
 from functools import lru_cache
+import math
 import os
 from pathlib import Path
 import sys
 import time
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 ASSETS = Path(__file__).with_name("static") / "assets"
 PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
@@ -620,3 +621,197 @@ def hit_test(hits, x, y):
 def header_height():
     """Pinned flyouts can be dragged by the header strip (above the first section)."""
     return MARGIN + 50
+
+
+# ---------- taskbar view (Windows): one block per provider, drawn straight onto the taskbar ----------
+BLOCK_PAD, BLOCK_PAD_R = 12, 16   # generous on the right: the block sits in open taskbar space
+BLOCK_COL, BLOCK_GAP = 104, 16    # one column per limit
+THEMES = {
+    False: {"text": TEXT, "muted": MUTED, "faint": FAINT, "track": (255, 255, 255, 34),
+            "plate": (255, 255, 255, 10), "plate_hover": (255, 255, 255, 26),
+            "good": GOOD, "warn": WARN, "bad": BAD, "accent": ACCENT},
+    True: {"text": (26, 26, 26, 255), "muted": (84, 84, 84, 255), "faint": (104, 104, 104, 255),
+           "track": (0, 0, 0, 30), "plate": (0, 0, 0, 8), "plate_hover": (0, 0, 0, 20),
+           "good": (24, 138, 86, 255), "warn": (168, 116, 0, 255), "bad": (196, 58, 46, 255),
+           "accent": {"claude": (186, 92, 58, 255), "codex": (108, 88, 214, 255)}},
+}
+
+
+@lru_cache(maxsize=4)
+def dark_asset(name, px):
+    icon = asset(name, px)
+    dark = ImageOps.invert(icon.convert("RGB")).convert("RGBA")
+    dark.putalpha(icon.getchannel("A"))
+    return dark
+
+
+def short_email(name):
+    """daniel@gmail.com -> daniel@gmail: the user and the site, without the ending."""
+    user, at, domain = name.partition("@")
+    return f"{user}@{domain.split('.')[0]}" if at and domain else name
+
+
+def _block_level(theme, left):
+    return theme["good"] if left > 30 else theme["warn"] if left > 10 else theme["bad"]
+
+
+def block_row(L, account, fx, height, theme, x=0.0, columns=3):
+    """One account's content (icon, name, provider line, a column per limit) from x.
+    Returns its width, padding included."""
+    provider = account["provider"]
+    y1, bar_y, y3 = round(height * .3), height * .5, round(height * .74)
+    L.image(x + BLOCK_PAD, y1 - 8, provider + ("@dark" if theme is THEMES[True] and provider == "codex" else ""), 16)
+    name = fit(short_email(display_name(account)), 12, True, 170)
+    note = status_note(account)
+    title = dict(PROVIDERS)[provider] + (" · " + account["plan"] if account.get("plan") else "")
+    sub, sub_color = (note, theme["warn"]) if note else (title, theme["accent"][provider])
+    tx = x + BLOCK_PAD + 22
+    L.text(tx, y1, name, 12, theme["text"], bold=True)
+    L.text(tx, y3, sub, 10, sub_color)
+    x = tx + max(text_w(name, 12, True), text_w(sub, 10)) + BLOCK_GAP
+    windows = account["windows"][:columns]
+    if not windows:
+        label = "Usage not loaded yet"
+        L.text(x, height / 2, label, 11, theme["faint"])
+        return math.ceil(x + text_w(label, 11) + BLOCK_PAD_R)
+    for i, window in enumerate(windows):
+        if i:
+            x += BLOCK_COL + BLOCK_GAP
+        left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
+        shown = remaining(window["used"])
+        color = _block_level(theme, shown)
+        right = x + BLOCK_COL
+        L.text(x, y1 - 2, short_label(window), 11, theme["muted"])
+        L.text(right, y1 - 2, " left", 10, theme["faint"], anchor="rm")
+        L.text(right - text_w(" left", 10), y1 - 2, f"{shown:.0f}%", 11, color, bold=True, anchor="rm")
+        L.rect(x, bar_y - 1.5, BLOCK_COL, 3, 1.5, theme["track"])
+        if left > 0.5:
+            L.rect(x, bar_y - 1.5, max(3, BLOCK_COL * left / 100), 3, 1.5, _block_level(theme, left))
+        if window.get("resetsAt"):
+            full = "resets in " + until(window["resetsAt"])
+            if text_w(full, 10) <= BLOCK_COL:
+                L.text(x, y3, full, 10, theme["faint"])
+            else:
+                L.icon("clock", x + 4, y3, 3.5, theme["faint"])
+                L.text(x + 11, y3, until(window["resetsAt"]), 10, theme["faint"])
+    return math.ceil(x + BLOCK_COL + BLOCK_PAD_R)
+
+
+def block_accounts(state, provider, fx):
+    """The accounts a provider's block draws: the one in use, plus one sliding out mid-swap."""
+    return [a for a in state["accounts"] if a["provider"] == provider
+            and (a["active"] or fx.get(("active", a["id"]), 0.0) > 0.01)]
+
+
+def block_width(state, provider, height=44, light=False, columns=3):
+    """Resting width of a provider's block (the account in use), or 0 when none is in use."""
+    account = next((a for a in state["accounts"] if a["provider"] == provider and a["active"]), None)
+    return block_row(Layout(), account, {}, height, THEMES[light], columns=columns) if account else 0
+
+
+def build_block(state, provider, fx=None, hover=None, height=44, light=False, width=None, columns=3):
+    """Lay out one provider's taskbar block. Returns (layout, width).
+
+    Swapping works like the compact panel: the old account slides out to the left and fades,
+    then the new one slides in from the right; `width` (animated by the host) glides between
+    the two accounts' widths."""
+    theme, fx = THEMES[light], fx or {}
+    L = Layout()
+    width = width or block_width(state, provider, height, light, columns) or 120
+    hov = fx.get(("hover", "open"), 1.0 if hover == "open" else 0.0)
+    L.rect(0, 0, width, height, 6, mix(theme["plate"], theme["plate_hover"], hov))
+    for account in block_accounts(state, provider, fx):
+        t = fx.get(("active", account["id"]), 1.0 if account["active"] else 0.0)
+        alpha = max(0.0, 2 * t - 1)
+        if alpha <= 0.01:
+            continue
+        marks = (len(L.shapes), len(L.texts), len(L.images), len(L.hits))
+        block_row(L, account, fx, height, theme, columns=columns)
+        if not account["eligible"]:
+            dim_row(L, marks[:3])
+        if t < 0.999:
+            move_row(L, marks, min(1.0, 2 * (1 - t)) * 36 * (1 if account["active"] else -1), alpha)
+    L.hit(0, 0, width, height, "open")
+    return L, width
+
+
+def _mask_blit(canvas, mask, x, y, fill):
+    """Composite a solid colour through a coverage mask at (x, y), clipped to the canvas."""
+    if x + mask.width <= 0 or y + mask.height <= 0:
+        return
+    if x < 0 or y < 0:
+        mask = mask.crop((max(0, -x), max(0, -y), mask.width, mask.height))
+        x, y = max(0, x), max(0, y)
+    if mask.width <= 0 or mask.height <= 0 or x >= canvas.width or y >= canvas.height:
+        return
+    if fill[3] < 255:
+        mask = mask.point(lambda v, a=fill[3]: v * a // 255)
+    layer = Image.new("RGBA", mask.size, fill[:3] + (255,))
+    layer.putalpha(mask)
+    canvas.alpha_composite(layer, (x, y))
+
+
+def paint_clear(layout, width, height, scale):
+    """Rasterise a layout onto a transparent canvas (no panel, no shadow): each shape, text and
+    image is composited properly, so translucent pieces blend with the taskbar behind them."""
+    canvas = Image.new("RGBA", (max(1, round(width * scale)), max(1, round(height * scale))), (0, 0, 0, 0))
+    big = scale * SS
+    for op in layout.shapes:
+        kind, fill = op[0], op[-1]
+        if fill[3] <= 0:
+            continue
+        if kind == "rect":
+            _, x, y, w, h, r, _ = op
+            box = (x, y, x + w, y + h)
+        elif kind == "ellipse":
+            _, x1, y1, x2, y2, _ = op
+            box = (x1, y1, x2, y2)
+        else:  # clock
+            _, cx, cy, r, _ = op
+            box = (cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1)
+        left, top = int(box[0] * scale) - 1, int(box[1] * scale) - 1
+        size = (int(box[2] * scale) + 2 - left, int(box[3] * scale) + 2 - top)
+        mask = Image.new("L", (size[0] * SS, size[1] * SS), 0)
+        d = ImageDraw.Draw(mask)
+        P = lambda v, o: v * big - o * SS
+        if kind == "rect":
+            coords = (P(x, left), P(y, top), P(x + w, left) - 1, P(y + h, top) - 1)
+            d.rounded_rectangle(coords, r * big, fill=255) if r else d.rectangle(coords, fill=255)
+        elif kind == "ellipse":
+            d.ellipse((P(x1, left), P(y1, top), P(x2, left), P(y2, top)), fill=255)
+        else:
+            line = max(1, round(1.4 * big))
+            cx, cy, rr = P(cx, left), P(cy, top), r * big
+            d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=255, width=line)
+            d.line((cx, cy - rr * .55, cx, cy, cx + rr * .45, cy + rr * .3), fill=255, width=line, joint="curve")
+        _mask_blit(canvas, mask.reduce(SS), left, top, fill)
+    for x, y, name, size, *faded in layout.images:
+        # "@dark": a light mark (Codex), darkened for a light taskbar
+        icon = dark_asset(name[:-5], round(size * scale)) if name.endswith("@dark") else asset(name, round(size * scale))
+        alpha = faded[0] if faded else 1.0
+        if alpha < 1:
+            icon = icon.copy()
+            icon.putalpha(icon.getchannel("A").point(lambda v: round(v * max(0.0, alpha))))
+        px, py = round(x * scale), round(y * scale)
+        if px + icon.width <= 0 or px >= canvas.width:
+            continue
+        if px < 0:
+            icon, px = icon.crop((-px, 0, icon.width, icon.height)), 0
+        if px < canvas.width:
+            canvas.alpha_composite(icon, (px, max(0, py)))
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    for x, y, value, size, bold, fill, anchor in layout.texts:
+        if fill[3] <= 0:
+            continue
+        f = font(size, bold, scale)
+        box = probe.textbbox((x * scale, y * scale), value, font=f, anchor=anchor)
+        left, top = int(box[0]) - 1, int(box[1]) - 1
+        mask = Image.new("L", (int(box[2]) + 2 - left, int(box[3]) + 2 - top), 0)
+        ImageDraw.Draw(mask).text((x * scale - left, y * scale - top), value, font=f, fill=255, anchor=anchor)
+        _mask_blit(canvas, mask, left, top, fill)
+    return canvas, list(layout.hits)
+
+
+def render_block(state, provider, hover=None, scale=1.0, fx=None, height=44, light=False, width=None, columns=3):
+    layout, width = build_block(state, provider, fx, hover, height, light, width, columns)
+    return paint_clear(layout, width, height, scale)

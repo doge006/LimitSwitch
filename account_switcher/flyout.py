@@ -164,7 +164,7 @@ class OutsideClicks:
             if code >= 0 and wparam in PRESSES:
                 info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                 point = (info.pt.x, info.pt.y)
-                for popup in list(Popup._windows.values()):
+                for popup in [p for p in Popup._windows.values() if p.modal]:
                     if not popup.contains(point):
                         popup.outside_press(point, PRESSES[wparam])
         except Exception:
@@ -308,6 +308,8 @@ class Popup:
         self.fx, self.fx_anims = {}, {}   # animated values and their running transitions
 
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
+    modal = True             # closes on a click elsewhere, hides the tray tooltip (not the taskbar blocks)
+    ex_style = 0
     dismiss_on_deactivate = True
     minute_ticks = False
     FX_SECONDS = {"hover": 0.12, "toggle": 0.18, "active": 0.4, "bar": 0.45}
@@ -353,8 +355,9 @@ class Popup:
 
     def contains(self, point):
         """Is a screen point on the visible panel (not its shadow)?"""
-        x = (point[0] - self.x) / self.scale
-        y = (point[1] - self.y) / self.scale
+        return self.on_panel((point[0] - self.x) / self.scale, (point[1] - self.y) / self.scale)
+
+    def on_panel(self, x, y):
         return panel_contains(x, y, self.size[0] / self.scale, self.size[1] / self.scale)
 
     def outside_press(self, point, button):
@@ -387,7 +390,7 @@ class Popup:
         self.x, self.y, self.slide = self.position(*image.size)
         Popup._creating = self
         try:
-            self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, CLASS_NAME,
+            self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | self.ex_style, CLASS_NAME,
                                                "Account Switcher", WS_POPUP, self.x, self.y, *image.size,
                                                None, None, kernel32.GetModuleHandleW(None), None)
         finally:
@@ -396,7 +399,8 @@ class Popup:
             log.error("CreateWindowExW failed: %s", ctypes.get_last_error())
             return
         Popup._windows[self.hwnd] = self
-        self.tray.popup_visible(True)
+        if self.modal:
+            self.tray.popup_visible(True)
         self.closing = False
         self.opened_at = time.monotonic()
         self._push(image, 0)
@@ -408,7 +412,8 @@ class Popup:
                 self.focus_delay = 0
             else:
                 force_foreground(self.hwnd)
-        OutsideClicks.start()
+        if self.modal:
+            OutsideClicks.start()
         if self.minute_ticks:
             user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self._animate(0.0, 1.0, 0.17)
@@ -566,7 +571,7 @@ class Popup:
             return 1
         if msg == WM_LBUTTONDOWN:
             x, y = self._logical(lparam)
-            if not panel_contains(x, y, self.size[0] / self.scale, self.size[1] / self.scale):
+            if not self.on_panel(x, y):
                 self.close()  # a click on the soft shadow means "somewhere else"
                 return 0
             self.pressed = fr.hit_test(self.hits, x, y)
@@ -592,9 +597,10 @@ class Popup:
             for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS):
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
-            if not Popup._windows:
+            if not any(popup.modal for popup in Popup._windows.values()):
                 OutsideClicks.stop()
-                self.tray.popup_visible(False)
+                if self.modal:
+                    self.tray.popup_visible(False)
         self.anim, self.tracking, self.closing = None, False, False
         self.fx_anims = {}
 
@@ -632,6 +638,7 @@ class Flyout(Popup):
         self.pinned = False
         self.pending = None   # account id being switched to
         self.armed = None     # account id clicked once: the next click on it switches
+        self.origin = None    # screen rect it opens from when not the tray icon (a taskbar block)
 
     @property
     def dismiss_on_deactivate(self):
@@ -639,6 +646,11 @@ class Flyout(Popup):
 
     def prepare(self):
         self.tray.poke()  # fetch fresh usage if the numbers are older than a minute
+        if self.origin:  # opened from a taskbar block: above it
+            box, self.origin = self.origin, None
+            self.anchor, self.icon_box = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), box
+            self.monitor, self.work, self.scale = monitor_at(*self.anchor)
+            return
         rect = icon_rect(getattr(self.tray, "icon", None))
         self.anchor = ((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) if rect else cursor()
         ax, ay = self.anchor
@@ -741,6 +753,8 @@ class TrayMenu(Popup):
                 "-",
                 {"action": "toggle:autoSwap", "label": "Auto swap", "checked": state["autoSwap"], "enabled": not state["busy"]},
                 {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]}]
+        if getattr(self.tray, "taskbar", None):
+            rows += ["-", {"action": "toggle:taskbar", "label": "Taskbar view", "checked": state.get("taskbar", True)}]
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
     opener = "right"
@@ -763,9 +777,12 @@ class TrayMenu(Popup):
         tray = self.tray
         if action.startswith("toggle:"):  # toggles keep the menu open, showing the new state
             key = action[7:]
-            prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
-            prefs[key] = not prefs[key]
-            tray.act("preferences", prefs)
+            if key == "taskbar":
+                tray.act("taskbar", {"on": not tray.state.get("taskbar", True)})
+            else:
+                prefs = {"autoSwap": tray.state["autoSwap"], "afk": tray.state["afk"]}
+                prefs[key] = not prefs[key]
+                tray.act("preferences", prefs)
             tray.state = tray.controller.snapshot()
             self.redraw()
             return

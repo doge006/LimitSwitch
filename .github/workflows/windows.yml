@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   smoke:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]  # Windows 10 and Windows 11 style taskbars
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +32,7 @@ jobs:
         run: |
           [ -d shots ] || exit 0
           cd shots
-          git init -q -b ci-shots/windows
+          git init -q -b ci-shots/${{ matrix.os }}
           git -c user.name=ci -c user.email=ci@example.com add -A
           git -c user.name=ci -c user.email=ci@example.com commit -qm "screenshots ${{ github.sha }}"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-shots/windows"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-shots/${{ matrix.os }}"
