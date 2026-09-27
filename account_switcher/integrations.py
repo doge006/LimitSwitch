@@ -289,13 +289,9 @@ class Integrations:
 
 
 def launcher():
-    """Command that starts the app quietly: windowless Python running AccountSwitcher.pyw."""
-    python = Path(sys.executable)
-    windowless = python.with_name("pythonw.exe")
-    if windowless.exists():
-        python = windowless
-    script = Path(__file__).resolve().parent.parent / "AccountSwitcher.pyw"
-    return f'"{python}" "{script}"'
+    """Command that starts the app quietly (the portable exe, or pythonw running AccountSwitcher.pyw)."""
+    from .version import launcher as command
+    return command()
 
 
 LAUNCH_AGENT = "com.accountswitcher.app"

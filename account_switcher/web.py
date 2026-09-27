@@ -43,6 +43,26 @@ class Controller:
         # Account ids the user picked by hand (panel, full view or reset), so the tray can tell
         # those apart from automatic failovers worth a notification.
         self.manual_swaps = set()
+        from .version import VERSION
+        self.update = {"current": VERSION, "latest": None, "available": False, "checking": False, "error": None}
+        self.quit_app = None             # the host's quit (an update that swaps files needs the app closed)
+        self.on_update_available = None  # the host's notification, once per version
+
+    def check_updates(self, announce=True):
+        """Any thread: ask GitHub Releases for a newer version (at launch, and from Settings)."""
+        from . import updates
+        with self.condition:
+            if self.update.get("checking"):
+                return
+            self.update = dict(self.update, checking=True, error=None)
+        self.notify("changed", None)
+        result = updates.check()
+        with self.condition:
+            previous = self.update.get("latest")
+            self.update = dict(result, checking=False)
+        self.notify("changed", None)
+        if announce and result.get("available") and result.get("latest") != previous and self.on_update_available:
+            self.on_update_available(result["latest"])
 
     def notify(self, kind, value):
         with self.condition:
@@ -110,6 +130,7 @@ class Controller:
                 "taskbarDisplays": list(self.taskbar_displays),
                 "taskbarAvailable": self.taskbar_available,
                 "nameMode": name_mode,
+                "update": dict(self.update),
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -119,11 +140,30 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
             self.notify("changed", None)
+            return
+        if action == "checkUpdate":  # Settings: Check for updates
+            threading.Thread(target=self.check_updates, kwargs={"announce": False}, daemon=True).start()
+            return
+        if action == "installUpdate":  # Settings: Update now
+            if not self.update.get("available"):
+                raise ValueError("No update to install")
+            self.update = dict(self.update, installing=True)
+            self.notify("changed", None)
+
+            def install():
+                from . import updates
+                error = updates.install(self.update)
+                if error:
+                    self.update = dict(self.update, installing=False, error=error)
+                    self.notify("log", "Update failed: " + error)
+                elif self.quit_app and self.update.get("kind") == "portable":
+                    self.quit_app()  # the new files go in once the app has closed; it starts again by itself
+            threading.Thread(target=install, daemon=True).start()
             return
         if action == "startup":  # start at sign-in (Windows Run entry / macOS login item); instant
             if not self.live:

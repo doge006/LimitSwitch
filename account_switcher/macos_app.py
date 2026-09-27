@@ -143,7 +143,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             self.popover.setAppearance_(dark)  # the dark panel design, like the Windows tray
         self.popover.setAnimates_(True)
         self.popover.setDelegate_(self)
-        self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the dashboard's Quit
+        self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
+        self.controller.quit_app = lambda: AppHelper.callAfter(self.quit_, None)
+        self.controller.on_update_available = lambda version: notify(
+            APP, f"Version {version} is available. Update from the full view's Settings.")
         self.server.show = lambda: AppHelper.callAfter(self.showFullView_, None)  # opened again (Spotlight, Finder)
         self.refresh()
         threading.Thread(target=self.watch, daemon=True).start()

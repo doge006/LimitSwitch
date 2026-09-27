@@ -1,0 +1,55 @@
+name: Release
+
+# Builds the portable Windows copy, tests it (the exe starts, the full view opens, install.ps1
+# installs it) and publishes it as release v<version> (account_switcher/version.py).
+on:
+  workflow_dispatch:  # manual only
+    inputs:
+      publish:
+        description: "Publish the release (off: build and test only)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Version
+        id: version
+        run: |
+          $v = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v"
+      - name: Build the portable copy
+        run: ./scripts/build_portable.ps1
+      - name: Install it with install.ps1 and run it (demo accounts)
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'installed'
+          ./install.ps1 -Zip build/AccountSwitcher-windows.zip -Dir $dir -NoStart
+          if (-not (Test-Path "$dir\Account Switcher.exe")) { throw 'install.ps1 did not install the exe' }
+          if (-not (Test-Path "$dir\runtime\pythonw.exe")) { throw 'no bundled Python' }
+          Start-Process -FilePath "$dir\Account Switcher.exe" -ArgumentList '--demo', '--show'
+          $url = "$dir\.runtime\tray.url"
+          foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
+          if (-not (Test-Path $url)) { throw 'the app did not start' }
+          Start-Sleep 4
+          python .github/release_check.py $dir
+      - name: Publish
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          gh release view "v$v" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "v$v is already released: bump VERSION in account_switcher/version.py" }
+          gh release create "v$v" build/AccountSwitcher-windows.zip --title "Account Switcher $v" --generate-notes --target "${{ github.sha }}"

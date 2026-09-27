@@ -11,6 +11,7 @@ menu are rebuilt only when what they show actually changes.
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 import sys
 import threading
@@ -96,16 +97,41 @@ def icon_image(status):
 
 # ---------- full view ----------
 def app_version():
-    """The commit this copy runs (from .git, no git needed), for app.log."""
-    git = Path(__file__).resolve().parent.parent / ".git"
+    """This copy's version, and the commit for a git copy, for app.log."""
+    from .version import ROOT, VERSION
+    git = ROOT / ".git"
     try:
         head = (git / "HEAD").read_text().strip()
         if head.startswith("ref: "):
             ref = git / head[5:]
             head = ref.read_text().strip() if ref.exists() else head[5:]
-        return head[:7]
+        return f"{VERSION} ({head[:7]})"
     except OSError:
-        return "unknown"
+        return VERSION
+
+
+def start_menu_shortcut():
+    """A portable copy adds itself to the Start menu on its first run (and fixes the shortcut if the
+    folder moved). One PowerShell call, only when the shortcut is missing or points elsewhere."""
+    from .version import ROOT, install_kind
+    if sys.platform != "win32" or install_kind() != "portable":
+        return
+    programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    link, exe = programs / "Account Switcher.lnk", ROOT / "Account Switcher.exe"
+    marker = ROOT / ".runtime" / "shortcut"
+    try:
+        if link.exists() and marker.exists() and marker.read_text(encoding="utf-8") == str(exe):
+            return
+        script = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:AS_LINK); $s.TargetPath = $env:AS_EXE; "
+                  "$s.WorkingDirectory = $env:AS_DIR; $s.Description = 'Claude Code and Codex usage limits and account switching'; $s.Save()")
+        import subprocess
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], check=True, timeout=30,
+                       env=dict(os.environ, AS_LINK=str(link), AS_EXE=str(exe), AS_DIR=str(ROOT)),
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), capture_output=True)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(exe), encoding="utf-8")
+    except Exception:  # never stop the app over a shortcut
+        logging.getLogger("account_switcher").warning("Start menu shortcut", exc_info=True)
 
 
 def show_running(url):
@@ -158,8 +184,11 @@ class Tray:
                 icon_factory = pystray.Icon
         self.icon = icon_factory("account-switcher", icon_image(tray_level(self.state)),
                                  tooltip(self.state), pystray.Menu(self.menu_items))
-        # The dashboard's "Quit" button quits the tray too.
+        # The API's shutdown (and an update that swaps the app's files) quits the tray too.
         server.quit = self.quit
+        controller.quit_app = self.quit
+        controller.on_update_available = lambda version: self.icon.notify(
+            f"Version {version} is available. Update from the full view's Settings.", APP)
         # Opened again (Start menu, shortcut): this copy opens the full view, so it is sized by
         # the DPI-aware process and an open one is brought to the front instead of a second one.
         server.show = self.open_full_view
@@ -347,12 +376,14 @@ def main(argv=None):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
+    threading.Thread(target=start_menu_shortcut, daemon=True).start()
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
     write_url_file(args.url_file, server.launch_url)
     # A long poll interval: the loop never has to exit on its own because quitting
     # goes through the tray, so this thread just sleeps between connections.
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 60}, daemon=True).start()
+    threading.Thread(target=controller.check_updates, daemon=True, name="update-check").start()  # once, at launch
     integrations = None
     if controller.live:  # route Codex through the app, and the Claude AFK hook
         from .integrations import Integrations

@@ -688,7 +688,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and len(displays) > 1
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (38 if chooser else 0)
+    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (38 if chooser else 0) + 52
     c = panel(image, scale, x, y, w, h)
     hits = []
     ry = y + 8
@@ -728,6 +728,37 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                 c.text(cx + bw / 2, ry + 15, label, 12, TEXT if hot else MUTED, anchor="mm", bg=base)
             hits.append(((cx, ry + 2, bw, 26), "display:" + d["id"], "hand"))
             cx += bw + 6
+    # Version and updates
+    ry = y + h - 52
+    c.line(x + 14, ry + 2, w - 28, LINE)
+    update = state.get("update") or {}
+    c.text(x + 16, ry + 28, "Version " + str(update.get("current") or ""), 12, MUTED, anchor="lm")
+    if update.get("installing"):
+        label, action, primary = "Updating…", None, True
+    elif update.get("available"):
+        label, action, primary = f"Update to {update.get('latest')}", "update:install", True
+    elif update.get("checking"):
+        label, action, primary = "Checking…", None, False
+    elif update.get("error"):
+        label, action, primary = update["error"] + " · Retry", "update:check", False
+    elif update.get("latest"):
+        label, action, primary = "Up to date · Check again", "update:check", False
+    else:
+        label, action, primary = "Check for updates", "update:check", False
+    bw = fr.text_w(label, 12, primary) + 24
+    bx = x + w - 14 - bw
+    hot = bool(action) and ui.hover == action
+    if primary:
+        fill = GOOD if not hot else blend((255, 255, 255), GOOD, .1)
+        c.rect(bx, ry + 14, bw, 28, 7, fill + (255,))
+        c.text(bx + bw / 2, ry + 28, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
+    else:
+        base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
+        c.rect(bx, ry + 14, bw, 28, 7, base + (255,))
+        c.outline(bx, ry + 14, bw, 28, 7, LINE_STRONG)
+        c.text(bx + bw / 2, ry + 28, label, 12, TEXT if action else MUTED, anchor="mm", bg=base)
+    if action:
+        hits.append(((bx, ry + 14, bw, 28), action, "hand"))
     return (x, y, w, h), hits
 
 
