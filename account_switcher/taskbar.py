@@ -8,7 +8,7 @@ click opens the panel above the block, a right-click opens the menu.
 Nothing polls. The layout is worked out again only when the taskbar can have changed
 (a window opened or closed, display or theme settings changed, Explorer restarted) and once
 a minute with the reset times. The blocks are owned by the taskbar, so Windows keeps them
-just above it, and they hide with it when a full-screen app takes over (see follow_taskbar);
+just above it, and they hide while an app is full screen on that display (see follow_taskbar);
 screenshot tools and other overlays never make them hide and come back.
 """
 import ctypes
@@ -52,6 +52,10 @@ sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
 shell32 = ctypes.WinDLL("shell32")
 sig(shell32.SHAppBarMessage, ctypes.c_size_t, wintypes.DWORD, ctypes.POINTER(APPBARDATA))
+sig(shell32.SHQueryUserNotificationState, ctypes.c_long, ctypes.POINTER(ctypes.c_int))
+sig(user32.GetAncestor, wintypes.HWND, wintypes.HWND, wintypes.UINT)
+WS_EX_TOOLWINDOW = 0x80
+SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
 
 
 def window_rect(hwnd):
@@ -189,6 +193,30 @@ def taskbars():
         suffix = f" {counts[side]}" if counts[side] > 1 else ""
         found.append((hwnd, side + suffix.replace(" ", "-"), f"{side.title()} display{suffix}"))
     return found
+
+
+def full_screen_app(bar_rect):
+    """Is an app full screen on the display with this taskbar? The foreground app window covering
+    the whole display (games, video, a browser's F11: Explorer does not always lower the taskbar for
+    these), or Windows reporting a full-screen Direct3D app or presentation mode. Screenshot tools
+    and other overlays are tool windows without a taskbar button, so they don't count."""
+    state = ctypes.c_int()
+    if shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0 and state.value in (3, 4):
+        return True  # QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+    window = user32.GetForegroundWindow()
+    if not window:
+        return False
+    window = user32.GetAncestor(window, 2) or window  # GA_ROOT
+    name = ctypes.create_unicode_buffer(40)
+    user32.GetClassNameW(window, name, 40)
+    if name.value in SHELL_CLASSES or user32.GetWindowLongW(window, -20) & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE):
+        return False
+    rect = window_rect(window)
+    if not rect:
+        return False
+    screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
+    return (rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right
+            and rect[3] >= screen.bottom)
 
 
 def read_bar(hwnd, key="main", label="Main display"):
@@ -393,13 +421,15 @@ class TaskbarView:
                 user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
 
     def follow_taskbar(self):
-        """Hide with the taskbar when a full-screen app takes over, and come back with it.
+        """Hide when an app is full screen on the taskbar's display, and come back after.
 
-        Explorer takes the taskbar out of the always-on-top band for a full-screen app; windows
-        that merely cover the screen on top of it (screenshot tools, overlays) leave it alone,
-        so they never make the blocks hide. Instant, with no fade: the taskbar does not fade."""
+        Explorer takes the taskbar out of the always-on-top band for most full-screen apps; for
+        the rest (borderless games, video, a browser's F11) the foreground window covering the
+        display counts too. Screenshot tools and overlays are tool windows, so they never make
+        the blocks hide. Instant, with no fade: the taskbar does not fade."""
         bar = self.bar
-        covered = bool(bar and user32.IsWindow(bar.hwnd) and not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST)
+        covered = bool(bar and user32.IsWindow(bar.hwnd)
+                       and (not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST or full_screen_app(bar.rect)))
         if covered == self.covered:
             return
         self.covered = covered

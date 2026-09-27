@@ -2,6 +2,11 @@ name: macOS app
 
 on:
   workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
+    inputs:
+      os:
+        description: "One runner (e.g. macos-15) to spend a third of the minutes; empty for all"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -11,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-26, macos-latest]  # latest: the newest macOS GitHub offers (27 once available)
+        os: ${{ inputs.os && fromJSON(format('["{0}"]', inputs.os)) || fromJSON('["macos-15", "macos-26", "macos-latest"]') }}  # latest: the newest macOS GitHub offers
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

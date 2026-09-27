@@ -5,7 +5,7 @@
   WKWebView over the popover's own material). Drag it away from the menu bar and it detaches
   into its own floating window: the Mac version of "pop out".
 - Right-click (or Control-click): a native menu.
-- Full View: a native window with the dashboard.
+- Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit).
 - Notifications when Auto swap moves an account.
 No Dock icon (accessory app). Built on PyObjC (pyobjc-framework-Cocoa and -WebKit).
 """
@@ -107,6 +107,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.state = controller.snapshot()
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
         self.full_window = None
+        self.canvas = None
         self.float_panel = self.float_view = None  # the popped-out panel
         self.panel_size = [PANEL_WIDTH, 420]
         self.float_size = [PANEL_WIDTH, 420]
@@ -249,6 +250,14 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         # Back to a menu bar app: no Dock icon once the full view is closed (not the popped-out panel).
         if note.object() == self.full_window:
             AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
+            if getattr(self, "canvas", None) is not None:  # closed, not hidden: free its drawing
+                self.canvas.close()
+                self.canvas = None
+                AppHelper.callAfter(self.forget_full_window)
+
+    @objc.python_method
+    def forget_full_window(self):
+        self.full_window = None  # the next Full view makes a fresh one
 
     def popoverShouldDetach_(self, _popover):
         return True  # drag it off the menu bar to keep it open as a floating panel
@@ -390,7 +399,15 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
             window.setReleasedWhenClosed_(False)
             window.setMinSize_(NSMakeSize(600, 400))
-            window.setContentView_(web_view(self.url, NSMakeRect(0, 0, width, height)))
+            try:  # drawn natively like the Windows one (no WebKit); the web page is the fallback
+                from .fullview_mac import FullViewCanvas
+                self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
+                    NSMakeRect(0, 0, width, height), self.controller, self.state)
+                window.setContentView_(self.canvas)
+            except Exception:
+                log.exception("native full view unavailable")
+                self.canvas = None
+                window.setContentView_(web_view(self.url, NSMakeRect(0, 0, width, height)))
             window.center()
             window.setFrameAutosaveName_("AccountSwitcherFullView.v2")  # remembers the user's size from here on
             window.setDelegate_(self)
@@ -416,6 +433,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
                 image.setTemplate_(True)
                 self.item.button().setImage_(image)
         self.item.button().setToolTip_(tooltip(state))
+        if getattr(self, "canvas", None) is not None:
+            self.canvas.set_state(state)
         self.announce_failovers(state)
 
     @objc.python_method

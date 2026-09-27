@@ -400,6 +400,16 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})  # reported again: no second wake or switch
         self.assertEqual(self.claude.read_live().email, "b@example.com")
 
+    def test_a_limit_marks_the_account_used_up_when_the_api_cannot_say(self):
+        self.manager.meta["autoSwap"] = False
+        self.gateway.set_afk(True)
+        current = self.manager.active["claude"]
+        self.manager.meta["accounts"][current]["backoffUntil"] = time.time() + 600  # rate limited
+        self.manager.claude_limit("s1")
+        account = next(a for a in self.manager.accounts() if a.id == current)
+        self.assertFalse(account.eligible)
+        self.assertEqual(max(w["used"] for w in account.windows()), 100.0)
+
     def test_waits_for_a_reset_when_no_account_has_room(self):
         self.gateway.set_afk(True)
         self.api.claude_usage["at-b"] = claude_usage(100, 10, reset_in=1800)

@@ -432,6 +432,26 @@ class LiveAccounts:
         self.swap(best.id, reason="auto")
         return best.id
 
+    def mark_used_up(self, account_id):
+        """A turn just ended on a usage limit: show the account's fullest window as used up (the
+        5-hour one when nothing is known), until real numbers say otherwise."""
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id)
+            if entry is None:
+                return
+            usage = [dict(w) for w in entry.get("usage") or []]
+            windows = [w for w in usage if w.get("scope", "account") == "account"]
+            if any(w.get("used", 0) >= 100 for w in windows):
+                return
+            window = max(windows, key=lambda w: w.get("used", 0), default=None)
+            if window is None:
+                window = {"key": "five_hour", "label": "5-hour", "scope": "account", "resetsAt": None}
+                usage.insert(0, window)
+            window["used"] = 100.0
+            entry["usage"] = usage
+            entry.pop("liveAt", None)  # and ask the API again at its normal pace
+        self.notify("accounts", None)
+
     def usable(self, account_id):
         account = next((a for a in self.accounts() if a.id == account_id), None)
         return account is not None and account.eligible and not account.status
@@ -468,6 +488,10 @@ class LiveAccounts:
                     changed = True
                 if window is None or minutes <= 0:
                     continue  # only windows the account really has (headers may report others)
+                same_window = reset is not None and window.get("resetsAt") is not None \
+                    and abs(window["resetsAt"] - reset) < 120
+                if same_window and used < window.get("used", 0.0):
+                    continue  # usage never goes down within a window: this report is older than what we have
                 if round(window.get("used", -1)) != round(used) or window.get("resetsAt") != reset:
                     changed = True
                 window.update(used=float(used), resetsAt=reset)
@@ -475,6 +499,7 @@ class LiveAccounts:
             entry["updatedAt"] = time.time()
         if changed:
             self.notify("accounts", None)
+        return changed
 
     def statusline(self, limits):
         """Live usage from a Claude Code status line (rate_limits), for the account signed in to
@@ -495,8 +520,10 @@ class LiveAccounts:
                     reset = window.get("resets_at")
                     windows.append((minutes, float(window["used_percentage"]),
                                     float(reset) if isinstance(reset, (int, float)) else None))
-            if windows:
-                self.observe(account_id, windows, add=True)
+            # Claude Code repeats its last numbers with every reply, also after a limit when it gets
+            # no new ones. Only a report that changes something counts as live; otherwise the API
+            # goes back to its normal pace and catches what the status line misses.
+            if windows and self.observe(account_id, windows, add=True):
                 with self.lock:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
@@ -534,7 +561,10 @@ class LiveAccounts:
             return {"action": "stop"}  # the same limit reported twice: the session is already continuing
         if len(state["continues"]) >= 3:  # something keeps failing: do not loop
             return {"action": "wait", "seconds": 900}
+        before = (self.meta["accounts"].get(current) or {}).get("apiAt")
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
+        if (self.meta["accounts"].get(current) or {}).get("apiAt") == before:
+            self.mark_used_up(current)  # none (rate limited, offline): the limit itself says it's used up
         self.on_limit()
         best = self._best_other("claude", current, allow_unknown=True) if auto else None
         if best is not None:

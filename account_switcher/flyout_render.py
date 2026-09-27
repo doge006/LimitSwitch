@@ -79,19 +79,48 @@ def status_note(account):
 
 
 # ---------- fonts & images ----------
+@lru_cache(maxsize=1)
 def _font_files():
+    """(regular, semibold) font files: Segoe UI on Windows, San Francisco on macOS, the desktop's
+    own sans-serif on Linux (fontconfig), DejaVu as the last resort."""
     if sys.platform == "win32":
         fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
         return fonts / "segoeui.ttf", fonts / "seguisb.ttf"
+    if sys.platform == "darwin":
+        for name in ("SFNS.ttf", "SFNSText.ttf"):
+            path = Path("/System/Library/Fonts") / name
+            if path.exists():
+                return path, path  # a variable font: its Semibold instance is picked in font()
+        helvetica = Path("/System/Library/Fonts/HelveticaNeue.ttc")
+        return helvetica, helvetica
     dejavu = Path("/usr/share/fonts/truetype/dejavu")
-    return dejavu / "DejaVuSans.ttf", dejavu / "DejaVuSans-Bold.ttf"
+    found = []
+    for pattern in ("sans-serif", "sans-serif:weight=200"):  # 200: fontconfig's semibold
+        try:
+            import subprocess
+            path = subprocess.run(["fc-match", "-f", "%{file}", pattern], capture_output=True, text=True,
+                                  timeout=3).stdout.strip()
+            found.append(Path(path) if path and Path(path).exists() else None)
+        except (OSError, subprocess.SubprocessError):
+            found.append(None)
+    return found[0] or dejavu / "DejaVuSans.ttf", found[1] or dejavu / "DejaVuSans-Bold.ttf"
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=64)
 def font(size, bold, scale):
     regular, semibold = _font_files()
+    path = semibold if bold else regular
     try:
-        return ImageFont.truetype(str(semibold if bold else regular), round(size * scale))
+        if path.suffix == ".ttc" and bold:
+            face = ImageFont.truetype(str(path), round(size * scale), index=1)  # Helvetica Neue Bold... close enough
+        else:
+            face = ImageFont.truetype(str(path), round(size * scale))
+        if regular == semibold and path.suffix == ".ttf":
+            try:  # one variable font (San Francisco): pick the weight
+                face.set_variation_by_name("Semibold" if bold else "Regular")
+            except (OSError, ValueError, AttributeError):
+                pass
+        return face
     except OSError:
         return ImageFont.load_default(round(size * scale))
 
