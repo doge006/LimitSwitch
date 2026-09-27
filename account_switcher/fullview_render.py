@@ -87,9 +87,12 @@ def clock_12h():
         return False
 
 
+CLOCK_24 = None  # the Settings switch: True / False, or None to follow the system
+
+
 def clock(ts):
     t = time.localtime(ts)
-    if clock_12h():
+    if (not CLOCK_24) if CLOCK_24 is not None else clock_12h():
         return time.strftime("%I:%M %p", t).lstrip("0")
     return time.strftime("%H:%M", t)
 
@@ -359,7 +362,7 @@ def card_key(account, ui, name_mode, live, locked):
     editing = ui.editing if ui.editing and ui.editing[0] == aid else None
     fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
     return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
-                       name_mode, live, locked, int(time.time() // 60)], sort_keys=True, default=str)
+                       name_mode, live, locked, CLOCK_24, int(time.time() // 60)], sort_keys=True, default=str)
 
 
 def draw_card(account, w, h, scale, ui, name_mode, live, locked):
@@ -673,7 +676,8 @@ def toggle(c, x, y, pos, hot, bg):
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
-            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"))
+            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
+            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):

@@ -217,3 +217,26 @@ class HostTimerTests(unittest.TestCase):
                       if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "TIMERS")
         self.assertTrue(used)
         self.assertEqual(used - set(timers), set())
+
+
+class ClockTests(unittest.TestCase):
+    def test_24_hour_setting_overrides_the_system(self):
+        stamp = time.mktime((2026, 9, 27, 14, 30, 0, 0, 0, -1))
+        try:
+            vr.CLOCK_24 = True
+            self.assertEqual(vr.clock(stamp), "14:30")
+            vr.CLOCK_24 = False
+            self.assertEqual(vr.clock(stamp), "2:30 PM")
+        finally:
+            vr.CLOCK_24 = None
+
+    def test_setting_is_saved_by_the_controller(self):
+        from account_switcher.web import Controller as Real
+        controller = Real()
+        try:
+            controller.action("clock", {"on": True})
+            self.assertTrue(controller.snapshot()["clock24"])
+            controller.action("clock", {"on": False})
+            self.assertFalse(controller.snapshot()["clock24"])
+        finally:
+            controller.close()

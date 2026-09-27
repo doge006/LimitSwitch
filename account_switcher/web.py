@@ -30,6 +30,7 @@ class Controller:
         self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
         self.taskbar_available = False  # set by the Windows tray
         self.name_mode = False   # show names instead of emails (screen sharing)
+        self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
         if gateway is not None:
@@ -131,6 +132,7 @@ class Controller:
                 "taskbarAvailable": self.taskbar_available,
                 "nameMode": name_mode,
                 "update": dict(self.update),
+                "clock24": self.clock_24(),
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -140,10 +142,19 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
+            self.notify("changed", None)
+            return
+        if action == "clock":  # 24-hour clock in the full view; instant
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["clock24"] = on
+                    self.gateway.manager.save()
+            self.clock24 = on
             self.notify("changed", None)
             return
         if action == "checkUpdate":  # Settings: Check for updates
@@ -249,6 +260,14 @@ class Controller:
                 self.notify("changed", None)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def clock_24(self):
+        """The 24-hour clock setting, or the system's own choice until it has been set."""
+        saved = self.gateway.manager.meta.get("clock24") if self.live else self.clock24
+        if saved is None:
+            from .fullview_render import clock_12h
+            return not clock_12h()
+        return bool(saved)
 
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk

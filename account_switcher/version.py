@@ -1,8 +1,8 @@
 """The app's version and how this copy was installed.
 
-VERSION is bumped for each release; the release workflow tags `v<VERSION>` and publishes the
-portable Windows zip. A portable copy has its own Python in `runtime/`; a git copy (the
-installer's) has `.git`.
+VERSION is bumped for each release; the release workflow tags `v<VERSION>` and publishes
+AccountSwitcher-Setup.exe. An installed copy has its own Python in `runtime/` and the
+uninstaller next to it; a copy from source has `.git`.
 """
 from pathlib import Path
 import sys
@@ -14,17 +14,17 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def install_kind():
     if (ROOT / "runtime" / "pythonw.exe").exists():
-        return "portable"
+        return "installer" if (ROOT / "unins000.exe").exists() else "portable"
     if (ROOT / ".git").exists():
         return "git"
     return "other"
 
 
 def launcher():
-    """Command that starts the app quietly (start at sign-in, shortcuts): the portable copy's
+    """Command that starts the app quietly (start at sign-in, shortcuts): the installed copy's
     exe, else windowless Python running AccountSwitcher.pyw."""
     exe = ROOT / "Account Switcher.exe"
-    if install_kind() == "portable" and exe.exists():
+    if install_kind() in ("installer", "portable") and exe.exists():
         return f'"{exe}"'
     python = Path(sys.executable)
     windowless = python.with_name("pythonw.exe")
