@@ -33,12 +33,17 @@ Your accounts and settings are kept in `%LOCALAPPDATA%\AccountSwitcher` (the app
 
 ## Install (macOS)
 
-There's no Mac installer yet, so it installs from source:
+Paste this into Terminal:
 
-1. `git clone https://github.com/doge006/LimitSwitch.git`
-2. In Terminal, run `bash Install.command` in that folder. It sets everything up and adds **LimitSwitch** to Applications. Run `bash Update.command` to update.
+```sh
+curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
+```
 
-It lives in the menu bar (no Dock icon). See [macOS](#macos) below for how it works there.
+It downloads the right version for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitch** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
+
+Prefer to click? Download `LimitSwitch-AppleSilicon.dmg` or `LimitSwitch-Intel.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
+
+It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/AccountSwitcher`. **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
 
 ## Performance
 

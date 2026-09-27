@@ -107,20 +107,16 @@ jobs:
           python scripts/build_mac.py --arch arm64
           python scripts/build_mac.py --arch x86_64
           ls -la build/*.dmg
-      - name: Install from the DMG, as a user does (drag to Applications)
+      - name: Install from the DMG with the README's command (scripts/install-mac.sh)
         run: |
           mkdir -p ~/.codex
           sw_vers
-          # A downloaded DMG is quarantined; opening it the first time asks (Open Anyway). This
-          # checks the same bundle without the prompt, which a runner can't click.
           hdiutil attach -nobrowse -mountpoint /tmp/dmg build/LimitSwitch-AppleSilicon.dmg
           ls -la /tmp/dmg
-          test -L /tmp/dmg/Applications
-          cp -R /tmp/dmg/LimitSwitch.app /Applications/
-          touch /tmp/installed
+          test -L /tmp/dmg/Applications  # for dragging it to Applications instead
           hdiutil detach /tmp/dmg
-          codesign --verify --deep --strict /Applications/LimitSwitch.app
-          open /Applications/LimitSwitch.app
+          touch /tmp/installed  # ditto keeps the files' times, so anything newer was written by the app
+          bash scripts/install-mac.sh --dmg build/LimitSwitch-AppleSilicon.dmg
           url="$HOME/Library/Application Support/AccountSwitcher/running.url"
           for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
           if [ ! -f "$url" ]; then cat "$HOME/Library/Application Support/AccountSwitcher/app.log"; exit 1; fi
