@@ -181,20 +181,10 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     user32.SetForegroundWindow(full)
     user32.keybd_event(0x12, 0, 2, 0)
     pump(2)
-    print("full-screen window in front:", user32.GetForegroundWindow() == full, flush=True)
+    print("full-screen window in front:", user32.GetForegroundWindow() == full, "· taskbar on top:",
+          bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
     ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "6-under-full-screen.png")
-    covered = []
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def still_topmost(hwnd, _):
-        name = ctypes.create_unicode_buffer(64)
-        user32.GetClassNameW(hwnd, name, 64)
-        if name.value == "AccountSwitcherFlyout" and user32.IsWindowVisible(hwnd):
-            covered.append(bool(user32.GetWindowLongW(hwnd, -20) & 0x8))  # WS_EX_TOPMOST
-        return True
-
-    user32.EnumWindows(still_topmost, 0)
-    check(covered and not any(covered), "a full-screen window covers the blocks with the taskbar")
+    check(not blocks(), "the blocks go down with the taskbar under a full-screen window")
     user32.DestroyWindow(full)
     pump(1.5)
     check(blocks() == found, "the blocks are back, in place, when it closes")

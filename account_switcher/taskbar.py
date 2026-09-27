@@ -8,8 +8,8 @@ click opens the panel above the block, a right-click opens the menu.
 Nothing polls. The layout is worked out again only when the taskbar can have changed
 (a window opened or closed, display or theme settings changed, Explorer restarted) and once
 a minute with the reset times. The blocks are owned by the taskbar, so Windows keeps them
-just above it and takes them down with it when a full-screen app covers it; screenshot
-tools and other overlays never make them hide and come back.
+just above it, and they hide with it when a full-screen app takes over (see follow_taskbar);
+screenshot tools and other overlays never make them hide and come back.
 """
 import ctypes
 from ctypes import wintypes
@@ -29,7 +29,8 @@ WM_APP_TASKBAR = 0x8000 + 20
 WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
 WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
-TIMER_LAYOUT, TIMER_MINUTE = 71, 72
+TIMER_LAYOUT, TIMER_MINUTE, TIMER_COVER = 71, 72, 73
+HSHELL_WINDOWACTIVATED, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNA = 4, 0x8, 0, 8
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
 PROVIDER_ORDER = ("claude", "codex")
 
@@ -44,6 +45,8 @@ sig(user32.FindWindowW, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
 sig(user32.FindWindowExW, wintypes.HWND, wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR)
 sig(user32.GetWindowRect, wintypes.BOOL, wintypes.HWND, ctypes.POINTER(wintypes.RECT))
 sig(user32.IsWindowVisible, wintypes.BOOL, wintypes.HWND)
+sig(user32.IsWindow, wintypes.BOOL, wintypes.HWND)
+sig(user32.GetWindowLongW, wintypes.LONG, wintypes.HWND, ctypes.c_int)
 sig(user32.RegisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
@@ -314,6 +317,7 @@ class TaskbarView:
         self.stale = True        # re-read the taskbar's layout on the next sync
         self.hwnd = None
         self.hooked = False
+        self.covered = False     # a full-screen app is in front: the taskbar, and so the blocks, are down
         self.shell_message = None
 
     # ---------- wiring into pystray's hidden window ----------
@@ -363,6 +367,7 @@ class TaskbarView:
         user32.DeregisterShellHookWindow(self.hwnd)
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
+        user32.KillTimer(self.hwnd, TIMER_COVER)
         self.hooked = False
 
     # ---------- events ----------
@@ -373,10 +378,34 @@ class TaskbarView:
         elif wparam == TIMER_MINUTE:  # reset times move on; the taskbar may have changed too
             self.stale = True
             self.sync()
+        elif wparam == TIMER_COVER:
+            user32.KillTimer(self.hwnd, TIMER_COVER)
+            self.follow_taskbar()
 
     def on_shell(self, wparam, lparam):
-        if wparam & 0x7FFF in (HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED):
+        code = wparam & 0x7FFF
+        if code in (HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED):
             self.later()  # a taskbar button came or went: the free space moved
+        elif code == HSHELL_WINDOWACTIVATED:  # includes full-screen ("rude") apps
+            self.follow_taskbar()
+            user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
+
+    def follow_taskbar(self):
+        """Hide with the taskbar when a full-screen app takes over, and come back with it.
+
+        Explorer takes the taskbar out of the always-on-top band for a full-screen app; windows
+        that merely cover the screen on top of it (screenshot tools, overlays) leave it alone,
+        so they never make the blocks hide. Instant, with no fade: the taskbar does not fade."""
+        bar = self.bar
+        covered = bool(bar and user32.IsWindow(bar.hwnd) and not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST)
+        if covered == self.covered:
+            return
+        self.covered = covered
+        for block in self.blocks.values():
+            if block.hwnd and not block.closing:
+                user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
+        if not covered:
+            self.sync()  # blocks that were due while it was down
 
     # ---------- layout ----------
     def enabled(self):
@@ -409,6 +438,7 @@ class TaskbarView:
             self.bar, self.stale = (read_bar(*chosen) if chosen else None), False
         bar = self.bar
         in_use = [p for p in PROVIDER_ORDER if any(a["provider"] == p and a["active"] for a in state["accounts"])]
+        self.follow_taskbar()
         if bar is None or not in_use:
             self.close_all()
             return
@@ -436,7 +466,7 @@ class TaskbarView:
             block.place(bar, spot)
             if block.hwnd and not block.closing:
                 block.redraw()
-            else:
+            elif not self.covered:
                 block.open()
 
     def close_all(self):
