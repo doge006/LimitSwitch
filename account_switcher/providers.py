@@ -30,9 +30,10 @@ log = logging.getLogger("account_switcher.providers")
 class ProviderError(Exception):
     """Short, user-facing problem description."""
 
-    def __init__(self, message, retry_after=None, relogin=False, rate_limited=False):
+    def __init__(self, message, retry_after=None, relogin=False, rate_limited=False, transient=False):
         super().__init__(message)
         self.retry_after, self.relogin, self.rate_limited = retry_after, relogin, rate_limited
+        self.transient = transient  # the service or network had a hiccup: retry soon, keep the numbers
 
 
 @dataclass
@@ -43,7 +44,7 @@ class LiveLogin:
     secret: dict    # everything needed to restore this login later
 
 
-def _http(method, url, headers, body=None):
+def _http(method, url, headers, body=None, attempt=0):
     data = json.dumps(body).encode() if body is not None else None
     request = Request(url, data=data, method=method, headers=dict(headers, **({"Content-Type": "application/json"} if data else {})))
     try:
@@ -58,17 +59,22 @@ def _http(method, url, headers, body=None):
             except OSError:
                 detail = ""
             where = urlsplit(url)
-            log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, detail.strip())
+            log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, " ".join(detail.split()))
             raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=wait, rate_limited=True)
         if error.code in (401, 403):
             raise ProviderError("Login expired", relogin=True)
+        if error.code >= 500:  # the service is briefly unavailable (503 and friends): one quick retry
+            if attempt == 0:
+                time.sleep(2)
+                return _http(method, url, headers, body, attempt=1)
+            raise ProviderError(f"Usage service unavailable ({error.code})", transient=True)
         raise ProviderError(f"Usage API error {error.code}")
     except URLError as error:
         if isinstance(error.reason, ssl.SSLCertVerificationError):
             raise ProviderError("Couldn't verify the usage API's certificate (run Update to repair)")
-        raise ProviderError("Offline or usage API unreachable")
+        raise ProviderError("Offline or usage API unreachable", transient=True)
     except (TimeoutError, OSError):
-        raise ProviderError("Offline or usage API unreachable")
+        raise ProviderError("Offline or usage API unreachable", transient=True)
     except ValueError:
         raise ProviderError("Unexpected usage API response")
 

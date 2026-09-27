@@ -73,7 +73,7 @@ def status_note(account):
         return None
     if "sign in" in status.lower() or "missing" in status.lower():
         return "Sign in again"
-    return "Stale"
+    return "Retrying"  # rate limited or the service is down: last numbers shown, checked again soon
 
 
 # ---------- fonts & images ----------

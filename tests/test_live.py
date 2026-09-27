@@ -333,10 +333,33 @@ class LiveTests(unittest.TestCase):
                 mock.patch("account_switcher.live.subprocess.Popen", side_effect=lambda args, **kw: started.append(args) or mock.Mock()), \
                 mock.patch("account_switcher.live.threading.Thread"):
             m.add("claude")
-        self.assertEqual(started[0][0], "/usr/bin/osascript")  # Terminal has the user's PATH and a window
-        self.assertIn('tell application "Terminal"', started[0][2])
-        self.assertIn("CLAUDE_CONFIG_DIR=", started[0][2])
-        self.assertIn("claude auth login", started[0][2])
+        # Terminal runs a .command file by itself: it has the user's PATH and a window, and no
+        # permission to control Terminal is needed.
+        self.assertEqual(started[0][:3], ["/usr/bin/open", "-a", "Terminal"])
+        script = Path(started[0][3])
+        self.assertEqual(script.suffix, ".command")
+        text = script.read_text()
+        self.assertIn("export CLAUDE_CONFIG_DIR=", text)
+        self.assertIn("claude auth login", text)
+
+    def test_a_service_hiccup_keeps_the_numbers_quietly(self):
+        from account_switcher.providers import ProviderError
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        before = a.windows()
+        self.providers["claude"].fetch = lambda secret, allow_refresh: (_ for _ in ()).throw(
+            ProviderError("Usage service unavailable (503)", transient=True))
+        for attempt in range(3):
+            m.meta["accounts"][a.id]["backoffUntil"] = 0.0
+            m.refresh(force=True)
+            a = self.by_email(m, "a@example.com")
+            self.assertEqual(a.windows(), before)  # last numbers stay
+            if attempt < 2:
+                self.assertEqual(a.status, "")  # a blip is not worth showing
+        self.assertIn("isn't answering", a.status)  # a problem that lasts is
+        self.assertGreater(m.meta["accounts"][a.id]["backoffUntil"], time.time() + 200)
 
     def test_backoff_on_rate_limit(self):
         from account_switcher.providers import ProviderError

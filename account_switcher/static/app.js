@@ -10,7 +10,7 @@ const PROVIDERS = [
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, stopped = false, submitting = null, pendingPrefs = null, lastLogId = null, minuteTimer = null;
 let pendingSwap = null, pendingTimer = null, layoutKey = '';
-const cards = new Map(), tiles = new Map();
+const cards = new Map();
 
 // ---------- helpers ----------
 function node(tag, className, text) {
@@ -119,27 +119,6 @@ const classify = text =>
     : /added|completed|started|restored|opened/i.test(text) ? 'ok' : '';
 
 // ---------- build (once) ----------
-function buildTile(provider) {
-  const tile = $(`tile-${provider.id}`);
-  const head = node('div', 'tile-head'), kicker = node('span', 'tile-kicker');
-  const logo = node('img'); logo.src = `/assets/${provider.id}.png`; logo.alt = '';
-  kicker.append(logo, `${provider.name} · in use`);
-  head.append(kicker);
-  const ring = node('div', 'ring');
-  ring.innerHTML = '<svg viewBox="0 0 74 74" aria-hidden="true"><circle class="ring-track" cx="37" cy="37" r="31"/><circle class="ring-fill" cx="37" cy="37" r="31"/></svg>';
-  const label = node('div', 'ring-label'), pct = node('span', 'num', '0%');
-  pct.dataset.value = '0';
-  const inner = node('div'); inner.append(pct, node('small', '', 'left'));
-  label.append(inner); ring.append(label);
-  const body = node('div', 'tile-body'), who = node('div', 'who', '—'), meta = node('div', 'meta'), next = node('div', 'next');
-  body.append(who, meta, next);
-  tile.append(head, ring, body);
-  const fill = ring.querySelector('.ring-fill'), circumference = 2 * Math.PI * 31;
-  fill.style.strokeDasharray = circumference;
-  fill.style.strokeDashoffset = circumference;
-  tiles.set(provider.id, { tile, ring, pct, who, meta, next, fill, circumference });
-}
-
 function buildCard(account, index) {
   const card = node('article', 'card enter');
   card.style.setProperty('--i', index);
@@ -206,7 +185,6 @@ function buildCard(account, index) {
 }
 
 function build() {
-  if (!tiles.size) PROVIDERS.forEach(buildTile);
   cards.clear();
   $('accounts').replaceChildren();
   let index = 0;
@@ -325,31 +303,6 @@ function updateCards() {
   }
 }
 
-function updateTiles() {
-  for (const provider of PROVIDERS) {
-    const view = tiles.get(provider.id);
-    const account = state.accounts.find(a => a.provider === provider.id && a.active);
-    if (!view) continue;
-    view.tile.classList.toggle('idle', !account);
-    if (!account) {
-      view.who.textContent = 'Not signed in';
-      view.meta.textContent = state.mode === 'live' ? `Sign in to ${provider.name} to track it here` : '';
-      view.next.textContent = '';
-      view.fill.style.strokeDashoffset = view.circumference;
-      tweenNumber(view.pct, 0);
-      continue;
-    }
-    const left = headroom(account);
-    view.tile.style.setProperty('--level', `var(--${left > 30 ? 'good' : left > 10 ? 'warn' : 'bad'})`);
-    view.fill.style.strokeDashoffset = view.circumference * (1 - left / 100);
-    tweenNumber(view.pct, left);
-    view.who.textContent = displayName(account);
-    view.who.title = displayName(account);
-    view.meta.textContent = account.status || [account.plan, subscriptionText(account)].filter(Boolean).join(' · ');
-    view.next.replaceChildren(...(account.renewsAt ? ['Usage resets ', node('b', 'num', relative(account.renewsAt))] : []));
-  }
-}
-
 function updateLog() {
   const log = state.log;
   const newest = log.length ? log[log.length - 1].id : 0;
@@ -411,7 +364,6 @@ function render(next) {
   $('continue').disabled ||= !state.sessionId;
   $('run').classList.toggle('working', submitting?.el === $('run'));
   updateCards();
-  updateTiles();
   updateLog();
 }
 
@@ -510,10 +462,10 @@ async function observe() {
 function scheduleMinute() {
   clearTimeout(minuteTimer);
   if (document.hidden) return;
-  minuteTimer = setTimeout(() => { if (state) { updateCards(); updateTiles(); } scheduleMinute(); }, 60000 - Date.now() % 60000 + 50);
+  minuteTimer = setTimeout(() => { if (state) updateCards(); scheduleMinute(); }, 60000 - Date.now() % 60000 + 50);
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && state) { updateCards(); updateTiles(); }
+  if (!document.hidden && state) updateCards();
   scheduleMinute();
 });
 
@@ -539,12 +491,27 @@ $('reset').addEventListener('click', () => {
 });
 $('add').addEventListener('click', event => {
   event.stopPropagation();
+  $('auto-menu').hidden = true;
   $('add-menu').hidden = !$('add-menu').hidden;
 });
 for (const item of document.querySelectorAll('[data-add]')) {
   item.addEventListener('click', () => { $('add-menu').hidden = true; act('add', { provider: item.dataset.add }); });
 }
-document.addEventListener('click', () => { $('add-menu').hidden = true; closeSubscriptionEditor(); });
+$('auto-button').addEventListener('click', event => {
+  event.stopPropagation();
+  $('add-menu').hidden = true;
+  const menu = $('auto-menu');
+  menu.hidden = !menu.hidden;
+  $('auto-button').setAttribute('aria-expanded', String(!menu.hidden));
+});
+$('auto-menu').addEventListener('click', event => event.stopPropagation());  // toggling keeps it open
+document.addEventListener('keydown', event => { if (event.key === 'Escape') $('auto-menu').hidden = true; });
+document.addEventListener('click', () => {
+  $('add-menu').hidden = true;
+  $('auto-menu').hidden = true;
+  $('auto-button').setAttribute('aria-expanded', 'false');
+  closeSubscriptionEditor();
+});
 
 scheduleMinute();
 observe();

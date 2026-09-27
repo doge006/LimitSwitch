@@ -217,7 +217,20 @@ class LiveAccounts:
                     wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
                     self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
                               pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
+                if error.transient:
+                    # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
+                    # 1, 2, 4... min. Only a problem that lasts gets shown.
+                    failures = meta.get("backoffFailures", 0)
+                    wait = min(900, 60 * 2 ** failures) * random.uniform(1.0, 1.15)
+                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1)
+                    if failures + 1 < 3:
+                        continue
+                    self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
+                    continue
                 message = str(error)
+                if error.rate_limited:  # temporary: say until when
+                    message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
+                        time.strftime("%H:%M", time.localtime(time.time() + wait))
                 if error.relogin and (is_active or is_live):
                     message = f"Waiting for {meta['provider'].title()} to refresh its login"
                 self._set(account_id, status=message)
@@ -516,6 +529,8 @@ class LiveAccounts:
         now = time.time()
         state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
         state["continues"] = [t for t in state["continues"] if now - t < 600]
+        if state["continues"] and now - state["continues"][-1] < 20:
+            return {"action": "stop"}  # the same limit reported twice: the session is already continuing
         if len(state["continues"]) >= 3:  # something keeps failing: do not loop
             return {"action": "wait", "seconds": 900}
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
@@ -587,11 +602,17 @@ class LiveAccounts:
         command, env = provider.login_command(directory)
         if sys.platform == "darwin":
             # In Terminal: it has the user's PATH (an app opened from Finder does not) and a
-            # window to sign in from. The login is picked up from its folder as it lands.
+            # window to sign in from. A .command file, which Terminal runs by itself: telling
+            # Terminal what to do (AppleScript) needs a permission macOS silently refuses.
+            # The login is picked up from its folder as it lands.
             import shlex
-            line = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " + " ".join(shlex.quote(c) for c in command)
-            script = 'tell application "Terminal"\nactivate\ndo script "' + line.replace("\\", "\\\\").replace('"', '\\"') + '"\nend tell'
-            process = subprocess.Popen(["/usr/bin/osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            script = directory / "Sign in.command"
+            script.write_text("#!/bin/sh\n" + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
+                              + " ".join(shlex.quote(c) for c in command)
+                              + "\necho\necho 'Done. You can close this window.'\n")
+            script.chmod(0o700)
+            process = subprocess.Popen(["/usr/bin/open", "-a", "Terminal", str(script)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             watch_process = False
         else:
             executable = shutil.which(command[0])
@@ -623,6 +644,7 @@ class LiveAccounts:
                     self.save()
                 if hasattr(isolated, "forget"):
                     isolated.forget()
+                self._set(account_id, backoffUntil=0.0, backoffFailures=0, pace=1.0, status="")
                 wanted = self.meta["accounts"].get(expect) if expect else None
                 if wanted and account_id != expect:  # the browser was signed in to another account
                     self.notify("log", f"Signed in as {login.email or login.identity}, not "
