@@ -175,6 +175,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if self.open_now:
             self.showFullView_(None)
         AppHelper.callLater(4, self.check_status_item)
+        if os.environ.get("LIMITSWITCH_PANEL_TEST"):  # CI: it can't click the menu bar
+            AppHelper.callLater(3, self.panel_test)
 
     @objc.python_method
     def check_status_item(self):
@@ -351,6 +353,30 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.controller.action("refresh", {"ifOlderThan": 45})  # like opening the Windows panel
         except (RuntimeError, ValueError):
             pass
+
+    @objc.python_method
+    def panel_test(self, step=0):
+        """CI only (LIMITSWITCH_PANEL_TEST): open the panel, move it away as a drag would, dock
+        it again; each frame goes to app.log for the smoke test."""
+        def frame():
+            f = self.panel.frame()
+            return f"({f.origin.x:.0f}, {f.origin.y:.0f}, {f.size.width:.0f}, {f.size.height:.0f})"
+        if step == 0:
+            self.show_panel()
+            AppHelper.callLater(2, self.panel_test, 1)
+        elif step == 1:
+            log.warning("panel test: docked %s visible=%s", frame(), self.panel.isVisible())
+            f = self.panel.frame()
+            self.panel.setFrameOrigin_((f.origin.x - 300, f.origin.y - 200))  # as drag_move does
+            self.set_detached(True)
+            AppHelper.callLater(1, self.panel_test, 2)
+        elif step == 2:
+            log.warning("panel test: moved %s detached=%s", frame(), self.detached)
+            self.dock()
+            AppHelper.callLater(1, self.panel_test, 3)
+        else:
+            log.warning("panel test: docked again %s detached=%s visible=%s", frame(), self.detached,
+                        self.panel.isVisible())
 
     @objc.python_method
     def clicked_elsewhere(self, _event):

@@ -116,6 +116,7 @@ jobs:
           test -L /tmp/dmg/Applications  # for dragging it to Applications instead
           hdiutil detach /tmp/dmg
           touch /tmp/installed  # ditto keeps the files' times, so anything newer was written by the app
+          launchctl setenv LIMITSWITCH_PANEL_TEST 1  # opens, moves and docks the panel (no clicks on a runner)
           bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           url="$HOME/Library/Application Support/AccountSwitcher/running.url"
           for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
@@ -149,6 +150,29 @@ jobs:
           out=$(bash -c "$snippet")
           echo "$out"
           echo "$out" | grep -q "MB memory"
+      - name: The menu bar panel opens, moves away and docks again
+        run: |
+          sleep 4
+          screencapture -x /tmp/panel.png || true
+          mkdir -p shots && cp /tmp/panel.png shots/0-panel.png || true
+          log="$HOME/Library/Application Support/AccountSwitcher/app.log"
+          grep "panel test" "$log"
+          python3 - "$log" <<'PY'
+          import re, sys
+          text = open(sys.argv[1]).read()
+          def frame(name):
+              m = re.search(r"panel test: " + name + r" \(([-\d]+), ([-\d]+), (\d+), (\d+)\)", text)
+              assert m, "no '%s' line in app.log" % name
+              return tuple(int(v) for v in m.groups())
+          docked, moved, again = frame("docked"), frame("moved"), frame("docked again")
+          assert docked[3] > 150, "the panel is too short: %s" % (docked,)
+          assert "visible=True" in text.split("panel test: docked")[1].split("\n")[0], "not visible"
+          assert moved[:2] == (docked[0] - 300, docked[1] - 200) and "detached=True" in text, "it didn't move"
+          assert again[:2] == docked[:2] and "detached=False visible=True" in text, "it didn't dock back"
+          assert "Traceback" not in text, "errors in app.log"
+          print("PASS panel: docked", docked, "moved", moved, "docked again", again)
+          PY
+          launchctl unsetenv LIMITSWITCH_PANEL_TEST
       - name: Smoke test (menu bar icon, window, quit)
         run: |
           python3 -m venv /tmp/probe
