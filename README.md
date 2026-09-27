@@ -2,9 +2,24 @@
 
 A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
 
-## Install and update (Windows and macOS)
+## Install (Windows)
 
-One installer for both; it detects the OS. Run it again at any time to update.
+Either way installs the same portable copy: `Account Switcher.exe`, the app and its own Python. Nothing else is needed (no Python, no git), and nothing is installed system-wide.
+
+- **One line:** in PowerShell, run
+  ```powershell
+  irm https://raw.githubusercontent.com/doge006/Account-Switcher/main/install.ps1 | iex
+  ```
+  It downloads the latest release into `%LOCALAPPDATA%\Programs\Account Switcher` and starts it.
+- **Download:** get `AccountSwitcher-windows.zip` from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest), unzip it anywhere, and double-click `Account Switcher.exe`.
+
+On its first run it adds itself to the Start menu and starts with Windows (switch that off in the full view's Settings). Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder.
+
+**Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads it, closes the app, puts the new files in place and starts it again. **Check for updates** checks now.
+
+## Install and update from source (Windows and macOS)
+
+For development, or macOS (no portable build yet). One installer for both; it detects the OS. Run it again at any time to update.
 
 - **Windows:** double-click `Install.cmd` (or `Update.cmd`, which does the same).
 - **macOS:** in Terminal, run `bash Install.command` in this folder (or `bash Update.command`).
@@ -13,14 +28,29 @@ One installer for both; it detects the OS. Run it again at any time to update.
 
 Each run:
 1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
-2. Updates this folder from GitHub. Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
+2. Updates this folder from GitHub (`main`). Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
 3. Sets up a private Python environment (`.venv`) with this OS's requirements; they're only reinstalled when they change.
-4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable). The app registers itself to start at sign-in.
-5. Restarts the app on the new version (or starts it on a first install).
+4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable).
+5. Closes any running copy and starts the new version. Its output is also saved to `update.log` next to `app.log`.
 
-Options: `--branch NAME` (switch to and update another branch), `--force`, `--no-launch`.
+Options: `--branch NAME` (follow another branch), `--force`, `--no-launch`. A copy from source also offers updates in Settings; there, **Update** runs this installer.
 
 A first install from nothing: `git clone https://github.com/doge006/Account-Switcher.git`, then run the installer in that folder.
+
+## Publishing a release
+
+Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds the portable zip (`scripts/build_portable.ps1`), installs it with `install.ps1` and checks that it runs, then publishes release `v<VERSION>`. Users get it on their next launch.
+
+## Performance
+
+`scripts/measure.py` measures the running app: memory (working set and private), CPU share and threads over a stretch of time.
+
+```powershell
+.venv\Scripts\python -m pip install psutil     # once (a portable copy: runtime\python.exe -m pip ...)
+.venv\Scripts\python scripts\measure.py        # 60 s; --seconds N
+```
+
+Measure the tray alone, with the panel open, and with the full view open, a few times each, and quote the typical number with the machine it ran on.
 
 ## macOS
 
@@ -55,7 +85,7 @@ A first install from nothing: `git clone https://github.com/doge006/Account-Swit
   - `openai_base_url` points at the router;
   - `enable_request_compression = false`, so the router can read requests;
   - `daemon_auto_start = false`. Codex's shared background server opens a console window for every command on Windows ([openai/codex#44768](https://github.com/openai/codex/issues/44768), [#48074](https://github.com/openai/codex/issues/48074)). Sessions also attach to it whenever it's running, and it keeps the settings it started with, so its sessions would bypass the router. The app stops a running one as soon as no session has been active for 90 seconds; after that, each Codex session runs in its own terminal, goes through the router, and nothing flashes.
-- **Start with Windows:** on by default, since Codex's requests go through the app.
+- **Start with Windows:** on by default, since Codex's requests go through the app. Switch it off in the full view's Settings (**Launch with Windows**).
 - **Usage:** read from each provider's own usage endpoint:
   - Claude: 5-hour, weekly and per-model weekly caps, plus extra usage.
   - Codex: 5-hour, weekly or 30-day windows, plus credits.
@@ -106,7 +136,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 - **Hover:** the tooltip shows the account in use per provider and what's left.
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
-- **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); to turn that off, delete the `AccountSwitcher` entry under Task Manager → Startup apps.
+- **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); Settings → **Launch with Windows** turns that off.
 
 Resource use: one Python process that sleeps until an account is due for a check or something changes. The panel and menu are native windows drawn with Pillow; they exist only while open. Measured idle over 60 s in real-account mode (Linux, virtual display): 32 MB, 1 wake-up, 0 ms CPU. The full-view window costs memory only while it's open.
 
@@ -138,7 +168,9 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/core.py` + `demo.py`: the account model and routing; sample accounts for `--demo`.
 - `account_switcher/vault.py`, `keychain.py`: encrypted storage (DPAPI on Windows, the Keychain on macOS).
 - `account_switcher/macos_app.py` + `static/menu.*`: the macOS menu bar app and its panel.
-- `scripts/installer.py` (+ `Install.cmd` / `Install.command`): the installer and updater.
+- `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
+- `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
+- `scripts/build_portable.ps1` + `win_launcher.c`, `install.ps1`: the portable Windows release and its one-line installer.
 
 ## Credits
 
