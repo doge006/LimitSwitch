@@ -304,7 +304,7 @@ footer { display: flex; align-items: center; justify-content: space-between; gap
 .renew:disabled { cursor: default; }
 .renew.unset { color: var(--faint); font-style: italic; }
 .renew.ends { color: var(--warn); }
-.credits { display: grid; gap: 2px; font-size: 12px; color: var(--muted); padding-top: 2px; }
+.credits { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); padding-top: 2px; }
 .credit-value { color: var(--text); font-variant-numeric: tabular-nums; }
 .sub-editor { position: absolute; z-index: 30; width: 280px; padding: 12px; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--line-strong); box-shadow: 0 12px 32px rgba(0, 0, 0, .4); animation: rise .18s var(--ease) both; }
 .sub-kind { display: flex; gap: 14px; font-size: 13px; margin-bottom: 10px; }
@@ -335,4 +335,6 @@ main { padding-bottom: 32px; }
 .email-reveal { display: block; margin: 1px 0 5px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .email-reveal.shown { letter-spacing: 0; }
 .email-reveal:hover { color: var(--text); }
-
+/* No empty space under the last provider: the window opens exactly as tall as the cards. */
+#accounts .group:last-child { margin-bottom: 0; }
+body.live main { padding-bottom: 24px; }
