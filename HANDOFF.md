@@ -12,13 +12,13 @@ A Windows tray and macOS menu bar app that manages several Claude Code and Codex
 Python stdlib plus pystray and Pillow; PyObjC on macOS. Every window is native and drawn with Pillow, except the macOS menu bar panel (still a WKWebView over `static/menu.*`). A loopback API (`web.py`) serves Claude Code's status line and AFK hook, the macOS panel, and a second launch asking the running copy to show its window.
 
 ## How the user works
-- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**.
+- **Git:** Claude develops on the session's assigned `claude/…` branch (created from `origin/main`), then **creates and merges the PR itself** and deletes the branch, so the public repo has only `main`.
 - **Updating:** the user runs `Update.cmd` / `Update.command`, which always follows `main` (`--branch X` overrides) and ends any leftover running copy. Every run is saved to `%LOCALAPPDATA%\AccountSwitcher\update.log`; `app.log` records `started, version <sha>`. **Check both before debugging a "still broken" report**: twice the user was running old code (an old branch; an update that couldn't close the running copy).
 - **Testing:** targeted. Unit tests (`python -m unittest discover -s tests`) plus one focused check. The user asked not to run CI for everything: use it for risky Windows-only changes (window/paint/host code, the build), and look at its screenshots before merging UI work.
 - **GitHub Actions** are **manual only** (`workflow_dispatch`); the account is near its allowance.
   - `windows.yml` (via `mcp__github__actions_run_trigger`) for Windows behaviour. Its smoke test fails on any error in `app.log`.
   - Avoid `macos.yml` (10× minutes); if needed, run it with the `os` input (e.g. `macos-15`) for one runner.
-  - Screenshots go to the `ci-shots/<os>` branches.
+  - Screenshots are the run's `screenshots-<os>` artifacts (kept 7 days; download with `actions_get` → `download_workflow_run_artifact`). No CI branches.
 - **Design:** restrained, premium dark UI matching the old web page's look and motion; resources near zero (event-driven, no polling; animation frames only while something moves). Nothing may spend tokens.
 - **Scope:** fix what was asked. No unrequested toggles or features.
 - **Security:** never read or print secrets or tokens; no strace.
