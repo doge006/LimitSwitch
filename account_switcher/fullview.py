@@ -349,12 +349,13 @@ class FullView:
         everything that touches it, in the same order, so it comes out pixel for pixel as a
         whole redraw would (tests compare the two). A new size or scroll redraws everything."""
         s = self.scale
-        backdrop = vr.backdrop(self.width, self.height, s)
+        size = (round(self.width * s), round(self.height * s))
         last = self.last_page
-        same_layout = (last is not None and last[0] == (backdrop.size, self.scroll, s)
+        same_layout = (last is not None and last[0] == (size, self.scroll, s)
                        and [o[1][:2] for o in last[1]] == [o[1][:2] for o in ops])
         if not same_layout or not self.incremental:
-            page = backdrop.copy()
+            self.last_page = None  # let the old page go before making the new one
+            page = Image.new("RGB", size, vr.BG)  # the backdrop: one colour
             self.paint_region(page, (0, 0) + page.size, ops)
             self.changed = None  # everything
         else:
@@ -365,10 +366,10 @@ class FullView:
                     dirty += [old_box, box]
             self.changed = merge_boxes(dirty, page.size)
             for box in self.changed:
-                region = backdrop.crop(box)
+                region = Image.new("RGB", (box[2] - box[0], box[3] - box[1]), vr.BG)
                 self.paint_region(region, box, ops)
                 page.paste(region, box[:2])
-        self.last_page = ((backdrop.size, self.scroll, s), [(box, sig, None) for box, sig, _ in ops], page)
+        self.last_page = ((size, self.scroll, s), [(box, sig, None) for box, sig, _ in ops], page)
         return page
 
     def paint_region(self, region, box, ops):

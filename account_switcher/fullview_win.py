@@ -131,7 +131,7 @@ class FullViewWindow:
         self.hwnd = None
         self.view = None
         self.scale = 1.0
-        self.frame = None          # (bytearray of BGRX pixels, width, height): the window's picture
+        self.frame = None          # the view's latest frame (an RGB image); converted where painted
         self.dirty = True
         self.render_posted = False
         self.tracking = False
@@ -239,26 +239,18 @@ class FullViewWindow:
             user32.PostMessageW(self.hwnd, WM_APP_RENDER, 0, 0)
 
     def render(self):
-        """Draw the view's next frame into the window's picture: only the areas it changed are
-        converted to Windows' pixel format and marked for repainting."""
+        """Draw the view's next frame and mark what it changed for repainting."""
         self.render_posted = False
         if not self.dirty or not self.view:
             return
         self.dirty = False
-        image = self.view.frame()
+        previous = self.frame
+        self.frame = self.view.frame()
         changed = self.view.changed
-        width, height = image.size
-        if self.frame is None or self.frame[1:] != (width, height) or changed is None:
-            self.frame = (bytearray(image.tobytes("raw", "BGRX")), width, height)
+        if previous is None or previous.size != self.frame.size or changed is None:
             user32.InvalidateRect(self.hwnd, None, False)
             return
-        picture, stride = memoryview(self.frame[0]), width * 4
         for x0, y0, x1, y1 in changed:
-            part = image.crop((x0, y0, x1, y1)).tobytes("raw", "BGRX")
-            row = (x1 - x0) * 4
-            for i in range(y1 - y0):
-                start = (y0 + i) * stride + x0 * 4
-                picture[start:start + row] = part[i * row:(i + 1) * row]
             user32.InvalidateRect(self.hwnd, ctypes.byref(wintypes.RECT(x0, y0, x1, y1)), False)
 
     def set_timer(self, name, ms):
@@ -307,12 +299,16 @@ class FullViewWindow:
                 self.dirty = True
                 self.render()
             if self.frame is not None:
-                # Windows limits this to the area that needs painting (what render() marked, and
-                # anything uncovered), so only those pixels are copied.
-                data, width, height = self.frame
-                buffer = (ctypes.c_char * len(data)).from_buffer(data)
-                header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
-                gdi32.SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, buffer, ctypes.byref(header), 0)
+                # Only the area that needs painting (what render() marked, and anything uncovered)
+                # is converted to Windows' pixel format and copied: no second copy of the window.
+                area = ps.rcPaint
+                x0, y0 = max(0, area.left), max(0, area.top)
+                x1, y1 = min(self.frame.width, area.right), min(self.frame.height, area.bottom)
+                if x1 > x0 and y1 > y0:
+                    width, height = x1 - x0, y1 - y0
+                    data = self.frame.crop((x0, y0, x1, y1)).tobytes("raw", "BGRX")
+                    header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
+                    gdi32.SetDIBitsToDevice(hdc, x0, y0, width, height, 0, 0, 0, height, data, ctypes.byref(header), 0)
         finally:
             user32.EndPaint(self.hwnd, ctypes.byref(ps))
 

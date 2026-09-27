@@ -189,16 +189,36 @@ def ring_mask(w, h, r, width):
     return ImageChops.subtract(rr_mask(w, h, r), hole)
 
 
-@lru_cache(maxsize=256)
+BIG_MASK = 256 * 256  # masks this big (whole cards) aren't kept for every opacity
+
+
 def rr_alpha(w, h, r, alpha):
-    mask = rr_mask(w, h, r)
-    return mask.point(lambda v: v * alpha // 255) if alpha < 255 else mask
+    """rr_mask at `alpha`. Small ones are kept; a card-sized one is made when needed (a fraction
+    of a millisecond, only when a card is drawn again) rather than kept for every hover step."""
+    if alpha >= 255:
+        return rr_mask(w, h, r)
+    if w * h > BIG_MASK:
+        return rr_mask(w, h, r).point(lambda v: v * alpha // 255)
+    return _rr_alpha(w, h, r, alpha)
+
+
+@lru_cache(maxsize=256)
+def _rr_alpha(w, h, r, alpha):
+    return rr_mask(w, h, r).point(lambda v: v * alpha // 255)
+
+
+def ring_alpha(w, h, r, width, alpha):
+    """ring_mask at `alpha` (kept only when small, like rr_alpha)."""
+    if alpha >= 255:
+        return ring_mask(w, h, r, width)
+    if w * h > BIG_MASK:
+        return ring_mask(w, h, r, width).point(lambda v: v * alpha // 255)
+    return _ring_alpha(w, h, r, width, alpha)
 
 
 @lru_cache(maxsize=128)
-def ring_alpha(w, h, r, width, alpha):
-    mask = ring_mask(w, h, r, width)
-    return mask.point(lambda v: v * alpha // 255) if alpha < 255 else mask
+def _ring_alpha(w, h, r, width, alpha):
+    return ring_mask(w, h, r, width).point(lambda v: v * alpha // 255)
 
 
 class Canvas:
@@ -670,7 +690,7 @@ def backdrop(width, height, scale):
 def release():
     """The full view closed: let go of everything drawn for it (shapes, shadows, the backdrop).
     It is all drawn again, the same, the next time it opens."""
-    for cached in (rr_mask, ring_mask, rr_alpha, ring_alpha, glyph, shadow, backdrop):
+    for cached in (rr_mask, ring_mask, _rr_alpha, _ring_alpha, glyph, shadow, backdrop):
         cached.cache_clear()
 
 
