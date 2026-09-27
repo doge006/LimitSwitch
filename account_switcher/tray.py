@@ -13,8 +13,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -98,20 +96,7 @@ def icon_image(status):
     return _icons[status]
 
 
-# ---------- dashboard window ----------
-def app_browser():
-    """A Chromium browser that can open the dashboard as a plain app window."""
-    if sys.platform != "win32":
-        return None
-    roots = [os.environ.get(k) for k in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA")]
-    for relative in (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe"):
-        for root in filter(None, roots):
-            path = Path(root) / relative
-            if path.is_file():
-                return str(path)
-    return shutil.which("msedge")
-
-
+# ---------- full view ----------
 def full_view_size(area_width=None, area_height=None):
     """Half the work area's width, and tall enough for two rows of cards (920, or 95% of a
     shorter screen), in logical px so a scaled display gets the same share. Without an area,
@@ -133,39 +118,23 @@ def full_view_size(area_width=None, area_height=None):
 
 
 def open_dashboard(url):
-    browser = app_browser()
-    address = url.split("//", 1)[-1].split("/", 1)[0]
-    if browser and sys.platform == "win32":  # one full view: bring an open one to the front
-        try:
-            from .win_window import focus_full_view
-            if focus_full_view(address):
-                return
-        except Exception:
-            logging.getLogger("account_switcher").exception("full view focus")
-    if browser:
-        # --app gives a window without tabs or address bar; it joins the browser's
-        # existing process if one is running, and all of it goes away when closed.
-        width, height = full_view_size()
-        before = ()
-        if sys.platform == "win32":
-            try:
-                from .win_window import edge_windows
-                before = set(edge_windows())  # the new window is the one not here yet
-            except Exception:
-                logging.getLogger("account_switcher").exception("full view windows")
-        subprocess.Popen([browser, f"--app={url}", f"--window-size={width},{height}"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
-        if sys.platform == "win32":  # its own taskbar button (name and icon), not Edge's
-            try:
-                from .integrations import launcher
-                from .win_window import brand_full_view
-                brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico",
-                                size=(width, height), address=address, before=before)
-            except Exception:
-                logging.getLogger("account_switcher").exception("full view taskbar identity")
-    else:
-        webbrowser.open(url)
+    """The web full view in the default browser: only where there is no native window (Linux
+    without Tk). Never on Windows or macOS, which have their own."""
+    logging.getLogger("account_switcher").warning("full view: opening the web page (no native window)")
+    webbrowser.open(url)
+
+
+def app_version():
+    """The commit this copy runs (from .git, no git needed), for app.log."""
+    git = Path(__file__).resolve().parent.parent / ".git"
+    try:
+        head = (git / "HEAD").read_text().strip()
+        if head.startswith("ref: "):
+            ref = git / head[5:]
+            head = ref.read_text().strip() if ref.exists() else head[5:]
+        return head[:7]
+    except OSError:
+        return "unknown"
 
 
 def show_running(url):
@@ -174,7 +143,7 @@ def show_running(url):
         base, token = url.split("/#token=")
         request = Request(base + "/api/show", data=b"{}", method="POST",
                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
-        with _local.open(request, timeout=2) as response:
+        with _local.open(request, timeout=10) as response:
             return bool(json.load(response).get("shown"))
     except (OSError, ValueError, AttributeError):
         return False
@@ -273,9 +242,12 @@ class Tray:
         self.flyout.toggle()
 
     def open_full_view(self):
-        """Any thread: open the full view, or bring it to the front."""
+        """Any thread: open the full view, or bring it to the front. Only ever the app's own window."""
         if self.full_view:
             self.full_view.post_show()
+        elif sys.platform == "win32":
+            logging.getLogger("account_switcher").error("full view: no native window (see the error above)")
+            self.icon.notify("The full view couldn't open. Details are in app.log.", APP)
         else:
             open_dashboard(self.url)
 
@@ -397,8 +369,8 @@ def main(argv=None):
             if sys.platform == "win32":  # this launch may take the foreground; let the running copy
                 import ctypes
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
-            if not show_running(running):
-                open_dashboard(running)
+            if not show_running(running) and sys.platform != "win32":
+                open_dashboard(running)  # Windows: the running copy opens its own window, never a browser
             return
 
     if sys.platform == "win32":
@@ -407,6 +379,7 @@ def main(argv=None):
     if sys.platform in ("win32", "darwin"):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("account_switcher").warning("started, version %s", app_version())
     controller = Controller(args.simulator, live=not (args.demo or args.simulator))
     server = make_server(controller, args.port, idle_seconds=0)
     write_url_file(args.url_file, server.launch_url)

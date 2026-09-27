@@ -141,10 +141,10 @@ class FullViewWindow:
     def post_show(self):
         """Open the window, or bring it to the front: on the tray thread."""
         hwnd = getattr(getattr(self.tray, "icon", None), "_hwnd", None)
-        if hwnd:
+        if hwnd:  # windows belong to the thread that makes them: always the tray's
             user32.PostMessageW(hwnd, WM_APP_SHOW, 0, 0)
         else:
-            self.show()
+            log.error("full view: the tray isn't running yet")
 
     def dismiss(self):
         if self.hwnd:
@@ -157,11 +157,13 @@ class FullViewWindow:
     # ---------- the tray thread ----------
     def show(self):
         if self.hwnd:
+            log.warning("full view: brought to the front")
             if user32.IsIconic(self.hwnd):
                 user32.ShowWindow(self.hwnd, SW_RESTORE)
             from .flyout import force_foreground
             force_foreground(self.hwnd)
             return
+        log.warning("full view: opening")
         self._register()
         width, height, x, y, scale = self.placement()
         self.scale = scale
