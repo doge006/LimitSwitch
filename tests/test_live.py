@@ -362,6 +362,31 @@ class LiveTests(unittest.TestCase):
         five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
         self.assertEqual(five["used"], 3.0)
 
+    def test_an_idle_sessions_old_numbers_dont_fight_a_busy_one(self):
+        """Two Claude Code sessions: one idle since before a switch (another account's 100%), one
+        working now. Only a session whose numbers just moved (a new reply) counts, so the bar
+        follows the busy session and never jumps to the idle one's numbers and back."""
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        m.live_since["claude"] = 0
+        reset = time.time() + 3600
+        old = {"five_hour": {"used_percentage": 100, "resets_at": reset - 1800}}
+
+        def used():
+            return next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")["used"]
+
+        m.statusline({"five_hour": {"used_percentage": 50, "resets_at": reset}}, "busy")
+        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}}, "busy")  # a reply: counts
+        self.assertEqual(used(), 52.0)
+        for _ in range(3):
+            m.statusline(old, "idle")                 # an idle session, now and again: ignored
+            self.assertEqual(used(), 52.0)
+        m.statusline({"five_hour": {"used_percentage": 55, "resets_at": reset}}, "busy")
+        self.assertEqual(used(), 55.0)
+        self.assertIn(a.id, m.meta["accounts"])
+
     def test_mac_sign_in_opens_in_terminal(self):
         m = self.manager()
         started = []

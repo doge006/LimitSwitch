@@ -276,7 +276,7 @@ class Controller:
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
             return None
-        return self.gateway.manager.statusline(body.get("rate_limits"))
+        return self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
 
     def afk_limit(self, body):
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
