@@ -398,7 +398,8 @@ def set_start_with_windows(enabled):
         return
     import winreg
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        # CreateKeyEx: a fresh Windows profile may not have the Run key yet (it opens it when it does).
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launcher())
             for name in ((OLD_RUN_NAME,) if enabled else (RUN_NAME, OLD_RUN_NAME)):

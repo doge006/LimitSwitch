@@ -72,7 +72,7 @@ jobs:
           }
           if (-not $run) {
             Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -ErrorAction SilentlyContinue
-            Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Format-List
+            Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue | Format-List
             throw 'start at sign-in was not set'
           }
           if ($run -notmatch 'LimitSwitch[.]exe') { throw "start at sign-in runs '$run', not LimitSwitch.exe" }
