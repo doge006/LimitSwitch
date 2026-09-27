@@ -14,7 +14,7 @@ Python stdlib plus pystray and Pillow; PyObjC on macOS. Every window is native a
 ## How the user works
 - **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**.
 - **Updating:** the user runs `Update.cmd` / `Update.command`, which always follows `main` (`--branch X` overrides) and ends any leftover running copy. Every run is saved to `%LOCALAPPDATA%\AccountSwitcher\update.log`; `app.log` records `started, version <sha>`. **Check both before debugging a "still broken" report**: twice the user was running old code (an old branch; an update that couldn't close the running copy).
-- **Testing:** targeted. Unit tests (`python -m unittest discover -s tests`) plus one focused check. Look at CI screenshots yourself before merging UI work.
+- **Testing:** targeted. Unit tests (`python -m unittest discover -s tests`) plus one focused check. The user asked not to run CI for everything: use it for risky Windows-only changes (window/paint/host code, the build), and look at its screenshots before merging UI work.
 - **GitHub Actions** are **manual only** (`workflow_dispatch`); the account is near its allowance.
   - `windows.yml` (via `mcp__github__actions_run_trigger`) for Windows behaviour. Its smoke test fails on any error in `app.log`.
   - Avoid `macos.yml` (10× minutes); if needed, run it with the `os` input (e.g. `macos-15`) for one runner.
