@@ -175,7 +175,7 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
 - `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
-- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` (the **Media** workflow runs it on Windows) draws them.
+- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
 - `docs/media/`: the README's screenshots and GIF.
 
 ## Credits
