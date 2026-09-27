@@ -70,7 +70,7 @@ jobs:
           Write-Host "PASS start at sign-in: $run"
       - name: The README's measuring snippet works
         run: |
-          # The snippet from README.md (Performance), sampling 5 s instead of 60.
+          # The Windows snippet from README.md (Performance), sampling 5 s instead of 60.
           $readme = Get-Content README.md -Raw
           $snippet = [regex]::Match($readme, '(?s)```powershell\r?\n(\$ids = .*?)```').Groups[1].Value
           if (-not $snippet) { throw 'no snippet in README.md' }

@@ -49,7 +49,9 @@ Built to be barely noticeable:
 - **Windows exist only while they're open.** The panel, the menus and the full view are created when you open them and freed when you close them, and animation frames are drawn only while something moves.
 - **Checking usage doesn't touch your limits:** the usage endpoints it reads don't count against them.
 
-**Measure it yourself** (Windows, PowerShell, with LimitSwitch running). This samples it over 60 seconds:
+### Measure it on Windows
+
+In PowerShell, with LimitSwitch running. This samples it over 60 seconds:
 
 ```powershell
 $ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
@@ -59,6 +61,19 @@ $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum; Start-Sleep 60; 
 ```
 
 Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **pythonw.exe** under the Details tab.
+
+### Measure it on macOS
+
+In Terminal, with LimitSwitch running. This samples it over 60 seconds:
+
+```sh
+pids=$(pgrep -f 'LimitSwitch[.]pyw|MacOS/LimitSwitch' | paste -sd, -)
+cpu() { ps -o time= -p "$pids" | awk -F: '{s=0; for (i=1; i<=NF; i++) s=s*60+$i; t+=s} END {print t}'; }
+a=$(cpu); sleep 60; b=$(cpu)
+ps -o rss= -p "$pids" | awk -v a="$a" -v b="$b" '{m+=$1} END {printf "%.1f MB memory, %.2f%% of one CPU core\n", m/1024, (b-a)/60*100}'
+```
+
+Try it idle in the menu bar, with the panel open, and with the full view open. Activity Monitor shows it too: search for **LimitSwitch**.
 
 ## macOS
 
