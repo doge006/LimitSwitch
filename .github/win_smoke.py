@@ -2,6 +2,7 @@
 opens with Account Switcher's own taskbar identity (not Edge's), and quitting cleans up; then,
 in demo mode, the taskbar view shows a block per provider and animates a swap.
 Screenshots go to ./shots."""
+import ctypes
 import json
 from pathlib import Path
 import sys
@@ -47,6 +48,11 @@ for _ in range(80):
 check(bool(windows), "the full view opened in its own window")
 if windows:
     check(win_window.get_identity(windows[0]) == win_window.APP_ID, "the window has Account Switcher's taskbar identity")
+    time.sleep(1)
+    rect = (ctypes.c_long * 4)()
+    ctypes.windll.user32.GetWindowRect(windows[0], rect)
+    print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
+    check(rect[3] - rect[1] <= 490, "the full view opens at its own size, not a remembered taller one")
 time.sleep(2)
 ImageGrab.grab().save(SHOTS / "1-full-view.png")
 config = Path.home() / ".codex" / "config.toml"
@@ -60,7 +66,6 @@ check(not (ROOT / ".runtime" / "tray.url").exists(), "quit ends the app")
 check(not config.exists() or "account-switcher" not in config.read_text(), "quit restores the Codex config")
 
 # ---- Taskbar view: demo accounts are in use, so a block per provider sits on the taskbar ----
-import ctypes  # noqa: E402
 from ctypes import wintypes  # noqa: E402
 import subprocess  # noqa: E402
 
@@ -163,6 +168,39 @@ if len(found) == 2:  # a click on the Codex block opens the panel with only the 
     time.sleep(1)
     ImageGrab.grab().crop((screen.width // 2, screen.height // 2, screen.width, screen.height)).save(SHOTS / "5-codex-panel.png")
     user32.SetCursorPos(10, 10)
+if found:  # a full-screen window (a game, a video) covers the taskbar, and the blocks go down with it
+    msg = wintypes.MSG()
+
+    def pump(seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            time.sleep(0.02)
+
+    user32.CreateWindowExW.restype = wintypes.HWND
+    full = user32.CreateWindowExW(0, "Static", "Full screen", 0x80000000 | 0x10000000, 0, 0,
+                                  screen.width, screen.height, None, None, None, None)
+    user32.keybd_event(0x12, 0, 0, 0)  # an Alt tap lets this process take the foreground
+    user32.SetForegroundWindow(full)
+    user32.keybd_event(0x12, 0, 2, 0)
+    pump(2)
+    print("full-screen window in front:", user32.GetForegroundWindow() == full, "· taskbar on top:",
+          bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
+    ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "6-under-full-screen.png")
+    check(not blocks(), "the blocks go down with the taskbar under a full-screen window")
+    user32.DestroyWindow(full)
+    back = []
+    for _ in range(12):
+        pump(0.5)
+        back = blocks()
+        if len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2]:
+            break
+    print("after full screen:", back, "· taskbar on top:", bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
+    # Claude is anchored by its left edge, Codex by its right (its width changed with the swap above).
+    check(len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2],
+          "the blocks are back, in place, when it closes")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):

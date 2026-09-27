@@ -124,7 +124,7 @@ def full_view_size():
         ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
         scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
         width, height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
-        return max(720, round(width / 2)), max(480, round(height / 2))
+        return max(720, round(width / 2)), max(480, min(760, round(height / 2)))
     except (OSError, AttributeError, ZeroDivisionError):
         return 1080, 800
 
@@ -142,7 +142,8 @@ def open_dashboard(url):
             try:
                 from .integrations import launcher
                 from .win_window import brand_full_view
-                brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico")
+                brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico",
+                                size=(width, height))
             except Exception:
                 logging.getLogger("account_switcher").exception("full view taskbar identity")
     else:

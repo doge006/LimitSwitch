@@ -115,10 +115,29 @@ def find_windows():
     return found
 
 
-def brand_full_view(relaunch, icon, seconds=15):
-    """Watch briefly for the full view's window (it takes Edge a moment to open) and give it
-    our identity. Runs in the background; does nothing when there's no such window."""
+def fit_window(hwnd, size):
+    """Size a window to (width, height) logical px, centred in its display's work area. Edge
+    remembers an app window's last size and ignores --window-size, so this sets it on open."""
+    user32 = ctypes.windll.user32
+    monitor = user32.MonitorFromWindow(hwnd, 2)
+    info = (ctypes.c_long * 10)()
+    info[0] = ctypes.sizeof(info)  # MONITORINFO: cbSize, rcMonitor, rcWork, dwFlags
+    if not user32.GetMonitorInfoW(monitor, info):
+        return
+    left, top, right, bottom = info[5], info[6], info[7], info[8]
+    scale = user32.GetDpiForWindow(hwnd) / 96 if hasattr(user32, "GetDpiForWindow") else 1
+    width = min(round(size[0] * (scale or 1)), right - left)
+    height = min(round(size[1] * (scale or 1)), bottom - top)
+    user32.SetWindowPos(hwnd, None, left + (right - left - width) // 2, top + (bottom - top - height) // 2,
+                        width, height, 0x0004 | 0x0010)  # SWP_NOZORDER | SWP_NOACTIVATE
+
+
+def brand_full_view(relaunch, icon, seconds=15, size=None):
+    """Watch briefly for the full view's window (it takes Edge a moment to open), give it our
+    identity and, when given, its size. Runs in the background; does nothing when there's no
+    such window."""
     def work():
+        user32 = ctypes.windll.user32
         ctypes.oledll.ole32.CoInitialize(None)
         deadline = time.monotonic() + seconds
         done = set()
@@ -129,6 +148,8 @@ def brand_full_view(relaunch, icon, seconds=15):
                 try:
                     set_identity(hwnd, relaunch, icon)
                     set_icon(hwnd, icon)
+                    if size and user32.IsZoomed(hwnd) == 0:
+                        fit_window(hwnd, size)
                     done.add(hwnd)
                 except OSError:
                     pass
