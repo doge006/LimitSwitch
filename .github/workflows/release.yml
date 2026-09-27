@@ -65,8 +65,13 @@ jobs:
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
           $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' })
           Write-Host "PASS updated in place and started again ($($running.Count) process(es))"
-          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
+          # The app's own setting (on at first run) writes the entry once it has started.
+          foreach ($i in 1..60) {
+            $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
+            if ($run) { break }; Start-Sleep -Milliseconds 250
+          }
           if (-not $run) { throw 'start at sign-in was not set' }
+          if ($run -notmatch 'LimitSwitch[.]exe') { throw "start at sign-in runs '$run', not LimitSwitch.exe" }
           Write-Host "PASS start at sign-in: $run"
       - name: The README's measuring snippet works
         run: |
