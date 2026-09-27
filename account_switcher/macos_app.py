@@ -358,7 +358,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         add("Full View…", "showFullView:")
         menu.addItem_(NSMenuItem.separatorItem())
         add("Auto Swap", "toggleAutoSwap:", checked=state["autoSwap"], enabled=not state["busy"])
-        add("AFK Mode", "toggleAfk:", checked=state["afk"], enabled=not state["busy"])
+        add("Auto Resume", "toggleAfk:", checked=state["afk"], enabled=not state["busy"])
         menu.addItem_(NSMenuItem.separatorItem())
         add(f"Quit {APP}", "quit:", "q")
         return menu

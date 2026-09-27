@@ -81,7 +81,7 @@ class TrayTests(unittest.TestCase):
 
     def test_menu_without_flyout_opens_full_view(self):
         items = [i for i in self.tray.menu_items() if i is not pystray.Menu.SEPARATOR]
-        self.assertEqual([i.text for i in items], ["Full view", "Auto swap", "AFK mode", "Quit"])
+        self.assertEqual([i.text for i in items], ["Full view", "Auto swap", "Auto resume", "Quit"])
         self.assertTrue(items[0].default)
         self.assertTrue(items[1].checked)
         self.assertFalse(items[2].checked)
@@ -93,10 +93,10 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(items[0].text, "Accounts")
         items[0](tray_.icon)  # left-click activates the default item
         self.assertEqual(flyout.toggles, 1)
-        next(i for i in items if i.text == "AFK mode")(tray_.icon)
+        next(i for i in items if i.text == "Auto resume")(tray_.icon)
         self.assertTrue(wait_for(lambda: self.controller.afk))
         tray_.refresh()
-        self.assertIn("AFK", tray_.icon.title)
+        self.assertIn("Auto resume", tray_.icon.title)
         self.assertGreater(flyout.refreshes, 0)  # open flyout is told to redraw
 
     def test_manual_swap_is_not_announced(self):

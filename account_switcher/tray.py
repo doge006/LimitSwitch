@@ -1,6 +1,6 @@
 """Account Switcher: a notification-area icon is the whole resident app.
 
-Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / AFK) with a
+Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / Auto resume) with a
 "Full view" button that opens the dashboard (the local Web UI) in a browser app window.
 Right-click offers a short menu.
 
@@ -69,7 +69,7 @@ def tooltip(state):
         if account:
             status = f"{headroom(account):.0f}% left" if account["eligible"] else "limit reached"
             lines.append(f"{title}: {short_name(account)} · {status}")
-    modes = ["Auto swap" if state["autoSwap"] else "Manual"] + (["AFK"] if state["afk"] else [])
+    modes = ["Auto swap" if state["autoSwap"] else "Manual"] + (["Auto resume"] if state["afk"] else [])
     lines.append(" · ".join(modes))
     return "\n".join(lines)[:127]  # Windows tooltip limit
 
@@ -233,7 +233,7 @@ class Tray:
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Auto swap", self.toggle("autoSwap"),
                                checked=lambda _: state["autoSwap"], enabled=not state["busy"])
-        yield pystray.MenuItem("AFK mode", self.toggle("afk"),
+        yield pystray.MenuItem("Auto resume", self.toggle("afk"),
                                checked=lambda _: state["afk"], enabled=not state["busy"])
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Quit", self.quit)

@@ -172,7 +172,7 @@ class FlyoutRenderTests(unittest.TestCase):
 
     def test_menu_renders_with_checks(self):
         items = [{"action": "panel", "label": "Open panel", "bold": True}, "-",
-                 {"action": "toggle:afk", "label": "AFK mode", "checked": True},
+                 {"action": "toggle:afk", "label": "Auto resume", "checked": True},
                  {"action": "x", "label": "Disabled", "enabled": False}]
         image, hits = fr.render_menu(items, hover="toggle:afk", scale=1.5)
         self.assertEqual([a for _, a in hits], ["panel", "toggle:afk"])

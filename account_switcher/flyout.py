@@ -723,11 +723,23 @@ class Flyout(Popup):
                 force_foreground(self.hwnd)
             else:
                 self.redraw()
-        elif action in ("compact", "expand"):
-            tray.act("compact", {"on": action == "compact"})
+        elif action == "expand":  # from the compact panel: the full panel, still popped out where it is
+            self.pinned = True
+            tray.act("compact", {"on": False})
+        elif action == "compact":
+            tray.act("compact", {"on": True})
         elif action == "hide":
-            self.close()  # a popped-out panel comes back where it was on the next tray click
+            if tray.state.get("compact") and not self.only:
+                # Hiding the compact panel: the tray icon opens the normal panel next time.
+                self.pinned, self.pinned_at = False, None
+                tray.act("compact", {"on": False})
+            self.close()  # a popped-out full panel comes back where it was on the next tray click
         elif action == "quit":
+            if self.armed != "quit":  # two clicks, so a stray one never quits
+                self.armed = "quit"
+                self.redraw()
+                user32.SetTimer(self.hwnd, TIMER_ARMED, CONFIRM_MS, None)
+                return
             self._destroy()
             tray.quit()
         elif action.startswith("swap:"):
@@ -767,7 +779,7 @@ class TrayMenu(Popup):
                 {"action": "full", "label": "Full view"},
                 "-",
                 {"action": "toggle:autoSwap", "label": "Auto swap", "checked": state["autoSwap"], "enabled": not state["busy"]},
-                {"action": "toggle:afk", "label": "AFK mode", "checked": state["afk"], "enabled": not state["busy"]}]
+                {"action": "toggle:afk", "label": "Auto resume", "checked": state["afk"], "enabled": not state["busy"]}]
         if getattr(self.tray, "taskbar", None):
             rows += ["-", {"action": "toggle:taskbar", "label": "Taskbar view", "checked": state.get("taskbar", True)}]
             displays = state.get("taskbarDisplays") or []
