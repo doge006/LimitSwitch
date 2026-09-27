@@ -152,5 +152,4 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): the installer and updater.
 - `account_switcher/macos_app.py` + `static/menu.*`: the macOS menu bar app and its panel.
 - `account_switcher/keychain.py`: macOS Keychain access.
-- `docs/REVIEW.md`: review and priorities.
-- `experiments/`, `proxy-fork/`, `codex-vitals-source/`: spikes and vendored upstream sources (see `SOURCE_PROVENANCE.md`).
+- `experiments/`: spikes and the Recovery lab's proxy harness (upstream sources: `SOURCE_PROVENANCE.md`).

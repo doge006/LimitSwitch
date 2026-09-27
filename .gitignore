@@ -17,3 +17,4 @@ experiments/proxy/.cache/
 experiments/proxy/gocache/
 experiments/proxy/gomodcache/
 .runtime/
+experiments/proxy/proxy-fork/

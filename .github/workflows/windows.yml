@@ -1,9 +1,7 @@
 name: Windows app
 
 on:
-  push:
-    branches: ["main", "claude/**"]
-  workflow_dispatch:
+  workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
 
 permissions:
   contents: write

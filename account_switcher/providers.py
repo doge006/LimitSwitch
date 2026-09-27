@@ -1,7 +1,7 @@
 """Claude Code and Codex adapters: read/write the live login and fetch real usage.
 
 Endpoints, headers and response shapes follow the vendored Codex Vitals clients
-(codex-vitals-source: ClaudeUsageClient.swift, codex_api.py). Standard library only.
+(after Codex Vitals: ClaudeUsageClient.swift, codex_api.py; see SOURCE_PROVENANCE.md). Standard library only.
 """
 import base64
 import hashlib

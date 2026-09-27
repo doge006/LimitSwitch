@@ -67,7 +67,8 @@ class LiveAccounts:
         self.providers = providers or {name: cls() for name, cls in PROVIDERS.items()}
         self.lock = threading.RLock()
         meta = self.vault.load_meta()
-        self.meta = {"accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
+        # Every saved setting comes back (panel size, taskbar view and its display, ...), not just these.
+        self.meta = {**meta, "accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
         self.live_ids = {}       # provider -> account in the official login file
