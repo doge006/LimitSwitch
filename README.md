@@ -2,6 +2,13 @@
 
 A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
 
+![The full view](docs/media/demo.gif)
+
+<p align="center"><img src="docs/media/panel.png" alt="The tray panel" width="420"></p>
+
+**Website:** https://doge006.github.io/Account-Switcher/
+
+
 ## Install (Windows)
 
 Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
@@ -157,7 +164,8 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
 - `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
-- `scripts/make_icons.py`: draws the app icon.
+- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` (the **Media** workflow runs it on Windows): the screenshots and GIF in `docs/media`.
+- `docs/`: the website (GitHub Pages).
 
 ## Credits
 

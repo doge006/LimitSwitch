@@ -2,7 +2,8 @@ name: Release
 
 # Builds LimitSwitch-Setup.exe, tests it (installs silently, the app starts and its full view
 # opens, installing again over the running copy works, the uninstaller removes it) and publishes
-# it as release v<version> (account_switcher/version.py).
+# it as release v<version> (account_switcher/version.py). The steps wait with WaitForExit on the
+# installer itself: Start-Process -Wait would also wait for the app it starts.
 on:
   workflow_dispatch:  # manual only
     inputs:
@@ -39,7 +40,7 @@ jobs:
       - name: Install silently and run it (demo accounts)
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          Start-Process -Wait -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startup'
+          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startup').WaitForExit()
           if (-not (Test-Path "$dir\LimitSwitch.exe")) { throw 'the exe was not installed' }
           if (-not (Test-Path "$dir\unins000.exe")) { throw 'no uninstaller' }
           # A silent install starts the app in the tray; close it and start it in demo mode instead.
@@ -59,7 +60,7 @@ jobs:
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           $before = (Get-Content $url -Raw).Trim()
-          Start-Process -Wait -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`""
+          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
           foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
           $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
@@ -70,7 +71,9 @@ jobs:
       - name: Uninstall
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          Start-Process -Wait -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # The uninstaller hands over to a copy of itself in %TEMP%: wait for its files to go.
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          foreach ($i in 1..120) { if (-not (Test-Path "$dir\unins000.exe")) { break }; Start-Sleep -Milliseconds 500 }
           Start-Sleep 2
           if (Test-Path "$dir\LimitSwitch.exe") { throw 'the exe is still there' }
           $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
