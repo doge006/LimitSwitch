@@ -29,12 +29,23 @@ def report(state, data):
         return None
 
 
+MARKER = "\x1b[2m⇄ LimitSwitch\x1b[0m"  # dim: shown at the end of the user's own line while the app runs
+
+
 def run_previous(command, raw):
+    """The user's own status line command: its output, unchanged."""
     try:
         done = subprocess.run(command, shell=True, input=raw, capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return
-    sys.stdout.buffer.write(done.stdout)
+        return b""
+    return done.stdout
+
+
+def with_marker(output):
+    """The user's status line with the marker after its last line (they may print several)."""
+    text = output.rstrip(b"\r\n")
+    ending = output[len(text):] or b"\n"
+    return text + (b"  " if text else b"") + MARKER.encode("utf-8") + ending
 
 
 def main(argv):
@@ -51,10 +62,21 @@ def main(argv):
     line = report(state, data if isinstance(data, dict) else {}) if state.get("url") else None
     previous = state.get("statusline")
     if previous:
-        run_previous(previous, raw)
+        output = run_previous(previous, raw)
+        write(with_marker(output) if line else output)  # the marker only while the app answers
     elif line:
-        print(line)
+        write((line + "\n").encode("utf-8"))
     return 0
+
+
+def write(data):
+    """UTF-8 bytes to stdout (Windows would otherwise use its old code page for a pipe)."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(data)
+        buffer.flush()
+    else:
+        sys.stdout.write(data.decode("utf-8", "replace"))
 
 
 if __name__ == "__main__":

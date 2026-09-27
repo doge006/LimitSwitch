@@ -564,7 +564,7 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        parts = ["⇄ " + (entry.get("email") or entry.get("identity") or "Claude")]
+        parts = ["⇄ LimitSwitch", entry.get("email") or entry.get("identity") or "Claude"]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"

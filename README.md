@@ -23,7 +23,7 @@ LimitSwitch does all of it in one small tray app: every limit at a glance, one-c
 
 ## Install (Windows)
 
-Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and has boxes for a Start menu entry and starting when you sign in (both on) and a desktop shortcut (off). It brings its own Python, so nothing else is needed.
+Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
@@ -54,10 +54,8 @@ Built to be barely noticeable:
 In PowerShell, with LimitSwitch running. This samples it over 60 seconds:
 
 ```powershell
-$ids = (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
-$before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum; Start-Sleep 60; $p = Get-Process -Id $ids
-'{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f (($p | Measure-Object WorkingSet64 -Sum).Sum / 1MB),
-    (($p | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB), ((($p | Measure-Object CPU -Sum).Sum - $before) / 60 * 100)
+$before = (Get-Process LimitSwitch).CPU; Start-Sleep 60; $p = Get-Process LimitSwitch
+'{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB), (($p.CPU - $before) / 60 * 100)
 ```
 
 Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **LimitSwitch**.

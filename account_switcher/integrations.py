@@ -252,9 +252,8 @@ class Integrations:
         if codex_present(self.codex_home):
             self.start_codex()
         meta = self.manager.meta
-        if "startWithWindows" not in meta:  # first run: what the installer's checkbox chose (on otherwise)
-            from .version import install_kind
-            meta["startWithWindows"] = start_entry_exists() if install_kind() == "installer" else True
+        if "startWithWindows" not in meta:  # first run: on (Settings turns it off)
+            meta["startWithWindows"] = True
             self.manager.save()
         if meta["startWithWindows"]:
             set_start_with_windows(True)
@@ -409,19 +408,6 @@ def set_start_with_windows(enabled):
                     pass
     except OSError as error:
         log.warning("start with Windows: %s", error)
-
-
-def start_entry_exists():
-    """Windows: is there a start-at-sign-in entry for the app (the installer writes it when asked)?"""
-    if sys.platform != "win32":
-        return True
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            winreg.QueryValueEx(key, RUN_NAME)
-            return True
-    except OSError:
-        return False
 
 
 def _set_launch_agent(enabled):

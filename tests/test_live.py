@@ -331,7 +331,7 @@ class LiveTests(unittest.TestCase):
         a = self.by_email(m, "a@example.com")
         five = next(w for w in a.windows() if w["key"] == "five_hour")
         self.assertEqual((five["used"], five["resetsAt"]), (77.0, reset))
-        self.assertEqual(line, "⇄ a@example.com · 5h 23% left · 1w 80% left")
+        self.assertEqual(line, "⇄ LimitSwitch · a@example.com · 5h 23% left · 1w 80% left")
         meta = m.meta["accounts"][a.id]
         now = time.time()
         self.assertGreater(m.due(a.id, meta, True, now) - now, 1700)  # while live, the API only every 30 min

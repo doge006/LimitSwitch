@@ -644,3 +644,11 @@ class IntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusLineMarkerTests(unittest.TestCase):
+    def test_own_status_line_gets_the_marker_after_its_last_line(self):
+        from account_switcher import statusline
+        self.assertEqual(statusline.with_marker(b"~/proj main\n"), b"~/proj main  " + statusline.MARKER.encode() + b"\n")
+        self.assertTrue(statusline.with_marker(b"one\ntwo").startswith(b"one\ntwo  "))
+        self.assertEqual(statusline.with_marker(b""), statusline.MARKER.encode() + b"\n")

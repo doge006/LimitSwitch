@@ -729,7 +729,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     rows = list(SETTINGS)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
         rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
-                     "Start in the tray when you sign in, so Codex keeps going through the app"))
+                     "Start in the tray when you sign in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
         rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
