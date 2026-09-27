@@ -2,6 +2,7 @@
 opens with Account Switcher's own taskbar identity (not Edge's), and quitting cleans up; then,
 in demo mode, the taskbar view shows a block per provider and animates a swap.
 Screenshots go to ./shots."""
+import ctypes
 import json
 from pathlib import Path
 import sys
@@ -47,6 +48,11 @@ for _ in range(80):
 check(bool(windows), "the full view opened in its own window")
 if windows:
     check(win_window.get_identity(windows[0]) == win_window.APP_ID, "the window has Account Switcher's taskbar identity")
+    time.sleep(1)
+    rect = (ctypes.c_long * 4)()
+    ctypes.windll.user32.GetWindowRect(windows[0], rect)
+    print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
+    check(rect[3] - rect[1] <= 490, "the full view opens at its own size, not a remembered taller one")
 time.sleep(2)
 ImageGrab.grab().save(SHOTS / "1-full-view.png")
 config = Path.home() / ".codex" / "config.toml"
@@ -60,7 +66,6 @@ check(not (ROOT / ".runtime" / "tray.url").exists(), "quit ends the app")
 check(not config.exists() or "account-switcher" not in config.read_text(), "quit restores the Codex config")
 
 # ---- Taskbar view: demo accounts are in use, so a block per provider sits on the taskbar ----
-import ctypes  # noqa: E402
 from ctypes import wintypes  # noqa: E402
 import subprocess  # noqa: E402
 
