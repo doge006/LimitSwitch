@@ -9,7 +9,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   smoke:
@@ -47,14 +47,12 @@ jobs:
           if (-not ($log -match 'started, version')) { throw "the new copy did not start" }
       - name: Keep screenshots
         if: always()
-        shell: bash
-        run: |
-          [ -d shots ] || exit 0
-          cd shots
-          git init -q -b ci-shots/${{ matrix.os }}
-          git -c user.name=ci -c user.email=ci@example.com add -A
-          git -c user.name=ci -c user.email=ci@example.com commit -qm "screenshots ${{ github.sha }}"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ci-shots/${{ matrix.os }}"
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: shots
+          retention-days: 7
+          if-no-files-found: ignore
 
   portable:
     if: inputs.portable
