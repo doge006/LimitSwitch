@@ -392,7 +392,7 @@ class Popup:
         Popup._creating = self
         try:
             self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | self.ex_style, CLASS_NAME,
-                                               "LimitSwitch", WS_POPUP, self.x, self.y, *image.size,
+                                               "LimitSwitcher", WS_POPUP, self.x, self.y, *image.size,
                                                self.owner, None, kernel32.GetModuleHandleW(None), None)
         finally:
             Popup._creating = None

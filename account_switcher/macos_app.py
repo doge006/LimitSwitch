@@ -62,11 +62,22 @@ def protocols(*names):
     return found
 
 
-def web_view(url, frame, transparent=False, handler=None):
+class PanelWebView(WKWebView):
+    """The panel's web view. It keeps the last mouse-down, so a drag the page starts (its header
+    and background, once the panel is detached) can be handed to the window: the page covers the
+    whole window, so the window can't be moved by its background otherwise."""
+    last_down = None
+
+    def mouseDown_(self, event):
+        PanelWebView.last_down = event
+        objc.super(PanelWebView, self).mouseDown_(event)
+
+
+def web_view(url, frame, transparent=False, handler=None, kind=WKWebView):
     config = WKWebViewConfiguration.alloc().init()
     if handler is not None:
         config.userContentController().addScriptMessageHandler_name_(handler, "app")
-    view = WKWebView.alloc().initWithFrame_configuration_(frame, config)
+    view = kind.alloc().initWithFrame_configuration_(frame, config)
     if transparent:
         view.setValue_forKey_(False, "drawsBackground")  # let the popover material show through
         if view.respondsToSelector_("setUnderPageBackgroundColor:"):
@@ -90,6 +101,8 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
             self.app.resize_panel(kind, float(body.get("value") or 0))
         elif kind == "dock":
             self.app.dock()
+        elif kind == "drag":
+            self.app.drag_panel()
         elif kind == "full":
             self.app.popover.performClose_(None)
             self.app.showFullView_(None)
@@ -108,6 +121,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.canvas = None
         self.panel_size = [PANEL_WIDTH, 420]
         self.detached = False
+        self.dock_after_close = False
         self.quitting = False
         return self
 
@@ -127,7 +141,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.bridge = Bridge.alloc().initWithApp_(self)
         base, token = self.url.split("/#token=")
         view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, PANEL_WIDTH, 420), transparent=True,
-                        handler=self.bridge)
+                        handler=self.bridge, kind=PanelWebView)
         self.panel_view = view
         self.popover = self.make_popover()
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
@@ -157,8 +171,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         if defaults.boolForKey_("HiddenIconAlertSuppressed"):
             return
         alert = NSAlert.alloc().init()
-        alert.setMessageText_("macOS is hiding LimitSwitch's menu bar icon")
-        alert.setInformativeText_("Turn on LimitSwitch under System Settings › Menu Bar › Allow in the Menu Bar. "
+        alert.setMessageText_("macOS is hiding LimitSwitcher's menu bar icon")
+        alert.setInformativeText_("Turn on LimitSwitcher under System Settings › Menu Bar › Allow in the Menu Bar. "
                                   "If it's already on, the menu bar may be full: quit another menu bar app, or hold ⌘ "
                                   "and drag icons out to make room. Everything also works from this window.")
         alert.addButtonWithTitle_("Open Menu Bar Settings")
@@ -212,7 +226,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         submenu("Edit", [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"), None, ("Cut", "cut:", "x"),
                          ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")])
         window = submenu("Window", [("Minimize", "performMiniaturize:", "m"), ("Close", "performClose:", "w"), None,
-                                    ("Show LimitSwitch", "showFullView:", "0", "self")])
+                                    ("Show LimitSwitcher", "showFullView:", "0", "self")])
         NSApp.setWindowsMenu_(window)
         return bar
 
@@ -285,6 +299,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             return
         self.popover.setContentViewController_(None)  # frees the page for the new popover
         self.popover = self.make_popover()
+        if self.dock_after_close:  # the dock button: open it again, attached to the menu bar icon
+            self.dock_after_close = False
+            self.togglePanel_(None)
 
     @objc.python_method
     def set_detached(self, detached):
@@ -332,14 +349,18 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
 
     @objc.python_method
     def dock(self):
-        """Back under the menu bar icon (the detached panel's dock button)."""
+        """Back under the menu bar icon (the detached panel's dock button): it closes, and
+        renew_popover opens the new popover attached."""
+        self.dock_after_close = True
         self.popover.performClose_(None)
-        AppHelper.callLater(0.35, self.show_docked)  # after the close animation and the new popover
 
     @objc.python_method
-    def show_docked(self):
-        if not self.popover.isShown():
-            self.togglePanel_(None)
+    def drag_panel(self):
+        """The page asked to move the detached panel (a press on its header or background)."""
+        window = self.panel_view.window()
+        event = PanelWebView.last_down or NSApp.currentEvent()
+        if self.detached and window is not None and event is not None:
+            window.performWindowDragWithEvent_(event)
 
     @objc.python_method
     def build_menu(self):
@@ -389,7 +410,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
                      | NSWindowStyleMaskResizable)
             area = NSScreen.mainScreen().visibleFrame().size if NSScreen.mainScreen() else NSMakeSize(1440, 900)
-            width, height = max(640, area.width / 2), max(420, area.height / 2)
+            width, height = max(640, area.width / 2), max(460, area.height / 2 + 40)
             window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
             window.setTitle_(APP)

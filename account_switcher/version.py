@@ -1,8 +1,8 @@
 """The app's version and how this copy was installed.
 
 VERSION is bumped for each release; the release workflow tags `v<VERSION>` and publishes
-LimitSwitch-Setup.exe. An installed copy has its own Python in `runtime/` and the
-uninstaller next to it; the DMG's LimitSwitch.app has them inside its bundle; a copy from
+LimitSwitcher-Setup.exe. An installed copy has its own Python in `runtime/` and the
+uninstaller next to it; the DMG's LimitSwitcher.app has them inside its bundle; a copy from
 source has `.git`.
 """
 from pathlib import Path
@@ -17,7 +17,7 @@ def install_kind():
     if (ROOT / "unins000.exe").exists():
         return "installer"
     if ".app/Contents/Resources/" in str(ROOT) + "/":
-        return "mac-app"  # the DMG's LimitSwitch.app
+        return "mac-app"  # the DMG's LimitSwitcher.app
     if (ROOT / ".git").exists():
         return "git"
     return "other"
@@ -25,15 +25,15 @@ def install_kind():
 
 def launcher():
     """Command that starts the app quietly (start at sign-in, shortcuts): the installed copy's
-    exe, else windowless Python running LimitSwitch.pyw."""
-    exe = ROOT / "LimitSwitch.exe"
+    exe, else windowless Python running LimitSwitcher.pyw."""
+    exe = ROOT / "LimitSwitcher.exe"
     if install_kind() == "installer" and exe.exists():
         return f'"{exe}"'
     python = Path(sys.executable)
     windowless = python.with_name("pythonw.exe")
     if windowless.exists():
         python = windowless
-    return f'"{python}" "{ROOT / "LimitSwitch.pyw"}"'
+    return f'"{python}" "{ROOT / "LimitSwitcher.pyw"}"'
 
 
 def newer(latest, current=VERSION):

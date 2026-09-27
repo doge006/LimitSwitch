@@ -1,4 +1,4 @@
-"""Builds the macOS disk image, build/LimitSwitch-<arch>.dmg: a self-contained LimitSwitch.app
+"""Builds the macOS disk image, build/LimitSwitcher-<arch>.dmg: a self-contained LimitSwitcher.app
 (its own Python, packages and code inside the bundle) next to a shortcut to Applications.
 
     python3.13 scripts/build_mac.py --arch arm64     (Apple silicon)
@@ -11,9 +11,9 @@ clang. Either architecture builds on either Mac. Used by .github/workflows/macos
   Contents/Resources/runtime.
 - Packages: requirements-native.txt, wheels for the target architecture only.
 - Code: Contents/Resources/app, compiled ahead of time; the app writes nothing inside the
-  bundle (LimitSwitch.pyw), so its ad-hoc signature stays valid.
+  bundle (LimitSwitcher.pyw), so its ad-hoc signature stays valid.
 - Executable: scripts/mac_launcher.c, running that Python in-process (menu bar space on macOS
-  26+; Activity Monitor shows LimitSwitch), with bundle-relative paths in launcher.conf.
+  26+; Activity Monitor shows LimitSwitcher), with bundle-relative paths in launcher.conf.
 """
 import argparse
 import compileall
@@ -50,7 +50,7 @@ def run(*command, **options):
 
 def fetch_python(arch, runtime, work):
     """python-build-standalone's install_only_stripped build of CPython 3.13 for `arch`."""
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "LimitSwitch-build"}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "LimitSwitcher-build"}
     if os.environ.get("GH_TOKEN"):
         headers["Authorization"] = "Bearer " + os.environ["GH_TOKEN"]
     with urlopen(Request(STANDALONE, headers=headers), timeout=60) as response:
@@ -59,7 +59,7 @@ def fetch_python(arch, runtime, work):
     asset = next(a for a in assets if pattern.search(a["name"]))
     archive = work / asset["name"]
     print("Python:", asset["name"], flush=True)
-    with urlopen(Request(asset["browser_download_url"], headers={"User-Agent": "LimitSwitch-build"}),
+    with urlopen(Request(asset["browser_download_url"], headers={"User-Agent": "LimitSwitcher-build"}),
                  timeout=300) as response, open(archive, "wb") as out:
         shutil.copyfileobj(response, out)
     with tarfile.open(archive) as tar:
@@ -84,7 +84,7 @@ def main():
     work = out / f"mac-{args.arch}"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    app = work / "dmg" / "LimitSwitch.app"
+    app = work / "dmg" / "LimitSwitcher.app"
     contents = app / "Contents"
     resources = contents / "Resources"
     (contents / "MacOS").mkdir(parents=True)
@@ -101,7 +101,7 @@ def main():
     code = resources / "app"
     shutil.copytree(ROOT / "account_switcher", code / "account_switcher",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    for name in ("LimitSwitch.pyw", "README.md", "THIRD-PARTY-NOTICES.txt"):
+    for name in ("LimitSwitcher.pyw", "README.md", "THIRD-PARTY-NOTICES.txt"):
         shutil.copy2(ROOT / name, code / name)
     for folder in (code, stdlib):
         ok = compileall.compile_dir(str(folder), quiet=1, workers=0,
@@ -110,13 +110,13 @@ def main():
             sys.exit("compiling the app failed")
 
     # 3. The executable and what it runs (paths inside Contents/Resources; the log in the user's folder).
-    run("clang", "-arch", args.arch, "-mmacosx-version-min=11.0", "-O2", "-Wall", "-o", contents / "MacOS" / "LimitSwitch",
+    run("clang", "-arch", args.arch, "-mmacosx-version-min=11.0", "-O2", "-Wall", "-o", contents / "MacOS" / "LimitSwitcher",
         ROOT / "scripts" / "mac_launcher.c")
     (resources / "launcher.conf").write_text("\n".join([
-        f"runtime/lib/libpython{PYTHON}.dylib", "runtime/bin/python3", "app/LimitSwitch.pyw",
+        f"runtime/lib/libpython{PYTHON}.dylib", "runtime/bin/python3", "app/LimitSwitcher.pyw",
         "~/Library/Application Support/AccountSwitcher/app.log"]) + "\n")
-    plist = {"CFBundleName": "LimitSwitch", "CFBundleDisplayName": "LimitSwitch",
-             "CFBundleIdentifier": "com.accountswitcher.app", "CFBundleExecutable": "LimitSwitch",
+    plist = {"CFBundleName": "LimitSwitcher", "CFBundleDisplayName": "LimitSwitcher",
+             "CFBundleIdentifier": "com.accountswitcher.app", "CFBundleExecutable": "LimitSwitcher",
              "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
              "CFBundleShortVersionString": VERSION, "CFBundleVersion": VERSION, "LSUIElement": True,
              "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
@@ -133,13 +133,13 @@ def main():
 
     # 5. The disk image: the app and a shortcut to Applications, to drag it onto.
     os.symlink("/Applications", work / "dmg" / "Applications")
-    dmg = out / f"LimitSwitch-{'AppleSilicon' if args.arch == 'arm64' else 'Intel'}.dmg"
+    dmg = out / f"LimitSwitcher-{'AppleSilicon' if args.arch == 'arm64' else 'Intel'}.dmg"
     dmg.unlink(missing_ok=True)
-    run("hdiutil", "create", "-quiet", "-volname", "LimitSwitch", "-srcfolder", work / "dmg", "-fs", "HFS+",
+    run("hdiutil", "create", "-quiet", "-volname", "LimitSwitcher", "-srcfolder", work / "dmg", "-fs", "HFS+",
         "-format", "UDZO", "-imagekey", "zlib-level=9", "-ov", dmg)
     size = sum(f.stat().st_size for f in app.rglob("*") if f.is_file() and not f.is_symlink())
     print(f"Built {dmg.name} ({dmg.stat().st_size / 2**20:.1f} MB; the app {size / 2**20:.0f} MB), "
-          f"LimitSwitch {VERSION}", flush=True)
+          f"LimitSwitcher {VERSION}", flush=True)
 
 
 if __name__ == "__main__":

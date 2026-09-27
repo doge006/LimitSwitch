@@ -133,6 +133,7 @@ class Controller:
                 "nameMode": name_mode,
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
+                "statusline": self.statusline_on(),
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -142,10 +143,19 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
+            self.notify("changed", None)
+            return
+        if action == "statusline":  # LimitSwitcher in Claude Code's status line; instant
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["statuslineShown"] = on
+                    self.gateway.manager.save()
+            self.statusline_shown = on
             self.notify("changed", None)
             return
         if action == "clock":  # 24-hour clock in the full view; instant
@@ -269,6 +279,12 @@ class Controller:
             return not clock_12h()
         return bool(saved)
 
+    def statusline_on(self):
+        """Show LimitSwitcher in Claude Code's status line (on unless turned off in Settings)."""
+        if self.live:
+            return bool(self.gateway.manager.meta.get("statuslineShown", True))
+        return getattr(self, "statusline_shown", True)
+
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
 
@@ -276,7 +292,10 @@ class Controller:
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
             return None
-        return self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
+        line = self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
+        # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
+        # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
+        return line if self.statusline_on() else None
 
     def afk_limit(self, body):
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""

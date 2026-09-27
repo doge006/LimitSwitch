@@ -2,7 +2,8 @@
 // Menu bar popover (macOS). Same local API as the full view; the native host listens for
 // {type: 'height' | 'width' | 'full' | 'dock' | 'quit'} messages and resizes / opens windows accordingly.
 // Dragged off the menu bar, the popover detaches and stays open; the host then calls
-// setDetached(true) and the page shows a button that docks it again.
+// setDetached(true): the page shows a button that docks it again, and a press on its header
+// or background moves it (the host drags the window).
 const hash = new URLSearchParams(location.hash.slice(1));
 const token = hash.get('token');
 let detached = false;
@@ -104,7 +105,7 @@ function row(account) {
 const COMPACT = 'M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5';  // corners pointing in
 const EXPAND = 'M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10';   // corners pointing out
 
-const DOCK = 'M13.5 2.5 8 8M8 4v4h4M11.5 9.5v3.5a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5V5a.5.5 0 0 1 .5-.5h3.5';
+const DOCK = ['M2.5 2.5h11', 'M8 13.5V5.5M5 8.5l3-3 3 3'];  // an arrow up to the menu bar
 const QUIT = ['M5.2 3.8a5.5 5.5 0 1 0 5.6 0', 'M8 1.6v6'];
 
 function toolButton(paths, title, onClick) {
@@ -128,7 +129,7 @@ function compactTools() {
   // Compact: its buttons sit in line with the first account, top right (no header or footer).
   const tools = el('span', 'tools');
   if (detached) tools.append(toolButton(DOCK, 'Back to the menu bar', dock));
-  tools.append(toolButton(EXPAND, 'Show everything', toggleSize), toolButton(QUIT, 'Quit LimitSwitch', quit));
+  tools.append(toolButton(EXPAND, 'Show everything', toggleSize), toolButton(QUIT, 'Quit LimitSwitcher', quit));
   return tools;
 }
 
@@ -244,6 +245,11 @@ new ResizeObserver(() => {
   if (height && height !== postedHeight) { postedHeight = height; post({ type: 'height', value: height }); }
 }).observe(document.body);
 window.setDetached = on => { detached = !!on; if (state) render(); };
+document.addEventListener('mousedown', event => {
+  if (!detached || event.button !== 0) return;
+  if (event.target.closest('button, input, label, a, select, .row:not(.mini)')) return;  // controls and accounts stay clickable
+  post({ type: 'drag' });
+});
 
 async function follow() {
   let revision = -1;

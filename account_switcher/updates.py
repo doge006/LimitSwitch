@@ -2,7 +2,7 @@
 
 - Check: the latest release's tag against version.VERSION. One small HTTPS request to the GitHub
   API; nothing is downloaded until the user asks.
-- Install, installed copy (Windows): download the release's LimitSwitch-Setup.exe and run it
+- Install, installed copy (Windows): download the release's LimitSwitcher-Setup.exe and run it
   silently into this folder; it closes the app, replaces the files and starts it again. Saved
   accounts and settings live elsewhere (%LOCALAPPDATA%\\AccountSwitcher), so they are untouched.
 - Install, macOS app (the DMG's): run scripts/install-mac.sh from GitHub, as the README's install
@@ -24,13 +24,13 @@ from .version import REPO, ROOT, VERSION, install_kind, newer
 
 log = logging.getLogger("account_switcher.updates")
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
-ASSET = "LimitSwitch-Setup.exe"
+ASSET = "LimitSwitcher-Setup.exe"
 MAC_INSTALL = f"https://raw.githubusercontent.com/{REPO}/main/scripts/install-mac.sh"
 
 
 def latest_release(timeout=10):
     """{"version", "url", "setup", "notes"} of the newest release, or None when there is none."""
-    request = Request(API, headers={"Accept": "application/vnd.github+json", "User-Agent": "LimitSwitch/" + VERSION})
+    request = Request(API, headers={"Accept": "application/vnd.github+json", "User-Agent": "LimitSwitcher/" + VERSION})
     try:
         with urlopen(request, timeout=timeout, context=tls.context()) as response:
             data = json.load(response)
@@ -72,8 +72,8 @@ def install(release):
     if not release.get("setup"):
         return "This release has no Windows installer"
     try:
-        target = Path(tempfile.gettempdir()) / f"LimitSwitch-Setup-{release['latest']}.exe"
-        request = Request(release["setup"], headers={"User-Agent": "LimitSwitch/" + VERSION})
+        target = Path(tempfile.gettempdir()) / f"LimitSwitcher-Setup-{release['latest']}.exe"
+        request = Request(release["setup"], headers={"User-Agent": "LimitSwitcher/" + VERSION})
         with urlopen(request, timeout=120, context=tls.context()) as response, open(target, "wb") as out:
             while True:
                 chunk = response.read(1 << 16)

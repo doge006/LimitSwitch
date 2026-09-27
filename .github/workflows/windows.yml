@@ -28,17 +28,17 @@ jobs:
           New-Item -ItemType Directory -Force "$HOME\.codex" | Out-Null
           python scripts/installer.py --skip-code --no-launch
       - name: Start the app with its full view
-        run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitch.pyw","--show" -WorkingDirectory $PWD
+        run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitcher.pyw","--show" -WorkingDirectory $PWD
       - name: Smoke test
         run: .venv\Scripts\python.exe .github\win_smoke.py
       - name: Updating replaces a copy it can't reach (its URL file is gone)
         run: |
-          Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitch.pyw" -WorkingDirectory $PWD
+          Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitcher.pyw" -WorkingDirectory $PWD
           Start-Sleep 8
           Remove-Item .runtime\tray.url -ErrorAction SilentlyContinue
           python scripts/installer.py --skip-code
           Start-Sleep 3
-          $all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          $all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitcher[.]pyw' })
           $all | ForEach-Object { "$($_.ProcessId) <- $($_.ParentProcessId): $($_.CommandLine)" }
           # A venv's pythonw.exe starts the real Python as its child: one app, two processes.
           $ids = $all | ForEach-Object { $_.ProcessId }
@@ -72,7 +72,7 @@ jobs:
         run: |
           $pythonw = Join-Path (Split-Path (Get-Command python).Source) 'pythonw.exe'
           function Sample([int]$seconds, [scriptblock]$during) {
-            $ids = (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
+            $ids = (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitcher.exe' -or $_.CommandLine -match 'LimitSwitcher[.]pyw' }).ProcessId
             $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum
             $end = (Get-Date).AddSeconds($seconds)
             while ((Get-Date) -lt $end) { & $during }
@@ -92,7 +92,7 @@ jobs:
               Write-Host "==== Without the profiler ===="
             }
             Remove-Item .runtime\tray.url -ErrorAction SilentlyContinue
-            Start-Process -FilePath $pythonw -ArgumentList 'LimitSwitch.pyw', '--demo' -WorkingDirectory $PWD
+            Start-Process -FilePath $pythonw -ArgumentList 'LimitSwitcher.pyw', '--demo' -WorkingDirectory $PWD
             foreach ($i in 1..80) { if (Test-Path .runtime\tray.url) { break }; Start-Sleep -Milliseconds 250 }
             Start-Sleep 35  # start-up done, and memory handed back after it (30 s)
             $base, $token = (Get-Content .runtime\tray.url -Raw).Trim() -split '/#token='

@@ -26,8 +26,8 @@ from .vault import atomic_write
 
 log = logging.getLogger("account_switcher.integrations")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "LimitSwitch"
-OLD_RUN_NAME = "AccountSwitcher"  # before the rename
+RUN_NAME = "LimitSwitcher"
+OLD_RUN_NAMES = ("LimitSwitch", "AccountSwitcher")  # before the renames
 THREADS = "codex-threads"   # encrypted: which account made which item, checkpoint texts
 
 
@@ -161,17 +161,17 @@ class CodexServerWatch:
             for broker in brokers:
                 processes.end_tree(broker.pid)
             ended = True
-            self.notify("log", "Restarted the Claude Code Codex plugin's background Codex (it started before LimitSwitch), "
+            self.notify("log", "Restarted the Claude Code Codex plugin's background Codex (it started before LimitSwitcher), "
                                "so its jobs switch accounts too")
         for process, kind in older:
             if kind in ("session", "embedded") and process.pid not in self.told:
                 self.told.add(process.pid)
                 when = time.strftime("%H:%M", time.localtime(process.started))
                 if kind == "session":
-                    self.notify("log", f"A Codex window opened at {when}, before LimitSwitch, doesn't go through it, so "
+                    self.notify("log", f"A Codex window opened at {when}, before LimitSwitcher, doesn't go through it, so "
                                        "it won't switch accounts. Restart that Codex session to fix it.")
                 else:
-                    self.notify("log", f"Codex in {process.owner} started at {when}, before LimitSwitch, so it doesn't go "
+                    self.notify("log", f"Codex in {process.owner} started at {when}, before LimitSwitcher, so it doesn't go "
                                        f"through it and won't switch accounts. Reload {process.owner} (or restart its "
                                        "Codex) to fix it.")
         return ended
@@ -378,7 +378,7 @@ class Integrations:
 
 
 def launcher():
-    """Command that starts the app quietly (the installed exe, or pythonw running LimitSwitch.pyw)."""
+    """Command that starts the app quietly (the installed exe, or pythonw running LimitSwitcher.pyw)."""
     from .version import launcher as command
     return command()
 
@@ -402,7 +402,7 @@ def set_start_with_windows(enabled):
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launcher())
-            for name in ((OLD_RUN_NAME,) if enabled else (RUN_NAME, OLD_RUN_NAME)):
+            for name in (OLD_RUN_NAMES if enabled else (RUN_NAME,) + OLD_RUN_NAMES):
                 try:
                     winreg.DeleteValue(key, name)
                 except FileNotFoundError:
@@ -421,11 +421,11 @@ def _set_launch_agent(enabled):
             pass
         return
     python = Path(sys.executable)
-    script = Path(__file__).resolve().parent.parent / "LimitSwitch.pyw"
+    script = Path(__file__).resolve().parent.parent / "LimitSwitcher.pyw"
     arguments = [str(python), str(script)]
     app = os.environ.get("ACCOUNT_SWITCHER_APP")
     if app:  # started as the app: log in as the app (its launcher, quietly)
-        for name in ("LimitSwitch", "AccountSwitcher"):
+        for name in ("LimitSwitcher", "AccountSwitcher"):
             if (Path(app) / "Contents" / "MacOS" / name).exists():
                 arguments = [str(Path(app) / "Contents" / "MacOS" / name), "--at-login"]
                 break

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install or update LimitSwitch (macOS). Double-click in Finder, or run in Terminal.
+# Install or update LimitSwitcher (macOS). Double-click in Finder, or run in Terminal.
 # Options: --branch NAME, --force, --no-launch
 cd "$(dirname "$0")" || exit 1
 if ! xcode-select -p >/dev/null 2>&1; then

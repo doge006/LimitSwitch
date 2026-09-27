@@ -258,6 +258,14 @@ class LiveTests(unittest.TestCase):
             start.assert_called_once_with(False)
             self.assertFalse(controller.snapshot()["launchAtLogin"])
             self.assertFalse(controller.gateway.manager.meta["startWithWindows"])  # remembered
+            # Claude Code's status line: shown by default; turned off, the usage still comes in.
+            self.assertTrue(state["statusline"])
+            limits = {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 3600}}
+            self.assertIn("LimitSwitcher", controller.statusline({"rate_limits": limits}) or "")
+            controller.action("statusline", {"on": False})
+            self.assertFalse(controller.snapshot()["statusline"])
+            self.assertIsNone(controller.statusline({"rate_limits": limits}))
+            self.assertFalse(controller.gateway.manager.meta["statuslineShown"])  # remembered
         finally:
             controller.close()
 
@@ -331,7 +339,7 @@ class LiveTests(unittest.TestCase):
         a = self.by_email(m, "a@example.com")
         five = next(w for w in a.windows() if w["key"] == "five_hour")
         self.assertEqual((five["used"], five["resetsAt"]), (77.0, reset))
-        self.assertEqual(line, "⇄ LimitSwitch · a@example.com · 5h 23% left · 1w 80% left")
+        self.assertEqual(line, "⇄ LimitSwitcher · a@example.com · 5h 23% left · 1w 80% left")
         meta = m.meta["accounts"][a.id]
         now = time.time()
         self.assertGreater(m.due(a.id, meta, True, now) - now, 1700)  # while live, the API only every 30 min

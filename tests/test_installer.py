@@ -82,7 +82,7 @@ class MacBundleTests(unittest.TestCase):
     def test_app_bundle_is_menu_bar_only_and_starts_the_venv(self):
         installer = load_installer()
         with tempfile.TemporaryDirectory() as tmp:
-            system, user = Path(tmp) / "system" / "LimitSwitch.app", Path(tmp) / "user" / "LimitSwitch.app"
+            system, user = Path(tmp) / "system" / "LimitSwitcher.app", Path(tmp) / "user" / "LimitSwitcher.app"
             system.parent.mkdir()
             installer.MAC_APPS = (system, user)
             installer.build_mac_app(user)  # an older install in ~/Applications
@@ -96,7 +96,7 @@ class MacBundleTests(unittest.TestCase):
             launcher = system / "Contents" / "MacOS" / "AccountSwitcher"
             self.assertTrue(os.access(launcher, os.X_OK))
             text = launcher.read_text()
-            self.assertIn("LimitSwitch.pyw", text)
+            self.assertIn("LimitSwitcher.pyw", text)
             self.assertIn('>>"$LOG" 2>&1', text)
             self.assertIn("arch -arm64", text)
             self.assertIn("--at-login", text)  # a failed start leaves its error in app.log
@@ -108,7 +108,7 @@ class MacBundleTests(unittest.TestCase):
         installer = load_installer()
         self.assertTrue(installer.PREBUILT_LAUNCHER.is_file())  # universal build from CI, kept in the repo
         with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "LimitSwitch"
+            target = Path(tmp) / "LimitSwitcher"
             self.assertTrue(installer.build_launcher(target, prebuilt_only=True))
             self.assertEqual(target.read_bytes(), installer.PREBUILT_LAUNCHER.read_bytes())
             self.assertTrue(os.access(target, os.X_OK))
@@ -119,8 +119,8 @@ class MacBundleTests(unittest.TestCase):
             integrations._set_launch_agent(True)
             plist = plistlib.loads(integrations.launch_agent_path().read_bytes())
             self.assertTrue(plist["RunAtLoad"])
-            self.assertTrue(plist["ProgramArguments"][1].endswith("LimitSwitch.pyw"))
-            app = Path(tmp) / "LimitSwitch.app"
+            self.assertTrue(plist["ProgramArguments"][1].endswith("LimitSwitcher.pyw"))
+            app = Path(tmp) / "LimitSwitcher.app"
             (app / "Contents" / "MacOS").mkdir(parents=True)
             (app / "Contents" / "MacOS" / "AccountSwitcher").write_text("")
             with mock.patch.dict(os.environ, {"ACCOUNT_SWITCHER_APP": str(app)}):

@@ -22,6 +22,7 @@ How it works
   Codex router just before their access token expires).
 """
 import json
+import logging
 import os
 from pathlib import Path
 import random
@@ -233,6 +234,9 @@ class LiveAccounts:
                     wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
                     self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
                               backoffKind="rate", pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
+                    logging.getLogger("account_switcher").warning(
+                        "%s usage check for %s (%s) rate limited: next try in %d min",
+                        meta["provider"], meta.get("email") or account_id, "in use" if is_active else "not in use", wait / 60)
                 if error.transient:
                     # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
                     # 1, 2, 4... min. Only a problem that lasts gets shown.
@@ -568,7 +572,7 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        parts = ["⇄ LimitSwitch", entry.get("email") or entry.get("identity") or "Claude"]
+        parts = ["⇄ LimitSwitcher", entry.get("email") or entry.get("identity") or "Claude"]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"

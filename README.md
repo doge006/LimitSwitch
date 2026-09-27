@@ -1,4 +1,4 @@
-# LimitSwitch
+# LimitSwitcher
 
 A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
 
@@ -19,11 +19,11 @@ I made this mainly for myself and decided to publish it on GitHub. Nothing else 
 - **Few cover both** Claude Code and Codex, and fewer run on Windows.
 - **Most are heavy.** I'm a performance fanatic, and I didn't want a browser engine or an Electron app sitting in my tray all day just to show a few numbers.
 
-LimitSwitch does all of it in one small tray app: every limit at a glance, one-click switching that open sessions pick up, and Auto swap / Auto resume, so a long task keeps going when an account runs out.
+LimitSwitcher does all of it in one small tray app: every limit at a glance, one-click switching that open sessions pick up, and Auto swap / Auto resume, so a long task keeps going when an account runs out.
 
 ## Install (Windows)
 
-Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
+Download **`LimitSwitcher-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitcher` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
@@ -39,9 +39,9 @@ Paste this into Terminal:
 curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
 ```
 
-It downloads the right version for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitch** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
+It downloads the right version for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
 
-Prefer to click? Download `LimitSwitch-AppleSilicon.dmg` or `LimitSwitch-Intel.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
+Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` or `LimitSwitcher-Intel.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
 
 It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/AccountSwitcher`. **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
 
@@ -56,33 +56,33 @@ Built to be barely noticeable:
 
 ### Measure it on Windows
 
-In PowerShell, with LimitSwitch running. This samples it over 60 seconds:
+In PowerShell, with LimitSwitcher running. This samples it over 60 seconds:
 
 ```powershell
-$before = (Get-Process LimitSwitch).CPU; Start-Sleep 60; $p = Get-Process LimitSwitch
+$before = (Get-Process LimitSwitcher).CPU; Start-Sleep 60; $p = Get-Process LimitSwitcher
 '{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB), (($p.CPU - $before) / 60 * 100)
 ```
 
-Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **LimitSwitch**.
+Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **LimitSwitcher**.
 
 ### Measure it on macOS
 
-In Terminal, with LimitSwitch running. This samples it over 60 seconds:
+In Terminal, with LimitSwitcher running. This samples it over 60 seconds:
 
 ```sh
-pids=$(pgrep -f 'LimitSwitch[.]pyw|MacOS/LimitSwitch' | paste -sd, -)
+pids=$(pgrep -f 'LimitSwitcher[.]pyw|MacOS/LimitSwitcher' | paste -sd, -)
 cpu() { ps -o time= -p "$pids" | awk -F: '{s=0; for (i=1; i<=NF; i++) s=s*60+$i; t+=s} END {print t}'; }
 a=$(cpu); sleep 60; b=$(cpu)
 ps -o rss= -p "$pids" | awk -v a="$a" -v b="$b" '{m+=$1} END {printf "%.1f MB memory, %.2f%% of one CPU core\n", m/1024, (b-a)/60*100}'
 ```
 
-Try it idle in the menu bar, with the panel open, and with the full view open. Activity Monitor shows it too: search for **LimitSwitch**.
+Try it idle in the menu bar, with the panel open, and with the full view open. Activity Monitor shows it too: search for **LimitSwitcher**.
 
 ## macOS
 
 - **Menu bar:** the tray becomes a menu bar icon.
   - Click it for the panel, a native popover that follows light and dark mode.
-  - Drag the panel away from the menu bar and it stays open as a floating window.
+  - Drag the panel away from the menu bar and it stays open where you leave it; drag it by its header or background to move it again. Its dock button (an arrow up to a bar) puts it back under the menu bar icon.
   - Right-click (or Control-click) for the menu; **Full View…** opens the full view in its own native window.
   - There's no Dock icon.
 - **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
@@ -92,7 +92,7 @@ Try it idle in the menu bar, with the panel open, and with the full view open. A
 
 ## Your accounts
 
-- **Works with:** Claude Code (the CLI and its VS Code extension) and Codex (the CLI, its editor extensions and the Claude Code Codex plugin). Not the Claude desktop or web app, which have their own login. A Codex session or editor that was already open before LimitSwitch started keeps its account until it's reloaded; LimitSwitch tells you when that's the case.
+- **Works with:** Claude Code (the CLI and its VS Code extension) and Codex (the CLI, its editor extensions and the Claude Code Codex plugin). Not the Claude desktop or web app, which have their own login. A Codex session or editor that was already open before LimitSwitcher started keeps its account until it's reloaded; LimitSwitcher tells you when that's the case.
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
 - **Switching:** click an account and every session moves to it, including sessions that are already open. Nothing needs restarting.
   - *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request.
@@ -154,6 +154,16 @@ Check the providers' terms for using several subscriptions this way; that's your
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
 - **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); Settings → **Launch with Windows** turns that off.
+
+## Claude Code status line
+
+While LimitSwitcher runs, it adds itself to Claude Code's status line (the line under the prompt):
+
+- **With your own status line:** yours stays exactly as it was, with a dim `⇄ LimitSwitcher` after it, so you can see the app is on.
+- **Without one:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
+- **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live without asking Claude's usage API, which allows only a few requests an hour.
+- **Turn it off** in Settings → **Claude Code status line**. It then shows nothing of LimitSwitcher (your own status line is untouched), and the usage still comes in the same way.
+- **On quit** your original status line setting is put back.
 
 ## Development
 

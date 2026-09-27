@@ -1,4 +1,4 @@
-"""Measure the running LimitSwitch: memory and CPU over a stretch of time.
+"""Measure the running LimitSwitcher: memory and CPU over a stretch of time.
 
     .venv\\Scripts\\python -m pip install psutil      (once; Windows)
     .venv\\Scripts\\python scripts\\measure.py         (60 s; --seconds N to change)
@@ -21,15 +21,15 @@ except ImportError:
 
 
 def app_processes():
-    """The app's processes: LimitSwitch.exe (installed), or Python running LimitSwitch.pyw or
+    """The app's processes: LimitSwitcher.exe (installed), or Python running LimitSwitcher.pyw or
     account_switcher.tray (from source; a venv's pythonw.exe starts the real Python as its child:
     both are counted)."""
     found = []
     for process in psutil.process_iter(["name", "cmdline"]):
         line = " ".join(process.info.get("cmdline") or [])
         name = (process.info.get("name") or "").lower()
-        if name == "limitswitch.exe" or ("python" in name and (
-                "LimitSwitch.pyw" in line or "account_switcher.tray" in line or "LimitSwitch" in line)):
+        if name == "limitswitcher.exe" or ("python" in name and (
+                "LimitSwitcher.pyw" in line or "account_switcher.tray" in line or "LimitSwitcher" in line)):
             found.append(process)
     return found
 
@@ -56,7 +56,7 @@ def main():
     args = parser.parse_args()
     processes = app_processes()
     if not processes:
-        sys.exit("LimitSwitch isn't running.")
+        sys.exit("LimitSwitcher isn't running.")
     _, _, cpu_before, _ = snapshot(processes)
     start = time.monotonic()
     peak = 0.0
@@ -67,7 +67,7 @@ def main():
     elapsed = time.monotonic() - start
     used = cpu_after - cpu_before
     mb = 1024 * 1024
-    print(f"LimitSwitch over {elapsed:.0f} s ({len(processes)} process{'es' if len(processes) != 1 else ''}):")
+    print(f"LimitSwitcher over {elapsed:.0f} s ({len(processes)} process{'es' if len(processes) != 1 else ''}):")
     print(f"  memory     {memory / mb:.1f} MB working set, {private / mb:.1f} MB private (peak {peak / mb:.1f} MB)")
     print(f"  CPU        {100 * used / elapsed:.3f}% of one core ({used * 1000:.0f} ms of CPU time)")
     print(f"  threads    {threads:.0f}")

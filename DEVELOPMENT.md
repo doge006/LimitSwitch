@@ -1,4 +1,4 @@
-# Developing LimitSwitch
+# Developing LimitSwitcher
 
 ## Install and update from source (Windows and macOS)
 
@@ -7,13 +7,13 @@ One installer for both; it detects the OS. Run it again at any time to update.
 - **Windows:** double-click `Install.cmd` (or `Update.cmd`, which does the same).
 - **macOS:** in Terminal, run `bash Install.command` in this folder (or `bash Update.command`).
   - Double-clicking works only if the folder came from `git clone`. A downloaded ZIP is flagged by macOS, and it refuses to open the script ("can't verify it's free of malware"). To double-click anyway, clear the flag once with `xattr -dr com.apple.quarantine <folder>`, or use **System Settings → Privacy & Security → Open Anyway**.
-  - The **LimitSwitch** app the installer creates opens without that warning, because it's made on your Mac.
+  - The **LimitSwitcher** app the installer creates opens without that warning, because it's made on your Mac.
 
 Each run:
 1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
 2. Updates this folder from GitHub (`main`). Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
 3. Sets up a private Python environment (`.venv`) with this OS's requirements; they're only reinstalled when they change.
-4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **LimitSwitch** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable).
+4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **LimitSwitcher** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable).
 5. Closes any running copy and starts the new version. Its output is also saved to `update.log` next to `app.log`.
 
 Options: `--branch NAME` (follow another branch), `--force`, `--no-launch`. A copy from source also offers updates in Settings; there, **Update** runs this installer.
@@ -47,9 +47,9 @@ Measure the tray alone, with the panel open, and with the full view open, a few 
 
 ## Publishing a release
 
-Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitch-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
+Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitcher-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
 
-The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitch-AppleSilicon.dmg` and `LimitSwitch-Intel.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs the Apple silicon one with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMGs are kept on the run for 14 days.
+The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitcher-AppleSilicon.dmg` and `LimitSwitcher-Intel.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs the Apple silicon one with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMGs are kept on the run for 14 days.
 
 ## Layout
 
@@ -68,7 +68,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `account_switcher/macos_app.py` + `static/menu.*`: the macOS menu bar app and its panel.
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
-- `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
-- `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitch.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
+- `scripts/build_windows.ps1` + `LimitSwitcher.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitcher.exe`).
+- `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitcher.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
 - `docs/media/`: the README's screenshots and GIF.

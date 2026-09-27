@@ -1,18 +1,18 @@
-; LimitSwitch's Windows installer (Inno Setup 6), built by scripts\build_windows.ps1:
-;   iscc /DAppVersion=1.0.0 /DSourceDir=<build\LimitSwitch> scripts\LimitSwitch.iss
+; LimitSwitcher's Windows installer (Inno Setup 6), built by scripts\build_windows.ps1:
+;   iscc /DAppVersion=1.0.0 /DSourceDir=<build\LimitSwitcher> scripts\LimitSwitcher.iss
 ; Per user, no admin rights. It asks where to install, has boxes for a Start menu entry (on)
 ; and a desktop shortcut (off); starting at sign-in is the app's own setting (on at first run). The app's in-app updater runs it with
 ; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<this folder>: it closes the app, replaces the
 ; files and starts the app again. Saved accounts and settings live in %LOCALAPPDATA%\AccountSwitcher
 ; and are kept, also by the uninstaller.
 
-#define AppName "LimitSwitch"
-#define AppExe "LimitSwitch.exe"
+#define AppName "LimitSwitcher"
+#define AppExe "LimitSwitcher.exe"
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\build\LimitSwitch"
+  #define SourceDir "..\build\LimitSwitcher"
 #endif
 
 [Setup]
@@ -35,7 +35,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir=..\build
-OutputBaseFilename=LimitSwitch-Setup
+OutputBaseFilename=LimitSwitcher-Setup
 SetupIconFile=..\account_switcher\static\assets\switcher.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -55,13 +55,18 @@ Name: "desktopicon"; Description: "Add a desktop shortcut"; Flags: unchecked
 ; An update replaces the app and its Python whole, so no file of an older version is left behind.
 Type: filesandordirs; Name: "{app}\account_switcher"
 Type: filesandordirs; Name: "{app}\runtime"
+; From before the rename to LimitSwitcher (1.0.0 test builds were LimitSwitch).
+Type: files; Name: "{app}\LimitSwitch.exe"
+Type: files; Name: "{app}\LimitSwitch.pyw"
+Type: files; Name: "{userprograms}\LimitSwitch.lnk"
+Type: files; Name: "{userdesktop}\LimitSwitch.lnk"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Claude Code and Codex usage limits and account switching"; \
-    AppUserModelID: "LimitSwitch.App"; Tasks: startmenu
+    AppUserModelID: "LimitSwitcher.App"; Tasks: startmenu
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
@@ -69,7 +74,7 @@ Filename: "{app}\{#AppExe}"; Parameters: "--show"; Description: "Start {#AppName
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
-Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\LimitSwitch.pyw"" --quit"; WorkingDir: "{app}"; \
+Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\LimitSwitcher.pyw"" --quit"; WorkingDir: "{app}"; \
     Flags: runhidden waituntilterminated; RunOnceId: "QuitApp"
 
 [UninstallDelete]
@@ -80,14 +85,16 @@ Type: filesandordirs; Name: "{app}\runtime"
 [Code]
 procedure QuitRunningCopy();
 var
-  Python: String;
+  Python, Script: String;
   Code: Integer;
 begin
   Python := ExpandConstant('{app}\runtime\pythonw.exe');
-  if FileExists(Python) then
+  Script := ExpandConstant('{app}\LimitSwitcher.pyw');
+  if not FileExists(Script) then
+    Script := ExpandConstant('{app}\LimitSwitch.pyw'); { a copy from before the rename }
+  if FileExists(Python) and FileExists(Script) then
   begin
-    Exec(Python, AddQuotes(ExpandConstant('{app}\LimitSwitch.pyw')) + ' --quit', ExpandConstant('{app}'),
-         SW_HIDE, ewWaitUntilTerminated, Code);
+    Exec(Python, AddQuotes(Script) + ' --quit', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code);
     Sleep(500); { its process ends just after it says it has quit }
   end;
 end;
@@ -101,5 +108,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
+  begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#AppName}');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'LimitSwitch');
+  end;
 end;
