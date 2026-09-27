@@ -109,6 +109,8 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertIn("personal@example.com", names)
         self.assertNotIn("second@example.com", names)  # not in use: not shown
         self.assertEqual(sorted(a for _, a in layout.hits), ["expand", "pin", "quit"])  # no switching, no toggles
+        pinned, _ = fr.build(state, pinned=True)
+        self.assertIn("hide", [a for _, a in pinned.hits])  # popped out: can be minimized
         image, _ = fr.render(state)
         self.assertLess(image.size[1], full_image.size[1] * 0.5)
         self.assertLess(image.size[0], full_image.size[0])

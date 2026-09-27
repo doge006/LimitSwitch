@@ -17,7 +17,7 @@ PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 SS = 2  # supersampling factor for shapes
 
 WIDTH = 404         # panel width
-COMPACT_WIDTH = 300  # compact panel width
+COMPACT_WIDTH = 320  # compact panel width
 MENU_WIDTH = 232
 MARGIN = 18         # transparent margin that holds the shadow
 RADIUS = 8
@@ -378,61 +378,107 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
 
 
 def _build_compact(L, W, state, fx, h, pinned):
-    """Compact panel: the account in use for each provider, as small as it gets. Its buttons
-    (pop out, expand, quit) sit at the top right, in line with the first account."""
-    y = 5
+    """Compact panel: the account in use for each provider, small but readable. Its buttons (pop
+    out, expand, quit) sit at the top right, in line with the first account. When an account
+    swaps, the old row slides out to the left while the new one slides in from the right."""
+    y = 6
     bx = W - 8
-    for kind, action in (("power", "quit"), ("expand", "expand"), ("popin" if pinned else "popout", "pin")):
-        bx -= 22
-        icon_button(L, bx, y, 22, kind, action, h(action), active=action == "pin" and pinned, r=5)
-    shown = [a for provider, _ in PROVIDERS for a in state["accounts"] if a["provider"] == provider and a["active"]]
-    if not shown:
-        L.text(12, y + 11, "No account in use", 11, MUTED)
-        return L, y + 28
-    for index, account in enumerate(shown):
-        provider, top = account["provider"], y
-        cy = top + 11
-        L.image(12, cy - 6, provider, 12)
-        right = (bx - 6) if index == 0 else W - 12
-        note = status_note(account)
-        if note:
-            L.text(right, cy, note, 10, WARN, anchor="rm")
-            if note == "Sign in again":
-                L.hit(right - text_w(note, 10) - 4, cy - 9, text_w(note, 10) + 8, 18, "relogin:" + account["id"])
-            right -= text_w(note, 10) + 8
-        L.text(28, cy, fit(display_name(account), 12, True, right - 28), 12, TEXT, bold=True)
-        windows = account["windows"][:3]
-        ly = top + 27
-        if not windows:
-            L.text(12, ly, account.get("status") or "Usage not loaded yet", 10, FAINT)
-            y += 38
-            continue
-        col_w = (W - 24 + 10) / len(windows)
-        for i, window in enumerate(windows):
-            left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
-            shown_left = remaining(window["used"])
-            x0 = 12 + i * col_w
-            label = short_label(window)
-            label_w = max(16, text_w(label, 10) + 5)
-            L.text(x0, ly, label, 10, MUTED)
-            pct_right = x0 + col_w - 10
-            bar_x, bar_w = x0 + label_w, col_w - label_w - 42
-            L.rect(bar_x, ly - 1.5, bar_w, 3, 1.5, TRACK)
-            if left > 0.5:
-                L.rect(bar_x, ly - 1.5, max(3, bar_w * left / 100), 3, 1.5, level_rgb(left))
-            L.text(pct_right, ly, f"{shown_left:.0f}%", 10, level_rgb(shown_left), bold=True, anchor="rm")
-            L.text(pct_right, ly + 11, "left", 9, FAINT, anchor="rm")
-            if window.get("resetsAt"):
-                room = pct_right - text_w("left", 9) - 5 - bar_x
-                full = "resets in " + until(window["resetsAt"])
-                if text_w(full, 9) <= room:
-                    L.text(bar_x, ly + 11, full, 9, FAINT)
-                elif text_w(until(window["resetsAt"]), 9) + 10 <= room:  # a clock and the time
-                    L.icon("clock", bar_x + 3.5, ly + 11, 3.2, FAINT)
-                    L.text(bar_x + 10, ly + 11, until(window["resetsAt"]), 9, FAINT)
-                # no room at all: the reset time is in the full panel and the full view
-        y += 46
-    return L, y + 1
+    buttons = [("power", "quit"), ("expand", "expand"), ("popin" if pinned else "popout", "pin")]
+    if pinned:  # popped out: hide it without quitting (the tray icon brings it back)
+        buttons.append(("minimize", "hide"))
+    for kind, action in buttons:
+        bx -= 24
+        icon_button(L, bx, y, 24, kind, action, h(action), active=action == "pin" and pinned, r=5.5)
+    slots = []
+    for provider, _ in PROVIDERS:
+        rows = [a for a in state["accounts"] if a["provider"] == provider
+                and (a["active"] or fx.get(("active", a["id"]), 0.0) > 0.01)]
+        if rows:
+            slots.append(rows)
+    if not slots:
+        L.text(12, y + 12, "No account in use", 12, MUTED)
+        return L, y + 32
+    for index, rows in enumerate(slots):
+        for account in rows:
+            # Swapping, one after the other: the old row slides out to the left and fades in the
+            # first half, then the new one slides in from the right and fades in.
+            t = fx.get(("active", account["id"]), 1.0 if account["active"] else 0.0)
+            alpha = max(0.0, 2 * t - 1)
+            if alpha <= 0.01:
+                continue
+            marks = (len(L.shapes), len(L.texts), len(L.images), len(L.hits))
+            _compact_row(L, W, account, fx, y, (bx - 6) if index == 0 else W - 12)
+            if t < 0.999:
+                dx = min(1.0, 2 * (1 - t)) * 36 * (1 if account["active"] else -1)
+                move_row(L, marks, dx, alpha, clickable=account["active"])
+        y += 52
+    return L, y
+
+
+def _compact_row(L, W, account, fx, top, right):
+    provider = account["provider"]
+    cy = top + 12
+    L.image(12, cy - 7, provider, 14)
+    note = status_note(account)
+    if note:
+        L.text(right, cy, note, 11, WARN, anchor="rm")
+        if note == "Sign in again":
+            L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
+        right -= text_w(note, 11) + 8
+    L.text(32, cy, fit(display_name(account), 13, True, right - 32), 13, TEXT, bold=True)
+    windows = account["windows"][:3]
+    ly = top + 31
+    if not windows:
+        L.text(12, ly, account.get("status") or "Usage not loaded yet", 11, FAINT)
+        return
+    col_w = (W - 24 + 10) / len(windows)
+    for i, window in enumerate(windows):
+        left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
+        shown_left = remaining(window["used"])
+        x0 = 12 + i * col_w
+        label = short_label(window)
+        label_w = max(17, text_w(label, 11) + 6)
+        L.text(x0, ly, label, 11, MUTED)
+        pct_right = x0 + col_w - 10
+        bar_x, bar_w = x0 + label_w, col_w - label_w - 46
+        L.rect(bar_x, ly - 2, bar_w, 4, 2, TRACK)
+        if left > 0.5:
+            L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
+        L.text(pct_right, ly, f"{shown_left:.0f}%", 11, level_rgb(shown_left), bold=True, anchor="rm")
+        L.text(pct_right, ly + 13, "left", 10, FAINT, anchor="rm")
+        if window.get("resetsAt"):
+            room = pct_right - text_w("left", 10) - 5 - bar_x
+            full = "resets in " + until(window["resetsAt"])
+            if text_w(full, 10) <= room:
+                L.text(bar_x, ly + 13, full, 10, FAINT)
+            elif text_w(until(window["resetsAt"]), 10) + 11 <= room:  # a clock and the time
+                L.icon("clock", bar_x + 4, ly + 13, 3.5, FAINT)
+                L.text(bar_x + 11, ly + 13, until(window["resetsAt"]), 10, FAINT)
+            # no room at all: the reset time is in the full panel and the full view
+
+
+def move_row(layout, marks, dx, alpha, clickable=True):
+    """Shift everything drawn since marks sideways by dx and fade it to alpha (swap slide)."""
+    shapes, texts, images, hits = marks
+    for i in range(shapes, len(layout.shapes)):
+        op = list(layout.shapes[i])
+        if op[0] == "ellipse":
+            op[1] += dx
+            op[3] += dx
+        else:
+            op[1] += dx
+        op[-1] = fade(op[-1], alpha)
+        layout.shapes[i] = tuple(op)
+    for i in range(texts, len(layout.texts)):
+        x, y, value, size, bold, fill, anchor = layout.texts[i]
+        layout.texts[i] = (x + dx, y, value, size, bold, fade(fill, alpha), anchor)
+    for i in range(images, len(layout.images)):
+        x, y, name, size = layout.images[i][:4]
+        layout.images[i] = (x + dx, y, name, size, alpha)
+    if not clickable:
+        del layout.hits[hits:]
+    else:
+        layout.hits[hits:] = [((x + dx, y, w, h), action) for (x, y, w, h), action in layout.hits[hits:]]
 
 
 def build_menu(items, hover=None, fx=None):
@@ -532,8 +578,11 @@ def paint(layout, width, height, scale):
     panel = canvas.reduce(SS) if canvas.size == (full[0] * SS, full[1] * SS) else canvas.resize(full, Image.Resampling.BOX)
     # Images and text go on the opaque panel (so translucent text blends), then the
     # rounded shape is cut and the result laid over the cached shadow.
-    for x, y, name, size in layout.images:
+    for x, y, name, size, *faded in layout.images:
         icon = asset(name, round(size * scale))
+        if faded and faded[0] < 1:  # swap slide: fading out or in
+            icon = icon.copy()
+            icon.putalpha(icon.getchannel("A").point(lambda v: round(v * max(0.0, faded[0]))))
         panel.paste(icon, (round((M + x) * scale), round((M + y) * scale)), icon)
     draw = ImageDraw.Draw(panel, "RGBA")
     for x, y, value, size, bold, fill, anchor in layout.texts:

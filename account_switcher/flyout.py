@@ -310,7 +310,7 @@ class Popup:
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
     dismiss_on_deactivate = True
     minute_ticks = False
-    FX_SECONDS = {"hover": 0.12, "toggle": 0.18, "active": 0.24, "bar": 0.45}
+    FX_SECONDS = {"hover": 0.12, "toggle": 0.18, "active": 0.4, "bar": 0.45}
 
     def fx_targets(self):
         return {("hover", self.hover): 1.0} if self.hover else {}

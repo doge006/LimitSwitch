@@ -96,27 +96,34 @@ footer { display: flex; align-items: center; gap: 18px; padding: 11px 12px 11px 
 /* Compact: only the accounts in use (no header, no switches). */
 body.compact header, body.compact footer .switch { display: none; }
 body.compact #list { padding-top: 8px; }
-.provider-icon { width: 13px; height: 13px; }
+.provider-icon { width: 14px; height: 14px; }
 #size { margin-left: auto; }
 #size + #quit { margin-left: 0; }
 /* Compact: as small as it gets. */
-body.compact { width: 300px; }
+body.compact { width: 320px; }
 body.compact footer { display: none; }
 body.compact #list { padding: 4px 4px 4px; }
 .row.mini { padding: 5px 8px 5px 8px; margin: 0; }
 .row.mini .head { gap: 6px; }
-.row.mini .email { font-size: 12px; }
+.row.mini .email { font-size: 13px; }
 .row.mini .email.muted { color: var(--muted); font-weight: 500; }
 .row.mini .bars { margin-top: 3px; gap: 0 10px; }
 .row.mini .meter { column-gap: 5px; }
-.row.mini .meter .label, .row.mini .meter .pct { font-size: 10px; }
-.row.mini .track { height: 3px; }
-.row.mini .reset, .row.mini .left { font-size: 9px; margin-top: 1px; }
-.row.mini .loading { font-size: 10px; margin-top: 3px; }
+.row.mini .meter .label, .row.mini .meter .pct { font-size: 11px; }
+.row.mini .track { height: 4px; }
+.row.mini .reset, .row.mini .left { font-size: 10px; margin-top: 1px; }
+.row.mini .loading { font-size: 11px; margin-top: 3px; }
 .tools { margin-left: auto; display: inline-flex; gap: 1px; }
-.icon-btn.tiny { width: 20px; height: 20px; margin: -2px 0; border-radius: 5px; }
-.icon-btn.tiny svg { width: 12px; height: 12px; }
+.icon-btn.tiny { width: 22px; height: 22px; margin: -3px 0; border-radius: 5px; }
+.icon-btn.tiny svg { width: 13px; height: 13px; }
 #full { margin-left: auto; }
 #pop { margin-left: auto; }
 #pop:not([hidden]) + #full { margin-left: 4px; }
 header .title { flex: 0 1 auto; }
+/* Compact motion: a swap slides the old account out to the left, then the new one in from the right. */
+.slot { position: relative; overflow: hidden; }
+.row.mini.leaving { position: absolute; top: 0; left: 0; right: 0; animation: slide-out .2s cubic-bezier(.4, 0, 1, 1) forwards; }
+.row.mini.entering { animation: slide-in .26s cubic-bezier(.2, .8, .2, 1) .18s both; }
+@keyframes slide-out { to { transform: translateX(-36px); opacity: 0; } }
+@keyframes slide-in { from { transform: translateX(36px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .row.mini.leaving, .row.mini.entering { animation-duration: 1ms; animation-delay: 0s; } }
