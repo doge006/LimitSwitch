@@ -394,6 +394,12 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(answer["action"], "continue")
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # Claude Code reloads this file
 
+    def test_one_limit_continues_once(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})  # reported again: no second wake or switch
+        self.assertEqual(self.claude.read_live().email, "b@example.com")
+
     def test_waits_for_a_reset_when_no_account_has_room(self):
         self.gateway.set_afk(True)
         self.api.claude_usage["at-b"] = claude_usage(100, 10, reset_in=1800)

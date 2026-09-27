@@ -58,7 +58,7 @@ def _http(method, url, headers, body=None):
             except OSError:
                 detail = ""
             where = urlsplit(url)
-            log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, detail.strip())
+            log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, " ".join(detail.split()))
             raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=wait, rate_limited=True)
         if error.code in (401, 403):
             raise ProviderError("Login expired", relogin=True)

@@ -314,18 +314,26 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
     # ---------- full view ----------
     def showFullView_(self, _sender):
         if self.full_window is None:
+            # A real title bar above the page (the page would otherwise take the drags), dark to
+            # match it. At most a quarter of the screen: half its width and half its height.
+            from AppKit import NSAppearance, NSScreen
             style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                     | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView)
+                     | NSWindowStyleMaskResizable)
+            area = NSScreen.mainScreen().visibleFrame().size if NSScreen.mainScreen() else NSMakeSize(1440, 900)
+            width, height = max(640, area.width / 2), max(420, area.height / 2)
             window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, 1180, 860), style, NSBackingStoreBuffered, False)
+                NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
             window.setTitle_(APP)
+            dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+            if dark is not None:
+                window.setAppearance_(dark)
             window.setTitlebarAppearsTransparent_(True)
-            window.setTitleVisibility_(1)  # NSWindowTitleHidden: the page has its own header
+            window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
             window.setReleasedWhenClosed_(False)
-            window.setMinSize_(NSMakeSize(720, 520))
-            window.setContentView_(web_view(self.url, NSMakeRect(0, 0, 1180, 860)))
+            window.setMinSize_(NSMakeSize(600, 400))
+            window.setContentView_(web_view(self.url, NSMakeRect(0, 0, width, height)))
             window.center()
-            window.setFrameAutosaveName_("AccountSwitcherFullView")
+            window.setFrameAutosaveName_("AccountSwitcherFullView.v2")  # remembers the user's size from here on
             window.setDelegate_(self)
             self.full_window = window
         # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.

@@ -112,12 +112,30 @@ def app_browser():
     return shutil.which("msedge")
 
 
+def full_view_size():
+    """At most a quarter of the screen: half the work area's width and height (in the
+    browser's own units, so a scaled display gets the same share)."""
+    if sys.platform != "win32":
+        return 1080, 800
+    try:
+        import ctypes
+        from ctypes import wintypes
+        area = wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
+        scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
+        width, height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
+        return max(720, round(width / 2)), max(480, round(height / 2))
+    except (OSError, AttributeError, ZeroDivisionError):
+        return 1080, 800
+
+
 def open_dashboard(url):
     browser = app_browser()
     if browser:
         # --app gives a window without tabs or address bar; it joins the browser's
         # existing process if one is running, and all of it goes away when closed.
-        subprocess.Popen([browser, f"--app={url}", "--window-size=1080,800"],
+        width, height = full_view_size()
+        subprocess.Popen([browser, f"--app={url}", f"--window-size={width},{height}"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
         if sys.platform == "win32":  # its own taskbar button (name and icon), not Edge's
