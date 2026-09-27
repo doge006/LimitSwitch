@@ -109,8 +109,8 @@ Try it idle in the menu bar, with the panel open, and with the full view open. A
 
   These are read-only status endpoints, the same ones behind Claude Code's `/usage` and ChatGPT's usage page. **Checking usage does not use any of your quota.**
 - **Staying clear of rate limits:**
-  - The account in use is checked every 5 minutes (2 when it's near a limit).
-  - Other accounts are checked every 30 minutes, or just after one of their windows resets, since that's the only time their numbers change.
+  - Claude: the account in use is checked every 5 minutes (3 when it's near a limit), and only every 30 minutes while Claude Code's status line already reports it live. Other accounts every 15 minutes, or just after one of their windows resets.
+  - Codex: the account in use every 90 seconds (45 near a limit), others every 5 minutes or just after a reset.
   - Passed reset times are applied locally without a request.
   - Requests are spaced out.
   - Opening the panel only refetches data older than 2 minutes, and Refresh works at most every 30 seconds.
