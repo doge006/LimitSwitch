@@ -76,11 +76,15 @@ class CodexServerWatch:
     QUIET = 90      # seconds without session activity that count as idle
     EVERY = 60
 
-    def __init__(self, codex_home=None, notify=lambda *_: None, cli="codex"):
+    def __init__(self, codex_home=None, notify=lambda *_: None, cli="codex", routed_since=None):
         self.home = codex_home_path(codex_home)
         self.notify, self.cli = notify, cli
         self.stopped = threading.Event()
         self.tried_at = None
+        # When Codex's settings started pointing at the router: Codex processes older than this
+        # read them before, so they talk to ChatGPT directly on the login they started with.
+        self.routed_since = routed_since
+        self.told = set()  # Codex sessions already mentioned
 
     @property
     def socket(self):
@@ -94,11 +98,56 @@ class CodexServerWatch:
 
     def _loop(self):
         while not self.stopped.is_set():
-            try:
-                self.check()
-            except Exception:
-                pass
+            for step in (self.check, self.check_older):
+                try:
+                    step()
+                except Exception:
+                    log.debug("codex watch", exc_info=True)
             self.stopped.wait(self.EVERY)
+
+    def older_codex(self):
+        """Codex processes that started before the router: [(Process, kind)], kind "broker" (the
+        Claude Code Codex plugin's app-server broker) or "session" (a Codex window)."""
+        if not self.routed_since or self.home != codex_home_path():
+            return []  # processes can't be told apart by their Codex folder: only the usual one's
+        from . import processes
+        found = []
+        for process in processes.listing({"node", "codex"}):
+            if process.started >= self.routed_since - 2:
+                continue
+            command = process.command.replace("\\", "/")
+            if process.name == "node" and "app-server-broker" in command and " serve" in command:
+                found.append((process, "broker"))
+            elif process.name == "codex" and not any(word in command for word in ("app-server", " login", " mcp", "exec ")):
+                found.append((process, "session"))
+        return found
+
+    def check_older(self, quiet=None):
+        """Codex processes older than the router skip it, so they can't switch accounts.
+        - The Claude Code Codex plugin keeps one broker (and its codex app-server) running between
+          jobs, and starts a new one when that one isn't there. So once no Codex session has
+          written anything for a while (no job running), end the old one: the plugin's next job
+          starts a fresh one, which goes through the router.
+        - A Codex window can't be restarted for the user: say so once."""
+        older = self.older_codex()
+        if not older:
+            return False
+        brokers = [p for p, kind in older if kind == "broker"]
+        ended = False
+        if brokers and time.time() - self.last_activity() >= (self.QUIET if quiet is None else quiet):
+            from . import processes
+            for broker in brokers:
+                processes.end_tree(broker.pid)
+            ended = True
+            self.notify("log", "Restarted the Claude Code Codex plugin's background Codex (it started before LimitSwitch), "
+                               "so its jobs switch accounts too")
+        for process, kind in older:
+            if kind == "session" and process.pid not in self.told:
+                self.told.add(process.pid)
+                when = time.strftime("%H:%M", time.localtime(process.started))
+                self.notify("log", f"A Codex window opened at {when}, before LimitSwitch, doesn't go through it, so it "
+                                   "won't switch accounts. Restart that Codex session to fix it.")
+        return ended
 
     @property
     def pid_file(self):
@@ -206,11 +255,19 @@ class Integrations:
         atomic_write(settings_path, json.dumps({"port": proxy.port, "secret": proxy.secret}).encode())
         self.proxy = proxy
         self.manager.enable_routing("codex")
-        self.watch = CodexServerWatch(self.codex_home, self.manager.notify)
+        try:  # unchanged settings (left by a run that ended abruptly) count from when they were written
+            routed_since = os.stat(codex_config.config_path(self.codex_home)).st_mtime
+        except (OSError, AttributeError):
+            routed_since = time.time()
+        self.watch = CodexServerWatch(self.codex_home, self.manager.notify, routed_since=routed_since)
         self.watch.start()
-        # Right after a Codex switch, stop the old shared server as soon as it is quiet.
-        self.manager.on_swap = lambda provider: provider == "codex" and threading.Thread(
-            target=self.watch.check, kwargs={"quiet": 30}, daemon=True).start()
+
+        def after_swap(provider):
+            """Right after a Codex switch, stop what would stay on the old account once it is quiet."""
+            if provider == "codex":
+                for step in (self.watch.check, self.watch.check_older):
+                    threading.Thread(target=step, kwargs={"quiet": 30}, daemon=True).start()
+        self.manager.on_swap = after_swap
 
     def keep_claude_settings(self):
         """Claude Code (updating itself, /config) and other tools rewrite settings.json, which can

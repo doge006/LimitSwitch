@@ -54,7 +54,14 @@ shell32 = ctypes.WinDLL("shell32")
 sig(shell32.SHAppBarMessage, ctypes.c_size_t, wintypes.DWORD, ctypes.POINTER(APPBARDATA))
 sig(shell32.SHQueryUserNotificationState, ctypes.c_long, ctypes.POINTER(ctypes.c_int))
 sig(user32.GetAncestor, wintypes.HWND, wintypes.HWND, wintypes.UINT)
-WS_EX_TOOLWINDOW = 0x80
+WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = 0x80, 0x40000
+sig(user32.GetWindow, wintypes.HWND, wintypes.HWND, wintypes.UINT)
+sig(user32.GetWindowTextW, ctypes.c_int, wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+try:
+    dwmapi = ctypes.WinDLL("dwmapi")
+    sig(dwmapi.DwmGetWindowAttribute, ctypes.c_long, wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD)
+except OSError:
+    dwmapi = None
 SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
 
 
@@ -121,20 +128,44 @@ class _COM:
         cls.automation = automation
         return automation
 
+    # IUIAutomation / IUIAutomationElement / IUIAutomationCacheRequest vtable slots
+    CREATE_CACHE_REQUEST, CREATE_TRUE_CONDITION, ELEMENT_FROM_HANDLE = 20, 21, 6
+    FIND_ALL, FIND_ALL_BUILD_CACHE = 6, 8
+    CURRENT_CONTROL_TYPE, CURRENT_RECT, CACHED_CONTROL_TYPE, CACHED_RECT = 21, 43, 53, 75
+    ADD_PROPERTY, PUT_TREE_FILTER, PUT_ELEMENT_MODE = 3, 9, 11
+    CONTROL_TYPE_ID, RECT_ID = 30003, 30001
+
     @classmethod
     def buttons(cls, hwnd):
-        """[(left, right, top, bottom)] of the button-like elements under a window."""
+        """[(left, right, top, bottom)] of the button-like elements under a window.
+
+        One request to Explorer brings every element with its type and position (a cache
+        request); reading them one by one would be three round trips per element, and the
+        Windows 11 taskbar has hundreds."""
         automation = cls.start()
-        element, condition, found = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        element, condition, found, cache = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
         spans = []
         try:
             out = (ctypes.POINTER(ctypes.c_void_p),)
-            if cls.call(automation, 6, (wintypes.HWND,) + out, hwnd, ctypes.byref(element)) < 0 or not element:  # ElementFromHandle
+            if cls.call(automation, cls.ELEMENT_FROM_HANDLE, (wintypes.HWND,) + out, hwnd, ctypes.byref(element)) < 0 \
+                    or not element:
                 return None
-            if cls.call(automation, 21, out, ctypes.byref(condition)) < 0:  # CreateTrueCondition
+            if cls.call(automation, cls.CREATE_TRUE_CONDITION, out, ctypes.byref(condition)) < 0:
                 return None
-            if cls.call(element, 6, (ctypes.c_int, ctypes.c_void_p) + out, 4, condition, ctypes.byref(found)) < 0 or not found:
-                return None  # FindAll(TreeScope_Descendants)
+            cached = (cls.call(automation, cls.CREATE_CACHE_REQUEST, out, ctypes.byref(cache)) >= 0 and cache
+                      and cls.call(cache, cls.ADD_PROPERTY, (ctypes.c_int,), cls.CONTROL_TYPE_ID) >= 0
+                      and cls.call(cache, cls.ADD_PROPERTY, (ctypes.c_int,), cls.RECT_ID) >= 0
+                      and cls.call(cache, cls.PUT_TREE_FILTER, (ctypes.c_void_p,), condition) >= 0
+                      and cls.call(cache, cls.PUT_ELEMENT_MODE, (ctypes.c_int,), 0) >= 0  # cached values only
+                      and cls.call(element, cls.FIND_ALL_BUILD_CACHE, (ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p) + out,
+                                   4, condition, cache, ctypes.byref(found)) >= 0 and found)
+            if not cached:  # one element at a time, the slow way
+                found = ctypes.c_void_p()
+                if cls.call(element, cls.FIND_ALL, (ctypes.c_int, ctypes.c_void_p) + out, 4, condition,
+                            ctypes.byref(found)) < 0 or not found:
+                    return None  # FindAll(TreeScope_Descendants)
+            kind_slot, rect_slot = (cls.CACHED_CONTROL_TYPE, cls.CACHED_RECT) if cached else \
+                (cls.CURRENT_CONTROL_TYPE, cls.CURRENT_RECT)
             count = ctypes.c_int()
             cls.call(found, 3, (ctypes.POINTER(ctypes.c_int),), ctypes.byref(count))  # get_Length
             for i in range(min(count.value, 400)):
@@ -143,13 +174,13 @@ class _COM:
                     continue
                 try:
                     kind, rect = ctypes.c_int(), wintypes.RECT()
-                    cls.call(item, 21, (ctypes.POINTER(ctypes.c_int),), ctypes.byref(kind))  # get_CurrentControlType
-                    if kind.value in cls.KINDS and cls.call(item, 43, (ctypes.POINTER(wintypes.RECT),), ctypes.byref(rect)) >= 0:
+                    cls.call(item, kind_slot, (ctypes.POINTER(ctypes.c_int),), ctypes.byref(kind))
+                    if kind.value in cls.KINDS and cls.call(item, rect_slot, (ctypes.POINTER(wintypes.RECT),), ctypes.byref(rect)) >= 0:
                         spans.append((rect.left, rect.right, rect.top, rect.bottom))
                 finally:
                     cls.release(item)
         finally:
-            for obj in (found, condition, element):
+            for obj in (found, cache, condition, element):
                 cls.release(obj)
         return spans
 
@@ -161,6 +192,7 @@ class Bar:
         self.hwnd, self.key, self.label = hwnd, key, label
         self.rect, self.scale, self.light, self.measured = rect, scale, light, measured
         self.left, self.right, self.occupied = left, right, occupied
+        self.signature = None
 
     @property
     def height(self):
@@ -219,16 +251,60 @@ def full_screen_app(bar_rect):
             and rect[3] >= screen.bottom)
 
 
-def read_bar(hwnd, key="main", label="Main display"):
-    """Where a taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide)."""
+def button_windows(with_titles):
+    """The windows that have a taskbar button (and their titles when the taskbar shows them):
+    what the taskbar's buttons depend on. Reading this is cheap; asking Explorer where the
+    buttons are is not, so that is only done when this (or anything else) has changed."""
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        ex = user32.GetWindowLongW(hwnd, -20)
+        if ex & WS_EX_TOOLWINDOW or (user32.GetWindow(hwnd, 4) and not ex & WS_EX_APPWINDOW):  # GW_OWNER
+            return True
+        cloaked = ctypes.c_int(0)
+        if dwmapi and dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
+            return True  # DWMWA_CLOAKED: another virtual desktop, or a suspended app
+        if with_titles:
+            title = ctypes.create_unicode_buffer(128)
+            user32.GetWindowTextW(hwnd, title, 128)
+            found.append((hwnd, title.value))
+        else:
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    return tuple(sorted(found))
+
+
+def layout_signature(hwnd, rect, notify):
+    """Everything the taskbar's layout depends on that can be read without asking Explorer."""
+    combine = setting("TaskbarGlomLevel", 0)
+    return (hwnd, rect, notify, auto_hide(), light_taskbar(), setting("TaskbarAl", 1), setting("TaskbarDa", 1),
+            setting("TaskbarSmallIcons", 0), setting("TaskbarSi", 1), combine,
+            setting("FavoritesChanges", 0, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband"),  # pins
+            button_windows(combine != 0))
+
+
+def read_bar(hwnd, key="main", label="Main display", previous=None):
+    """Where a taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide).
+    `previous`: the last reading, reused as it is when nothing it depends on has changed."""
     rect = window_rect(hwnd)
     if not rect or not user32.IsWindowVisible(hwnd) or auto_hide():
         return None
     width, height = rect[2] - rect[0], rect[3] - rect[1]
     if width <= height * 3:
         return None  # a taskbar on the side of the screen has no room for a wide block
-    _, _, scale = fl.monitor_at((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
     notify = window_rect(user32.FindWindowExW(hwnd, None, "TrayNotifyWnd", None))
+    try:
+        signature = layout_signature(hwnd, rect, notify)
+    except Exception:
+        signature = None
+    if previous is not None and signature is not None and previous.signature == signature and previous.key == key:
+        return previous
+    _, _, scale = fl.monitor_at((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
     if notify and notify[0] > rect[0] + width // 2:
         right = notify[0]
     else:  # other displays: no notification area, maybe a clock (a button, measured below)
@@ -252,8 +328,10 @@ def read_bar(hwnd, key="main", label="Main display"):
             occupied.append((rect[0], rect[0] + round(190 * scale)))
         if key != "main":
             occupied.append((rect[2] - round(130 * scale), rect[2]))  # its clock
-    return Bar(hwnd, key, label, rect, scale, rect[0] + round(8 * scale), right - round(12 * scale), occupied,
-               light_taskbar(), measured)
+    bar = Bar(hwnd, key, label, rect, scale, rect[0] + round(8 * scale), right - round(12 * scale), occupied,
+              light_taskbar(), measured)
+    bar.signature = signature if measured else None  # an estimate is worth measuring again next time
+    return bar
 
 
 class TaskbarBlock(fl.Popup):
@@ -469,7 +547,7 @@ class TaskbarView:
                 self.tray.controller.notify("changed", None)
             # The chosen display's taskbar, else the main one; never some other display by accident.
             chosen = next((t for t in found if t[1] == wanted_key), None) or next((t for t in found if t[1] == "main"), None)
-            self.bar, self.stale = (read_bar(*chosen) if chosen else None), False
+            self.bar, self.stale = (read_bar(*chosen, previous=self.bar) if chosen else None), False
         bar = self.bar
         in_use = [p for p in PROVIDER_ORDER if any(a["provider"] == p and a["active"] for a in state["accounts"])]
         self.follow_taskbar()
