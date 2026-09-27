@@ -101,7 +101,9 @@ class FullViewTests(unittest.TestCase):
         self.assertIn(("names", {"on": True}), self.controller.calls)
 
     def test_remove_asks_first(self):
-        self.view.mouse_move(700, 200)  # over the second Claude card: its Remove button appears
+        self.view.mouse_move(700, 200)  # over the second Claude card: its Remove button fades in
+        self.view.frame()
+        self.view.motion.settle()
         self.view.frame()
         self.click("remove:claude-2")
         self.assertFalse(any(c[0] == "remove" for c in self.controller.calls))
@@ -152,6 +154,28 @@ class FullViewTests(unittest.TestCase):
         self.view.frame()
         redrawn = [key for key, (_, tile) in self.view.tiles.items() if before.get(key) is not tile]
         self.assertEqual(redrawn, ["card:claude-2"])
+
+    def test_animates_only_while_something_moves(self):
+        self.view.frame()
+        self.assertIn("anim", self.host.timers)  # cards rising in, bars filling
+        self.view.motion.settle()
+        self.view.frame()
+        self.assertNotIn("anim", self.host.timers)  # at rest: no frames at all
+        self.view.mouse_move(700, 200)
+        self.view.frame()
+        self.assertIn("anim", self.host.timers)  # the hover fades in
+
+    def test_bars_fill_from_empty_then_follow_changes(self):
+        motion = self.view.motion
+        bar = ("bar", ("claude-2", "five_hour"))
+        self.assertIn(bar, motion.runs)
+        self.assertEqual(motion.runs[bar][:2], (0.0, 60))  # from empty to 60% left
+        motion.settle()
+        changed = state()
+        changed["accounts"][1]["windows"][0]["used"] = 90
+        self.view.set_state(changed)
+        self.view.frame()
+        self.assertEqual(motion.runs[bar][:2], (60, 10))
 
     def test_closing_frees_the_tiles(self):
         self.view.close()

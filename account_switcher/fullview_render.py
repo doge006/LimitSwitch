@@ -338,33 +338,48 @@ def layout(state, width):
 
 # ---------- tiles ----------
 class Tile:
-    def __init__(self, image, hits, margin=0):
+    def __init__(self, image, hits, margin=0, live=()):
         self.image, self.hits, self.margin = image, hits, margin
+        self.live = live  # parts drawn each frame on top (bars, percentages): [(kind, key, x, y, w, ...)]
+
+
+def mixc(a, b, t):
+    """Colour between a and b (RGB or RGBA) at t."""
+    t = max(0.0, min(1.0, t))
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(len(a)))
+
+
+def quantize(t):
+    return round(t * 8) / 8  # hover fades redraw a card in 8 steps, not every frame
 
 
 def card_key(account, ui, name_mode, live, locked):
     """Everything a card's look depends on, so a cached tile is reused until one of them changes."""
     aid = account["id"]
     editing = ui.editing if ui.editing and ui.editing[0] == aid else None
-    return json.dumps([account, ui.hover if ui.hover and ui.hover_card == aid else None, ui.hover_card == aid,
-                       ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed, name_mode, live, locked,
-                       int(time.time() // 60)], sort_keys=True, default=str)
+    fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
+    return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
+                       name_mode, live, locked, int(time.time() // 60)], sort_keys=True, default=str)
 
 
 def draw_card(account, w, h, scale, ui, name_mode, live, locked):
-    """One account card: returns a Tile (RGBA with shadow margin) with hits relative to the card."""
+    """One account card: returns a Tile (RGBA with shadow margin) with hits relative to the card.
+    Bars and percentages are left out: they animate, so the frame draws them (Tile.live)."""
     provider, aid = account["provider"], account["id"]
     accent = ACCENT[provider]
     active, eligible = account.get("active"), account.get("eligible", True)
-    hovered = ui.hover_card == aid
-    hover = ui.hover if hovered else None
+
+    def a(action):
+        return quantize(ui.fades.get(action + ":" + aid, 0.0))
+
+    card_t = a("card")
     m = round(SHADOW * scale)
     body = Image.new("RGB", (round(w * scale), round(h * scale)), SURFACE)
     c = Canvas(body, scale, SURFACE)
-    hits = []
+    hits, live_parts = [], []
 
     def hit(x, y, bw, bh, action, cursor="hand"):
-        hits.append(((x, y, bw, bh), action, cursor))
+        hits.append(((x, y, bw, bh), action + ":" + aid, cursor))
 
     # Head: avatar, identity, renewal + badge
     x, y = 18, 16
@@ -383,32 +398,29 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     if name_mode:
         editing = ui.editing if ui.editing and ui.editing[0] == aid else None
         label = account.get("label") or ""
-        box_hover = hover == "name:" + aid
+        box_w = min(260, name_w + 6)
         if editing:
-            c.rect(ix - 6, iy - 16, min(260, name_w + 6), 24, 6, SURFACE_2 + (255,))
-            c.outline(ix - 6, iy - 16, min(260, name_w + 6), 24, 6, FOCUS + (255,))
+            c.rect(ix - 6, iy - 16, box_w, 24, 6, SURFACE_2 + (255,))
+            c.outline(ix - 6, iy - 16, box_w, 24, 6, FOCUS + (255,))
             text, caret = editing[1], editing[2]
-            shown = text or ""
-            if editing[3] and shown:  # all selected
-                c.rect(ix, iy - 12, fr.text_w(shown, 15, True), 17, 3, FOCUS + (90,))
-            c.text(ix, iy, shown, 15, TEXT if shown else MUTED, True, bg=SURFACE_2)
-            cx = ix + fr.text_w(shown[:caret], 15, True)
-            c.rect(cx, iy - 13, 1.2, 17, 0, TEXT + (255,))
+            if editing[3] and text:  # all selected
+                c.rect(ix, iy - 12, fr.text_w(text, 15, True), 17, 3, FOCUS + (90,))
+            c.text(ix, iy, text, 15, TEXT, True, bg=SURFACE_2)
+            c.rect(ix + fr.text_w(text[:caret], 15, True), iy - 13, 1.2, 17, 0, TEXT + (255,))
         else:
-            if box_hover:
-                c.outline(ix - 6, iy - 16, min(260, name_w + 6), 24, 6, LINE_STRONG)
+            if a("name"):
+                c.outline(ix - 6, iy - 16, box_w, 24, 6, LINE_STRONG[:3] + (round(LINE_STRONG[3] * a("name")),))
             if label:
                 c.text(ix, iy, fr.fit(label, 15, True, name_w), 15, TEXT, True)
             else:
                 c.text(ix, iy, "Name this account", 15, MUTED)
-        hit(ix - 6, iy - 16, min(260, name_w + 6), 24, "name:" + aid, "text")
+        hit(ix - 6, iy - 16, box_w, 24, "name", "text")
         iy += 18
         email = account.get("email") or ""
         shown = email if aid in ui.revealed else redact(email)
         if shown:
-            color = TEXT if hover == "email:" + aid else MUTED
-            c.text(ix, iy, fr.fit(shown, 12, False, name_w), 12, color)
-            hit(ix, iy - 12, min(name_w, fr.text_w(shown, 12) + 4), 16, "email:" + aid)
+            c.text(ix, iy, fr.fit(shown, 12, False, name_w), 12, mixc(MUTED, TEXT, a("email")))
+            hit(ix, iy - 12, min(name_w, fr.text_w(shown, 12) + 4), 16, "email")
     else:
         c.text(ix, iy, fr.fit(display_name(account), 15, True, name_w), 15, TEXT, True)
     if account.get("plan"):
@@ -419,34 +431,32 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     right = w - 18
     if renew:
         rcolor = WARN if sub and (account.get("subscription") or {}).get("ends") else (MUTED if sub else FAINT)
-        rhover = hover == "renew:" + aid
+        t = a("renew") if live else 0
         rw = fr.text_w(renew, 11.5)
-        if rhover and live:
-            c.rect(right - rw - 4, y + 1, rw + 8, 17, 5, SURFACE_3 + (255,))
-            rcolor = TEXT
-        c.text(right, y + 14, renew, 11.5, rcolor, anchor="rs", bg=SURFACE_3 if rhover and live else SURFACE)
+        rbg = mixc(SURFACE, SURFACE_3, t)
+        if t:
+            c.rect(right - rw - 4, y + 1, rw + 8, 17, 5, rbg + (255,))
+        c.text(right, y + 14, renew, 11.5, mixc(rcolor, TEXT, t), anchor="rs", bg=rbg)
         if live:
-            hit(right - rw - 4, y + 1, rw + 8, 17, "renew:" + aid)
+            hit(right - rw - 4, y + 1, rw + 8, 17, "renew")
     if badge:
         bcolor = GOOD if active else BAD
         c.text(right, y + 33, badge, 12, bcolor, True, anchor="rs")
         c.dot(right - fr.text_w(badge, 12, True) - 8, y + 29, 3.5, bcolor)
 
-    # Usage windows
+    # Usage windows: labels, tracks and reset times here; the fills and percentages animate (live)
     y = 16 + identity_height(account, name_mode) + 14
     windows = account.get("windows") or []
     if not windows:
         c.text(18, y + 18, "Usage not loaded yet", 12.5, FAINT)
         y += 28
-    for i, win in enumerate(windows):
+    for win in windows:
         left = remaining(win.get("used", 0))
-        col = level(left)
         c.text(18, y + 14, win.get("label", ""), 13, TEXT)
         c.text(w - 18, y + 14, " left", 12, MUTED, anchor="rs")
-        c.text(w - 18 - fr.text_w(" left", 12), y + 14, f"{left:.0f}%", 13, col, True, anchor="rs")
+        live_parts.append(("pct", (aid, win["key"]), w - 18 - fr.text_w(" left", 12), y + 14, left))
         c.rect(18, y + 24, w - 36, 6, 3, TRACK)
-        if left > 0.3:
-            c.rect(18, y + 24, max(6, (w - 36) * left / 100), 6, 3, col + (255,))
+        live_parts.append(("bar", (aid, win["key"]), 18, y + 24, w - 36, left))
         c.text(18, y + 46, reset_text(win.get("resetsAt")), 11.5, FAINT)
         y += 50 + 11
     if windows:
@@ -457,89 +467,99 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
         cx = 18
         for i, (label, value) in enumerate(items):
             if i == len(items) - 1 and len(items) > 1:  # the last one sits at the right
-                total = fr.text_w(label + ": ", 12) + fr.text_w(value, 12)
-                cx = w - 18 - total
+                cx = w - 18 - fr.text_w(label + ": ", 12) - fr.text_w(value, 12)
             c.text(cx, y + 13, label + ": ", 12, MUTED)
             c.text(cx + fr.text_w(label + ": ", 12), y + 13, value, 12, TEXT)
             cx += fr.text_w(label + ": " + value, 12) + 12
 
-    # Foot: hint on the left, Remove and the swap button on the right
+    # Foot: hint on the left, Remove and the swap button on the right (web .button: 32 tall, radius 8)
     fy = h - 14 - 32
     c.line(18, fy - 13, w - 36, LINE)
     switching = ui.pending == aid
     if ui.confirm == aid:
-        c.text(18, fy + 20, "Remove this account?", 12.5, TEXT)
-        bx = w - 18 - 84
-        danger = hover == "remove-yes:" + aid
-        c.rect(bx, fy, 84, 32, 8, (BAD if not danger else blend(BAD, (255, 255, 255), .12)) + (255,))
-        c.text(bx + 42, fy + 16, "Remove", 13, ON_ACCENT, True, anchor="mm", bg=BAD)
-        hit(bx, fy, 84, 32, "remove-yes:" + aid)
-        bx -= 84
-        if hover == "remove-no:" + aid:
-            c.rect(bx, fy, 78, 32, 8, SURFACE_3 + (255,))
-        c.text(bx + 39, fy + 16, "Cancel", 13, MUTED if hover != "remove-no:" + aid else TEXT, anchor="mm",
-               bg=SURFACE_3 if hover == "remove-no:" + aid else SURFACE)
-        hit(bx, fy, 78, 32, "remove-no:" + aid)
+        c.text(18, fy + 21, "Remove this account?", 12.5, TEXT)
+        bx = w - 18 - 86
+        t = a("remove-yes")
+        fill = mixc(BAD, blend((255, 255, 255), BAD, .1), t)
+        c.rect(bx, fy, 86, 32, 8, fill + (255,))
+        c.text(bx + 43, fy + 16, "Remove", 13, ON_ACCENT, True, anchor="mm", bg=fill)
+        hit(bx, fy, 86, 32, "remove-yes")
+        bx -= 6 + 80
+        t = a("remove-no")
+        quiet_button(c, bx, fy, 80, "Cancel", t)
+        hit(bx, fy, 80, 32, "remove-no")
     else:
         status = account.get("status") or ""
         relogin = live and any(s in status.lower() for s in ("sign in", "expired", "missing"))
         if relogin:
             signing = provider in (ui.signing_in or ())
             label = "Login expired · Sign in again"
-            color = TEXT if hover == "relogin:" + aid and not signing else (FAINT if signing else TEXT)
-            c.text(18, fy + 20, label, 12, color)
-            lw = fr.text_w(label, 12)
-            c.line(18, fy + 22, lw, color + (160,))
+            color = FAINT if signing else mixc(MUTED, TEXT, 0.6 + 0.4 * a("relogin"))
+            c.text(18, fy + 21, label, 12, color)
+            c.line(18, fy + 23, fr.text_w(label, 12), color + (160,))
             if not signing:
-                hit(18, fy + 4, lw, 22, "relogin:" + aid)
+                hit(18, fy + 4, fr.text_w(label, 12), 22, "relogin")
         else:
             hint = status or ("All sessions use this account" if active else "Waiting for reset" if not eligible else "")
-            c.text(18, fy + 20, fr.fit(hint, 12, False, w - 36 - 124 - 90), 12, WARN if status else FAINT)
+            c.text(18, fy + 21, fr.fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
         elif switching:
-            c.rect(bx, fy, bw, 32, 8, accent + (220,))
-            c.text(bx + bw / 2, fy + 16, "Switching…", 13, ON_ACCENT, True, anchor="mm", bg=over(SURFACE, accent + (220,)))
+            c.rect(bx, fy, bw, 32, 8, accent + (230,))
+            c.text(bx + bw / 2, fy + 16, "Switching…", 13, ON_ACCENT, True, anchor="mm", bg=over(SURFACE, accent + (230,)))
         elif not eligible:
             c.rect(bx, fy, bw, 32, 8, SURFACE_2 + (102,))
             c.outline(bx, fy, bw, 32, 8, LINE_STRONG[:3] + (40,))
             c.text(bx + bw / 2, fy + 16, "Limit reached", 13, blend(TEXT, SURFACE, .4), anchor="mm")
         else:
-            hot = hover == "swap:" + aid and not locked
-            fill = blend(accent, (255, 255, 255), .08) if hot else accent
-            if locked:
-                fill = blend(accent, SURFACE, .45)
-            c.rect(bx, fy - (1 if hot else 0), bw, 32, 8, fill + (255,))
-            c.text(bx + bw / 2, fy + 16 - (1 if hot else 0), "Swap to this", 13, ON_ACCENT, True, anchor="mm", bg=fill)
+            t = 0.0 if locked else a("swap")
+            fill = blend(accent, SURFACE, .45) if locked else mixc(accent, blend((255, 255, 255), accent, .1), t)
+            lift = t  # the web button rises 1 px on hover
+            c.rect(bx, fy - lift, bw, 32, 8, fill + (255,))
+            c.text(bx + bw / 2, fy + 16 - lift, "Swap to this", 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
-                hit(bx, fy, bw, 32, "swap:" + aid)
-        if live and not active and hovered and not switching:
-            rx = bx - 6 - 78
-            hot = hover == "remove:" + aid
-            if hot:
-                c.rect(rx, fy, 78, 32, 8, SURFACE_3 + (255,))
-            c.text(rx + 39, fy + 16, "Remove", 13, TEXT if hot else MUTED, anchor="mm", bg=SURFACE_3 if hot else SURFACE)
-            if not locked:
-                hit(rx, fy, 78, 32, "remove:" + aid)
+                hit(bx, fy, bw, 32, "swap")
+        if live and not active and not switching and card_t > 0:  # Remove fades in while the card is hovered
+            rx = bx - 6 - 80
+            quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
+            if not locked and card_t >= .5:
+                hit(rx, fy, 80, 32, "remove")
 
     # Shape: rounded card, border (accent when in use, stronger on hover), shadow, dimmed when spent
     card = body.convert("RGBA")
-    border = accent + (115,) if active else (LINE_STRONG if hovered else LINE)
+    border = accent + (115,) if active else mixc(LINE, LINE_STRONG, card_t)
     ring = ring_alpha(body.width, body.height, round(RADIUS * scale), max(1, round(scale)), border[3])
     card.paste(border[:3], (0, 0), ring)
-    mask = rr_alpha(body.width, body.height, round(RADIUS * scale), 184 if not eligible and not active else 255)  # .72 when spent
-    card.putalpha(mask)
+    spent = not eligible and not active
+    card.putalpha(rr_alpha(body.width, body.height, round(RADIUS * scale), 184 if spent else 255))  # .72 when spent
     tile = shadow(w, h, scale).copy()
     tile.alpha_composite(card, (m, m))
-    return Tile(tile, hits, m)
+    return Tile(tile, hits, m, [part + (spent,) for part in live_parts])
+
+
+def quiet_button(c, x, y, w, label, hover, visible=1.0):
+    """The web's .button.quiet: no fill until hovered, muted text that lightens."""
+    bg = mixc(SURFACE, SURFACE_3, hover)
+    if hover:
+        c.rect(x, y, w, 32, 8, SURFACE_3 + (round(255 * hover * visible),))
+    color = mixc(SURFACE, mixc(MUTED, TEXT, hover), visible)
+    c.text(x + w / 2, y + 16, label, 13, color, anchor="mm", bg=mixc(SURFACE, bg, visible))
+
+
+def button(c, x, y, w, hover, active=False):
+    """The web's .button: surface-2, a strong hairline, surface-3 when hovered."""
+    base = mixc(SURFACE_2, SURFACE_3, max(hover, 1.0 if active else 0.0))
+    c.rect(x, y, w, 32, 8, base + (255,))
+    c.outline(x, y, w, 32, 8, LINE_STRONG)
+    return base
 
 
 def draw_topbar(state, w, scale, ui):
     image = Image.new("RGBA", (round(w * scale), round(TOPBAR_H * scale)), (0, 0, 0, 0))
     c = Canvas(image, scale, BG)
     hits = []
-    hover = ui.hover
+    f = lambda key: quantize(ui.fades.get(key, 0.0))
     mark = fr.asset("switcher", c.px(44))
     rounded = Image.new("RGBA", mark.size, (0, 0, 0, 0))
     rounded.paste(mark, (0, 0), Image.composite(mark.getchannel("A"), Image.new("L", mark.size, 0), rr_mask(*mark.size, c.px(12))))
@@ -548,43 +568,42 @@ def draw_topbar(state, w, scale, ui):
     c.text(58, 51, "Every Claude and Codex limit, at a glance.", 13, MUTED)
     live = state.get("mode") == "live"
     x = w
-    # Refresh
+    # Refresh (the web .icon-button: 36 square, surface, a faint hairline; the arrow spins once when clicked)
     x -= 36
-    hot = hover == "refresh"
-    c.rect(x, 15, 36, 36, 9, (SURFACE_3 if hot else SURFACE) + (255,))
+    t = f("refresh")
+    c.rect(x, 15, 36, 36, 9, mixc(SURFACE, SURFACE_3, t) + (255,))
     c.outline(x, 15, 36, 36, 9, LINE)
-    c.glyph("refresh", x + 18, 33, 17, TEXT if hot else MUTED)
+    icon = glyph("refresh", c.px(18), mixc(MUTED, TEXT, t))
+    turn = ui.fades.get("spin", 0.0)
+    if 0 < turn < 1:
+        icon = icon.rotate(360 * (1 - (1 - turn) ** 3), resample=Image.Resampling.BICUBIC)
+    image.alpha_composite(icon, (c.px(x + 18) - icon.width // 2, c.px(33) - icon.height // 2))
     hits.append(((x, 15, 36, 36), "refresh", "hand"))
-    # Add account
+    # Add account: padding 14, a plus, gap 8, the label, padding 14
     if live:
         label = "Add account"
-        bw = fr.text_w(label, 13) + 14 + 22
+        bw = 14 + 12 + 8 + fr.text_w(label, 13) + 14
         x -= 10 + bw
-        hot = hover == "add" or ui.menu == "add"
-        c.rect(x, 17, bw, 32, 8, (SURFACE_3 if hot else SURFACE_2) + (255,))
-        c.outline(x, 17, bw, 32, 8, LINE_STRONG)
-        c.glyph("plus", x + 20, 33, 14, TEXT)
-        c.text(x + 31, 33, label, 13, TEXT, anchor="lm", bg=SURFACE_3 if hot else SURFACE_2)
+        base = button(c, x, 17, bw, f("add"), ui.menu == "add")
+        c.glyph("plus", x + 14 + 6, 33, 13, TEXT)
+        c.text(x + 14 + 12 + 8, 33, label, 13, TEXT, anchor="lm", bg=base)
         hits.append(((x, 17, bw, 32), "add", "hand"))
-    # Settings, with the automation state pill
+        ui.anchors["add"] = (x, bw)
+    # Settings, with the automation state pill and a caret
     busy = state.get("busy")
     pill = "Working…" if busy else "AFK armed" if state.get("afk") else "Watching" if state.get("autoSwap") else "Manual"
     pill_bg, pill_fg = ((229, 181, 74, 38), WARN) if busy else ((76, 195, 138, 36), GOOD) if (state.get("afk") or state.get("autoSwap")) else (SURFACE_3 + (255,), MUTED)
     pw = fr.text_w(pill, 11, True) + 18
-    bw = 14 + fr.text_w("Settings", 13) + 8 + pw + 6 + 14 + 12
+    bw = 14 + fr.text_w("Settings", 13) + 8 + pw + 8 + 12 + 14
     x -= 10 + bw
-    hot = hover == "settings" or ui.menu == "settings"
-    base = SURFACE_3 if hot else SURFACE_2
-    c.rect(x, 17, bw, 32, 8, base + (255,))
-    c.outline(x, 17, bw, 32, 8, LINE_STRONG)
+    base = button(c, x, 17, bw, f("settings"), ui.menu == "settings")
     c.text(x + 14, 33, "Settings", 13, TEXT, anchor="lm", bg=base)
     px_ = x + 14 + fr.text_w("Settings", 13) + 8
     c.rect(px_, 24, pw, 18, 9, pill_bg)
     c.text(px_ + pw / 2, 33, pill, 11, pill_fg, True, anchor="mm", bg=over(base, pill_bg))
-    c.glyph("caret", x + bw - 19, 33, 14, MUTED)
+    c.glyph("caret", x + bw - 14 - 6, 33, 13, MUTED)
     hits.append(((x, 17, bw, 32), "settings", "hand"))
     ui.anchors["settings"] = (x, bw)
-    ui.anchors["add"] = (x + bw + 10, fr.text_w("Add account", 13) + 36)
     return Tile(image, hits)
 
 
@@ -625,20 +644,8 @@ def draw_empty(state, w, scale, ui):
 
 @lru_cache(maxsize=4)
 def backdrop(width, height, scale):
-    """The window background: dark, with two soft tints at the top (violet left, orange right)."""
-    w, h = round(width * scale), round(height * scale)
-    small = Image.new("RGB", (max(1, w // 8), max(1, h // 8)), BG)
-    tint = Image.new("L", small.size, 0)
-    d = ImageDraw.Draw(tint)
-    for cx, cy, rx, ry, strength, color in ((.12, -.08, 900, 420, .10, (125, 110, 240)), (.92, -.12, 800, 380, .08, (217, 119, 87))):
-        tint = Image.new("L", small.size, 0)
-        d = ImageDraw.Draw(tint)
-        ex, ey = rx * scale / 8 * .7, ry * scale / 8 * .7
-        x0, y0 = cx * small.width, cy * height * scale / 8
-        d.ellipse((x0 - ex, y0 - ey, x0 + ex, y0 + ey), fill=round(255 * strength))
-        tint = tint.filter(ImageFilter.GaussianBlur(max(1, ex * .35)))
-        small.paste(color, (0, 0), tint)
-    return small.resize((w, h), Image.Resampling.BILINEAR)
+    """The window background: plain."""
+    return Image.new("RGB", (round(width * scale), round(height * scale)), BG)
 
 
 # ---------- overlays: menus, the date editor, toasts ----------
@@ -653,14 +660,15 @@ def panel(image, scale, x, y, w, h):
     return c
 
 
-def toggle(c, x, y, on, hot, bg):
-    """A switch 40x22, like the web one."""
-    if on:
-        c.rect(x, y, 40, 22, 11, (blend(GOOD, (255, 255, 255), .08) if hot else GOOD) + (255,))
-        c.dot(x + 29.5, y + 11, 7 if hot else 6.5, (255, 255, 255))
-    else:
-        c.outline(x, y, 40, 22, 11, (MUTED if hot else FAINT) + (255,), 1.5)
-        c.dot(x + 10.5, y + 11, 7 if hot else 6.5, MUTED)
+def toggle(c, x, y, pos, hot, bg):
+    """The web switch, 40x22: pos 0 (off) to 1 (on) as it slides, hot when hovered."""
+    track = mixc(bg, GOOD, pos)
+    if pos > 0:
+        c.rect(x, y, 40, 22, 11, (blend((255, 255, 255), track, .08) if hot and pos == 1 else track) + (255,))
+    if pos < 1:
+        c.outline(x, y, 40, 22, 11, mixc(MUTED if hot else FAINT, GOOD, pos) + (255,), 1.5)
+    r = (7 if hot else 6.5)
+    c.dot(x + 10.5 + 19 * pos, y + 11, r, mixc(MUTED, (255, 255, 255), pos))
 
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
@@ -689,7 +697,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         on = prefs.get(key, bool(state.get(key)))
         locked = state.get("busy") and key in ("autoSwap", "afk")
         hot = ui.hover == "set:" + key and not locked
-        toggle(c, x + 14, ry + 8, on, hot, SURFACE_3)
+        toggle(c, x + 14, ry + 8, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
         c.text(x + 66, ry + 22, title, 14, TEXT if not locked else MUTED, True)
         for i, line in enumerate(lines):
             c.text(x + 66, ry + 39 + 16 * i, line, 12, MUTED)
@@ -802,7 +810,7 @@ def date_editor(image, scale, ui, x, y):
         bx -= bw
         hot = hover == action
         if primary:
-            fill = (TEXT if not hot else blend(TEXT, BG, .08))
+            fill = (TEXT if not hot else blend(BG, TEXT, .08))
             c.rect(bx, ry, bw, 32, 8, fill + (255,))
             c.text(bx + bw / 2, ry + 16, label, 13, BG, True, anchor="mm", bg=fill)
         else:
@@ -833,17 +841,25 @@ TOAST_COLORS = {"error": BAD, "ok": GOOD, "": ACCENT["codex"]}
 
 
 def toasts(image, scale, items, vw, vh):
+    """Bottom right, newest at the bottom. items: (text, kind, alpha): each fades in and out."""
     y = vh - 20
-    for text, kind, _ in reversed(items[-4:]):
+    for text, kind, alpha in reversed(items[-4:]):
         lines = wrap(text, 13, 380 - 42)
         h = 22 + 18 * len(lines)
         w = min(380, 42 + max(fr.text_w(line, 13) for line in lines) + 14)
         y -= h
         x = vw - 20 - w
-        c = panel(image, scale, x, y, w, h)
+        before = image.copy() if alpha < 1 else None
+        dy = 4 * (1 - alpha)
+        c = panel(image, scale, x, y + dy, w, h)
         if kind == "error":
-            c.outline(x, y, w, h, 11, BAD + (128,))
-        c.dot(x + 18, y + 17, 4, TOAST_COLORS.get(kind, ACCENT["codex"]))
+            c.outline(x, y + dy, w, h, 11, BAD + (128,))
+        c.dot(x + 18, y + dy + 17, 4, TOAST_COLORS.get(kind, ACCENT["codex"]))
         for i, line in enumerate(lines):
-            c.text(x + 32, y + 16 + i * 18, line, 13, TEXT, anchor="lm")
+            c.text(x + 32, y + dy + 16 + i * 18, line, 13, TEXT, anchor="lm")
+        if before is not None:
+            m = SHADOW + 8
+            box = tuple(round(v * scale) for v in (x - m, y - m, x + w + m, y + h + m))
+            box = (max(0, box[0]), max(0, box[1]), min(image.width, box[2]), min(image.height, box[3]))
+            image.paste(Image.blend(before.crop(box), image.crop(box), max(0.0, alpha)), box[:2])
         y -= 8

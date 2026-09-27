@@ -417,17 +417,15 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
 
 
 def _build_compact(L, W, state, fx, h, pinned):
-    """Compact panel: the account in use for each provider, small but readable. Its buttons (pop
-    out, expand, quit) sit at the top right, in line with the first account. When an account
-    swaps, the old row slides out to the left while the new one slides in from the right."""
+    """Compact panel: the account in use for each provider, small but readable. It is always
+    popped out (it stays open and can be dragged), so its buttons are quit, expand and hide, at
+    the top right in line with the first account. When an account swaps, the old row slides out
+    to the left while the new one slides in from the right."""
     y = 6
     bx = W - 8
-    buttons = [("power", "quit"), ("expand", "expand"), ("popin" if pinned else "popout", "pin")]
-    if pinned:  # popped out: hide it without quitting (the tray icon brings it back)
-        buttons.append(("minimize", "hide"))
-    for kind, action in buttons:
+    for kind, action in (("power", "quit"), ("expand", "expand"), ("minimize", "hide")):
         bx -= 24
-        icon_button(L, bx, y, 24, kind, action, h(action), active=action == "pin" and pinned, r=5.5)
+        icon_button(L, bx, y, 24, kind, action, h(action), r=5.5)
     slots = []
     for provider, _ in PROVIDERS:
         rows = [a for a in state["accounts"] if a["provider"] == provider

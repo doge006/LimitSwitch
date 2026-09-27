@@ -108,7 +108,7 @@ class FlyoutRenderTests(unittest.TestCase):
         names = [t[2] for t in layout.texts]
         self.assertIn("personal@example.com", names)
         self.assertNotIn("second@example.com", names)  # not in use: not shown
-        self.assertEqual(sorted(a for _, a in layout.hits), ["expand", "pin", "quit"])  # no switching, no toggles
+        self.assertEqual(sorted(a for _, a in layout.hits), ["expand", "hide", "quit"])  # always popped out: no pop-out button
         pinned, _ = fr.build(state, pinned=True)
         self.assertIn("hide", [a for _, a in pinned.hits])  # popped out: can be minimized
         image, _ = fr.render(state)
