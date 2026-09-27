@@ -1,0 +1,455 @@
+"""The full view's behaviour, independent of the platform: what is where, what the pointer is over,
+what a click or a key does, and which cached tiles to redraw. A host (fullview_win, fullview_mac,
+fullview_tk) owns the window: it passes input here, asks frame() for pixels, and runs the few
+timers this asks for (a minute tick for "resets in", toast expiry, a switch timeout). Nothing runs
+while the window is idle, and closing it frees every cached tile.
+"""
+import calendar
+import re
+import time
+
+from . import fullview_render as vr
+
+LOCK_KINDS = ("swap:", "remove:")
+FAIL = re.compile(r"fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without", re.I)
+SWAP = re.compile(r"→|swap|selected|routed|failover|continue|now uses", re.I)
+OK = re.compile(r"added|completed|started|restored|opened", re.I)
+
+
+def classify(text):
+    if FAIL.search(text) and not re.search(r"→|failover|routed|selected", text, re.I):
+        return "fail"
+    if SWAP.search(text):
+        return "swap"
+    return "ok" if OK.search(text) else ""
+
+
+class UI:
+    """What the drawing needs to know beyond the app state."""
+
+    def __init__(self):
+        self.hover = None          # action under the pointer
+        self.hover_card = None     # account whose card the pointer is over
+        self.pending = None        # account being switched to
+        self.confirm = None        # account asking "Remove?"
+        self.editing = None        # (account id, text, caret, all selected)
+        self.revealed = set()      # accounts whose email is shown in name mode
+        self.menu = None           # "settings" | "add"
+        self.editor = None         # the renewal date editor's state
+        self.signing_in = ()
+        self.anchors = {}
+
+
+class FullView:
+    def __init__(self, controller, host, state):
+        self.controller, self.host = controller, host
+        self.state = state
+        self.ui = UI()
+        self.scroll = 0.0
+        self.width = self.height = 0
+        self.scale = 1.0
+        self.tiles = {}            # key -> (cache key, Tile)
+        self.items, self.content_h = [], 0
+        self.page_hits, self.overlay_hits = [], []
+        self.prefs = {}            # toggles flipped here, shown at once until the state catches up
+        self.toast_list = []       # [(text, kind, expires at)]
+        self.last_log = None
+        self.pointer = None
+        self.pressed = None
+        self.take_log(state)
+        try:
+            controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
+        except (RuntimeError, ValueError):
+            pass
+
+    # ---------- state ----------
+    def set_state(self, state):
+        self.state = state
+        ui = self.ui
+        ui.signing_in = tuple(state.get("signingIn") or ())
+        if ui.pending and any(a["id"] == ui.pending and a["active"] for a in state["accounts"]):
+            ui.pending = None  # the switch landed
+            self.host.kill_timer("pending")
+        ids = {a["id"] for a in state["accounts"]}
+        if ui.confirm not in ids:
+            ui.confirm = None
+        if ui.editing and ui.editing[0] not in ids:
+            ui.editing = None
+        if self.prefs and not state.get("busy"):
+            self.prefs = {k: v for k, v in self.prefs.items() if bool(state.get(k)) != v}
+        self.take_log(state)
+        self.relayout()
+        self.host.invalidate()
+
+    def take_log(self, state):
+        log = state.get("log") or []
+        newest = log[-1]["id"] if log else 0
+        if self.last_log is None:
+            self.last_log = newest  # no toasts for history
+            return
+        fresh = [e for e in log if e["id"] > self.last_log][-3:]
+        self.last_log = newest
+        for entry in fresh:
+            kind = classify(entry["text"])
+            if kind:
+                self.toast(entry["text"], "error" if kind == "fail" else "ok" if kind == "ok" else "")
+
+    def toast(self, text, kind=""):
+        self.toast_list.append((text, kind, time.monotonic() + (6.0 if kind == "error" else 3.8)))
+        self.toast_list = self.toast_list[-4:]
+        self.schedule_toasts()
+        self.host.invalidate()
+
+    def schedule_toasts(self):
+        if self.toast_list:
+            wait = min(t[2] for t in self.toast_list) - time.monotonic()
+            self.host.set_timer("toast", max(50, int(wait * 1000) + 20))
+        else:
+            self.host.kill_timer("toast")
+
+    def timer(self, name):
+        if name == "toast":
+            now = time.monotonic()
+            self.toast_list = [t for t in self.toast_list if t[2] > now]
+            self.schedule_toasts()
+        elif name == "pending":
+            self.host.kill_timer("pending")
+            self.ui.pending = None
+        elif name == "minute":  # reset times move on: the next minute's cache keys redraw the cards
+            self.host.set_timer("minute", 60_000 - int(time.time() * 1000) % 60_000 + 50)
+        self.host.invalidate()
+
+    # ---------- geometry ----------
+    def resize(self, width, height, scale):
+        if (width, height, scale) == (self.width, self.height, self.scale):
+            return
+        if scale != self.scale:
+            self.tiles.clear()
+        self.width, self.height, self.scale = width, height, scale
+        self.relayout()
+        if not self.host.has_timer("minute"):
+            self.timer("minute")
+
+    def relayout(self):
+        if not self.width:
+            return
+        self.items, self.content_h = vr.layout(self.state, self.width)
+        self.scroll = max(0.0, min(self.scroll, self.max_scroll()))
+
+    def max_scroll(self):
+        return max(0.0, self.content_h - self.height)
+
+    def wheel(self, pixels):
+        """Scroll by `pixels` logical px (positive: down the page)."""
+        before = self.scroll
+        self.scroll = max(0.0, min(self.scroll + pixels, self.max_scroll()))
+        if self.scroll != before:
+            self.ui.menu = None if self.ui.menu == "add" else self.ui.menu
+            self.refresh_hover()
+            self.host.invalidate()
+
+    # ---------- drawing ----------
+    def tile(self, kind, key, w, h, data):
+        ui, state = self.ui, self.state
+        live = state.get("mode") == "live"
+        locked = bool(state.get("busy") or ui.pending)
+        if kind == "card":
+            cache = vr.card_key(data, ui, bool(state.get("nameMode")), live, locked)
+            make = lambda: vr.draw_card(data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
+        elif kind == "topbar":
+            cache = (w, ui.hover if ui.hover in ("settings", "add", "refresh") else None, ui.menu, live,
+                     state.get("busy"), state.get("afk"), state.get("autoSwap"))
+            make = lambda: vr.draw_topbar(state, w, self.scale, ui)
+        elif kind == "group":
+            cache = (w, data)
+            make = lambda: vr.draw_group(data, w, self.scale)
+        else:
+            cache = (w, live, ui.hover)
+            make = lambda: vr.draw_empty(state, w, self.scale, ui)
+        held = self.tiles.get(key)
+        if held and held[0] == cache:
+            return held[1]
+        made = make()
+        self.tiles[key] = (cache, made)
+        return made
+
+    def frame(self):
+        """The window's pixels (RGB, device px) and the clickable regions."""
+        s = self.scale
+        image = vr.backdrop(self.width, self.height, s).copy()
+        hits = []
+        keep = set()
+        for kind, key, x, y, w, h, data in self.items:
+            keep.add(key)
+            top = y - self.scroll
+            if top > self.height or top + h < -vr.SHADOW:
+                continue  # off screen: not drawn (still cached)
+            t = self.tile(kind, key, w, h, data)
+            image.paste(t.image, (round(x * s) - t.margin, round(top * s) - t.margin), t.image)
+            for (hx, hy, hw, hh), action, cursor in t.hits:
+                hits.append(((x + hx, y + hy, hw, hh), action, cursor, key))
+        for key in list(self.tiles):  # accounts that went away
+            if key not in keep:
+                del self.tiles[key]
+        self.page_hits = hits
+        self.overlay_hits = []
+        self.draw_overlays(image)
+        return image
+
+    def draw_overlays(self, image):
+        ui, s = self.ui, self.scale
+        top = next((y for kind, _, _, y, *_ in self.items if kind == "topbar"), vr.PAD) - self.scroll
+        left = next((x for kind, _, x, *_ in self.items if kind == "topbar"), vr.PAD)
+        if ui.menu == "settings" and "settings" in ui.anchors:
+            ax, aw = ui.anchors["settings"]
+            box, hits = vr.settings_menu(image, s, self.state, ui, left + ax + aw - 320, top + 17 + 32 + 6, self.prefs)
+            self.overlay_hits.append((box, hits))
+        elif ui.menu == "add" and "add" in ui.anchors:
+            ax, aw = ui.anchors["add"]
+            box, hits = vr.add_menu(image, s, ui, left + ax + aw - 260, top + 17 + 32 + 6)
+            self.overlay_hits.append((box, hits))
+        if ui.editor:
+            anchor = next((h for h in self.page_hits if h[1] == "renew:" + ui.editor["id"]), None)
+            if anchor is None:
+                ui.editor = None
+            else:
+                (hx, hy, hw, hh) = anchor[0]
+                x = max(12, min(hx + hw - 280, self.width - 292))
+                y = hy + hh + 6 - self.scroll
+                height = 12 + 28 + 10 + 30 + 22 + len(calendar.Calendar(0).monthdayscalendar(ui.editor["year"], ui.editor["month"])) * 30 + 8 + 34 + 12 + 32 + 12
+                if y + height > self.height - 8:  # no room below: open above the date
+                    y = max(8, hy - self.scroll - 6 - height)
+                box, hits = vr.date_editor(image, s, ui, x, y)
+                self.overlay_hits.append((box, hits))
+        if self.toast_list:
+            vr.toasts(image, s, self.toast_list, self.width, self.height)
+
+    # ---------- hit testing ----------
+    def hit_at(self, x, y):
+        """(action, cursor, tile key) under a window point (logical px), or Nones."""
+        for (bx, by, bw, bh), hits in reversed(self.overlay_hits):
+            if bx <= x < bx + bw and by <= y < by + bh:
+                for (hx, hy, hw, hh), action, cursor in hits:
+                    if hx <= x < hx + hw and hy <= y < hy + hh:
+                        return action, cursor, "overlay"
+                return None, "arrow", "overlay"
+        py = y + self.scroll
+        for (hx, hy, hw, hh), action, cursor, key in self.page_hits:
+            if hx <= x < hx + hw and hy <= py < hy + hh:
+                return action, cursor, key
+        return None, "arrow", None
+
+    def card_at(self, x, y):
+        py = y + self.scroll
+        for kind, key, ix, iy, w, h, data in self.items:
+            if kind == "card" and ix <= x < ix + w and iy <= py < iy + h:
+                return data["id"]
+        return None
+
+    def refresh_hover(self):
+        if self.pointer:
+            self.mouse_move(*self.pointer)
+
+    # ---------- input ----------
+    def mouse_move(self, x, y):
+        self.pointer = (x, y)
+        action, cursor, where = self.hit_at(x, y)
+        card = None if where == "overlay" else self.card_at(x, y)
+        if (action, card) != (self.ui.hover, self.ui.hover_card):
+            self.ui.hover, self.ui.hover_card = action, card
+            self.host.invalidate()
+        self.host.set_cursor(cursor)
+
+    def mouse_leave(self):
+        self.pointer = None
+        if self.ui.hover or self.ui.hover_card:
+            self.ui.hover = self.ui.hover_card = None
+            self.host.invalidate()
+
+    def mouse_down(self, x, y):
+        self.pressed = self.hit_at(x, y)[0]
+
+    def mouse_up(self, x, y):
+        action, _, where = self.hit_at(x, y)
+        pressed, self.pressed = self.pressed, None
+        ui = self.ui
+        if action is None or action != pressed:
+            if where != "overlay":  # a click on nothing closes menus and finishes editing
+                changed = bool(ui.menu or ui.editor or ui.confirm)
+                ui.menu = ui.editor = ui.confirm = None
+                if ui.editing:
+                    self.commit_name()
+                    changed = True
+                if changed:
+                    self.host.invalidate()
+            return
+        self.activate(action)
+        self.refresh_hover()
+        self.host.invalidate()
+
+    def activate(self, action):
+        ui, state = self.ui, self.state
+        if ui.editing and not action.startswith("name:" + ui.editing[0]):
+            self.commit_name()
+        kind, _, arg = action.partition(":")
+        if kind == "settings":
+            ui.menu = None if ui.menu == "settings" else "settings"
+            ui.editor = None
+        elif kind == "add" and not arg:
+            ui.menu = None if ui.menu == "add" else "add"
+            ui.editor = None
+        elif kind == "add":
+            ui.menu = None
+            self.act("add", {"provider": arg})
+        elif kind == "refresh":
+            self.act("reset")
+        elif kind == "set":
+            if arg in ("autoSwap", "afk"):
+                prefs = {"autoSwap": self.prefs.get("autoSwap", bool(state.get("autoSwap"))),
+                         "afk": self.prefs.get("afk", bool(state.get("afk")))}
+                prefs[arg] = not prefs[arg]
+                self.prefs.update(prefs)
+                if not self.act("preferences", prefs):
+                    self.prefs = {}
+            elif arg == "nameMode":
+                self.act("names", {"on": not state.get("nameMode")})
+            elif arg == "taskbar":
+                self.act("taskbar", {"on": not state.get("taskbar")})
+        elif kind == "display":
+            self.act("taskbar", {"display": arg})
+        elif kind == "swap":
+            if ui.pending or state.get("busy"):
+                return
+            ui.pending = arg
+            self.host.set_timer("pending", 8000)
+            if not self.act("swap", {"id": arg}):
+                ui.pending = None
+        elif kind == "remove":
+            ui.confirm = arg
+        elif kind == "remove-no":
+            ui.confirm = None
+        elif kind == "remove-yes":
+            ui.confirm = None
+            self.act("remove", {"id": arg})
+        elif kind == "relogin":
+            account = self.account(arg)
+            if account:
+                self.act("add", {"provider": account["provider"], "id": arg})
+        elif kind == "email":
+            ui.revealed ^= {arg}
+        elif kind == "name":
+            if not ui.editing or ui.editing[0] != arg:
+                label = (self.account(arg) or {}).get("label") or ""
+                ui.editing = (arg, label, len(label), bool(label))
+        elif kind == "renew":
+            self.open_editor(arg)
+        elif kind.startswith("ed-"):
+            self.editor_action(kind[3:], arg)
+
+    def account(self, account_id):
+        return next((a for a in self.state["accounts"] if a["id"] == account_id), None)
+
+    def act(self, action, body=None):
+        try:
+            self.controller.action(action, body or {})
+            return True
+        except (RuntimeError, ValueError) as error:
+            self.toast(str(error), "error")
+            return False
+
+    # ---------- the renewal date editor ----------
+    def open_editor(self, account_id):
+        account = self.account(account_id)
+        if not account or self.state.get("mode") != "live":
+            return
+        sub = account.get("subscription") or {}
+        at = sub.get("at") or time.time() + 30 * 86400
+        t = time.localtime(at)
+        self.ui.menu = None
+        self.ui.editor = {"id": account_id, "year": t.tm_year, "month": t.tm_mon, "date": (t.tm_year, t.tm_mon, t.tm_mday),
+                          "ends": bool(sub.get("ends")), "source": sub.get("source")}
+
+    def editor_action(self, kind, arg):
+        ed = self.ui.editor
+        if not ed:
+            return
+        if kind == "kind":
+            ed["ends"] = arg == "ends"
+        elif kind in ("left", "right"):
+            month = ed["month"] + (1 if kind == "right" else -1)
+            ed["year"], ed["month"] = ed["year"] + (month - 1) // 12, (month - 1) % 12 + 1
+        elif kind == "day":
+            ed["date"] = (ed["year"], ed["month"], int(arg))
+        elif kind == "save":
+            y, m, d = ed["date"]
+            at = time.mktime((y, m, d, 12, 0, 0, 0, 0, -1))
+            if self.act("subscription", {"id": ed["id"], "at": at, "ends": ed["ends"]}):
+                self.ui.editor = None
+        elif kind == "clear":
+            if self.act("subscription", {"id": ed["id"], "at": None}):
+                self.ui.editor = None
+        elif kind == "cancel":
+            self.ui.editor = None
+
+    # ---------- keyboard (the account name in name mode) ----------
+    def commit_name(self):
+        editing, self.ui.editing = self.ui.editing, None
+        if editing:
+            account = self.account(editing[0])
+            name = " ".join(editing[1].split())
+            if account is not None and name != (account.get("label") or ""):
+                self.act("rename", {"id": editing[0], "name": name})
+        self.host.invalidate()
+
+    def key(self, name, ctrl=False):
+        """Named keys: escape, enter, backspace, delete, left, right, home, end, a (with ctrl), v (with ctrl)."""
+        ui = self.ui
+        if ui.editing:
+            aid, text, caret, everything = ui.editing
+            if name == "escape":
+                ui.editing = None
+            elif name == "enter":
+                self.commit_name()
+                return
+            elif ctrl and name == "a":
+                ui.editing = (aid, text, len(text), True)
+            elif ctrl and name == "v":
+                self.char(self.host.clipboard())
+                return
+            elif name in ("backspace", "delete"):
+                if everything:
+                    text, caret = "", 0
+                elif name == "backspace" and caret > 0:
+                    text, caret = text[:caret - 1] + text[caret:], caret - 1
+                elif name == "delete":
+                    text = text[:caret] + text[caret + 1:]
+                ui.editing = (aid, text, caret, False)
+            elif name in ("left", "right", "home", "end"):
+                caret = {"left": max(0, caret - 1) if not everything else 0, "right": min(len(text), caret + 1),
+                         "home": 0, "end": len(text)}[name]
+                ui.editing = (aid, text, caret, False)
+            else:
+                return
+            self.host.invalidate()
+            return
+        if name == "escape" and (ui.menu or ui.editor or ui.confirm):
+            ui.menu = ui.editor = ui.confirm = None
+            self.host.invalidate()
+
+    def char(self, value):
+        ui = self.ui
+        if not ui.editing or not value:
+            return
+        value = "".join(ch for ch in value if ch.isprintable()).replace("\n", " ")
+        aid, text, caret, everything = ui.editing
+        if everything:
+            text, caret = "", 0
+        text = (text[:caret] + value + text[caret:])[:40]
+        ui.editing = (aid, text, min(len(text), caret + len(value)), False)
+        self.host.invalidate()
+
+    def close(self):
+        """The window closed: finish an edit, drop every cached tile."""
+        if self.ui.editing:
+            self.commit_name()
+        self.tiles.clear()

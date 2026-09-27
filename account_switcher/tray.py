@@ -112,22 +112,24 @@ def app_browser():
     return shutil.which("msedge")
 
 
-def full_view_size():
+def full_view_size(area_width=None, area_height=None):
     """Half the work area's width, and tall enough for two rows of cards (920, or 95% of a
-    shorter screen), in the browser's own units so a scaled display gets the same share."""
-    if sys.platform != "win32":
-        return 1080, 800
-    try:
-        import ctypes
-        from ctypes import wintypes
-        area = wintypes.RECT()
-        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
-        scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
-        width, height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
-        # Tall enough for two rows of account cards without scrolling, never taller than the screen.
-        return max(720, round(width / 2)), max(480, min(920, round(height * .95)))
-    except (OSError, AttributeError, ZeroDivisionError):
-        return 1080, 800
+    shorter screen), in logical px so a scaled display gets the same share. Without an area,
+    the main display's work area is used."""
+    if area_width is None:
+        if sys.platform != "win32":
+            return 1080, 800
+        try:
+            import ctypes
+            from ctypes import wintypes
+            area = wintypes.RECT()
+            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
+            scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
+            area_width, area_height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
+        except (OSError, AttributeError, ZeroDivisionError):
+            return 1080, 800
+    # Tall enough for two rows of account cards without scrolling, never taller than the screen.
+    return max(720, round(area_width / 2)), max(480, min(920, round(area_height * .95)))
 
 
 def open_dashboard(url):
@@ -221,8 +223,16 @@ class Tray:
         # Opened again (Start menu, shortcut): this copy opens the full view, so it is sized by
         # the DPI-aware process and an open one is brought to the front instead of a second one.
         server.show = self.open_full_view
+        self.full_view = None
         self.menu = self.taskbar = None
         if native:
+            try:  # the full view: a window of our own, drawn like the panel (no browser)
+                from .fullview_win import FullViewWindow, WM_APP_SHOW
+                self.full_view = FullViewWindow(self)
+                self.icon._message_handlers[WM_APP_SHOW] = lambda w, l: self.full_view.show()
+            except Exception:
+                logging.getLogger("account_switcher").exception("native full view unavailable")
+                self.full_view = None
             from .flyout import Flyout, TrayMenu
             flyout, self.menu = Flyout(self), TrayMenu(self)
             self.icon.popups = (flyout, self.menu)  # left/right clicks open our own popups
@@ -256,7 +266,11 @@ class Tray:
         self.flyout.toggle()
 
     def open_full_view(self):
-        open_dashboard(self.url)
+        """Any thread: open the full view, or bring it to the front."""
+        if self.full_view:
+            self.full_view.post_show()
+        else:
+            open_dashboard(self.url)
 
     def popup_visible(self, shown):
         """Hide the tooltip while the panel or menu is open so it can't cover them."""
@@ -302,6 +316,8 @@ class Tray:
         for popup in (self.flyout, self.menu):
             if popup:
                 popup.state_changed()
+        if self.full_view:
+            self.full_view.post_state()
         if self.taskbar:
             self.taskbar.post()
         self.announce_failovers(state)
@@ -344,6 +360,8 @@ class Tray:
                     popup.dismiss()
             if self.taskbar:
                 self.taskbar.dismiss()
+            if self.full_view:
+                self.full_view.dismiss()
             self.icon.stop()
 
     def run(self, open_now=False):
@@ -352,7 +370,7 @@ class Tray:
             self.refresh()
             threading.Thread(target=self.watch, daemon=True).start()
             if open_now:
-                open_dashboard(self.url)
+                self.open_full_view()
         self.icon.run(setup=setup)
 
 

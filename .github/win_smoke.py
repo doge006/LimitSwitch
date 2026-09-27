@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import time
+import subprocess
 from urllib.request import ProxyHandler, Request, build_opener
 
 from PIL import ImageGrab
@@ -39,10 +40,44 @@ for _ in range(120):
         break
     time.sleep(0.25)
 check((ROOT / ".runtime" / "tray.url").exists(), "the app started")
+
+
+def full_views():
+    """The app's own full view windows (native, no browser)."""
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def each(hwnd, _):
+        name = ctypes.create_unicode_buffer(64)
+        ctypes.windll.user32.GetClassNameW(ctypes.c_void_p(hwnd), name, 64)
+        if name.value == "AccountSwitcherFullView" and ctypes.windll.user32.IsWindowVisible(ctypes.c_void_p(hwnd)):
+            found.append(hwnd)
+        return True
+
+    ctypes.windll.user32.EnumWindows(each, 0)
+    return found
+
+
+def memory(hwnd):
+    """The app's working set and private bytes, in MB (the process owning hwnd)."""
+    class COUNTERS(ctypes.Structure):
+        _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong)] + \
+                   [(n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                    "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage",
+                    "PeakPagefileUsage", "PrivateUsage")]
+    pid = ctypes.c_ulong()
+    ctypes.windll.user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+    process = ctypes.windll.kernel32.OpenProcess(0x1000 | 0x0010, False, pid.value)
+    counters = COUNTERS(cb=ctypes.sizeof(COUNTERS))
+    ctypes.windll.psapi.GetProcessMemoryInfo(ctypes.c_void_p(process), ctypes.byref(counters), counters.cb)
+    ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(process))
+    return round(counters.WorkingSetSize / 2**20, 1), round(counters.PrivateUsage / 2**20, 1)
+
+
 windows = []
 for _ in range(80):
-    windows = win_window.find_windows()
-    if windows and win_window.get_identity(windows[0]) == win_window.APP_ID:
+    windows = full_views()
+    if windows:
         break
     time.sleep(0.25)
 check(bool(windows), "the full view opened in its own window")
@@ -50,14 +85,18 @@ if windows:
     check(win_window.get_identity(windows[0]) == win_window.APP_ID, "the window has Account Switcher's taskbar identity")
     time.sleep(1)
     rect = (ctypes.c_long * 4)()
-    ctypes.windll.user32.GetWindowRect(windows[0], rect)
+    ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(windows[0]), rect)
     print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
-    check(rect[3] - rect[1] <= 700, "the full view opens at its own size, not a remembered one")
+    check(rect[3] - rect[1] >= 480, "the full view opens at its own size")
     ctypes.windll.user32.AllowSetForegroundWindow(-1)  # as a second launch does
     api("/api/show")  # opened again (Start menu or tray): the open one comes to the front
-    time.sleep(3)
-    check(len(win_window.find_windows()) == 1, "opening again keeps one full view")
+    time.sleep(2)
+    check(len(full_views()) == 1, "opening again keeps one full view")
     check(ctypes.windll.user32.GetForegroundWindow() == windows[0], "opening again brings it to the front")
+    ws, private = memory(windows[0])
+    print(f"app memory with the full view open: working set {ws} MB, private {private} MB", flush=True)
+    edge = subprocess.run(["tasklist", "/FI", "IMAGENAME eq msedge.exe"], capture_output=True, text=True).stdout
+    check("msedge.exe" not in edge, "no browser runs for the full view")
 time.sleep(2)
 ImageGrab.grab().save(SHOTS / "1-full-view.png")
 config = Path.home() / ".codex" / "config.toml"
@@ -215,6 +254,52 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     pump(1.5)
     user32.DestroyWindow(overlay)
     check(len(blocks()) == len(found), "a screenshot overlay does not hide the blocks")
+# ---- The full view with the demo accounts: drawn natively, hover, the settings menu ----
+api("/api/show")
+views = []
+for _ in range(40):
+    views = full_views()
+    if views:
+        break
+    time.sleep(0.25)
+check(bool(views), "the full view opens in demo mode")
+if views:
+    hwnd = wintypes.HWND(views[0])
+    time.sleep(1)
+    client = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(client))
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    box = (origin.x, origin.y, origin.x + client.right, origin.y + client.bottom)
+    ImageGrab.grab(box).save(SHOTS / "7-full-view-demo.png")
+    before = memory(views[0])
+    scale = user32.GetDpiForWindow(hwnd) / 96
+    width = client.right / scale
+    inner = min(1180, width - 56)
+    left = (width - inner) / 2
+    # The pointer over the first card (hover), then a click on Settings (right of the refresh button).
+    user32.SetCursorPos(origin.x + round((left + 100) * scale), origin.y + round(200 * scale))
+    time.sleep(0.5)
+    ImageGrab.grab(box).save(SHOTS / "8-full-view-hover.png")
+    sx, sy = origin.x + round((left + inner - 36 - 10 - 30) * scale), origin.y + round((28 + 33) * scale)
+    user32.SetCursorPos(sx, sy)
+    user32.mouse_event(2, 0, 0, 0, 0)
+    user32.mouse_event(4, 0, 0, 0, 0)
+    time.sleep(0.7)
+    ImageGrab.grab(box).save(SHOTS / "9-full-view-settings.png")
+    user32.mouse_event(2, 0, 0, 0, 0)  # and closed again
+    user32.mouse_event(4, 0, 0, 0, 0)
+    for _ in range(6):  # scroll down and back
+        user32.mouse_event(0x0800, 0, 0, ctypes.c_ulong(-120 & 0xFFFFFFFF).value, 0)
+        time.sleep(0.05)
+    time.sleep(0.5)
+    ImageGrab.grab(box).save(SHOTS / "10-full-view-scrolled.png")
+    after = memory(views[0])
+    print("full view (demo) memory: before", before, "after hover, menu and scroll", after, flush=True)
+    user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+    time.sleep(1)
+    check(not full_views(), "closing the full view closes it")
+    print("app memory once closed:", memory(user32.FindWindowW("AccountSwitcherFlyout", None) or views[0]), flush=True)
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):
