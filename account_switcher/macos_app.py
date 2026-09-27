@@ -214,6 +214,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if self.open_now:
             self.showFullView_(None)
         AppHelper.callLater(4, self.check_status_item)
+        AppHelper.callLater(30, self.trim_regularly)
         if os.environ.get("LIMITSWITCH_PANEL_TEST"):  # CI: it can't click the menu bar
             AppHelper.callLater(3, self.panel_test)
 
@@ -309,7 +310,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         """Switched to another app: the full view goes away with its Dock icon, so the menu bar
         icon only ever opens the small panel. Full view brings it back as it was."""
         if self.full_window is not None and self.full_window.isVisible():
-            self.full_window.orderOut_(None)
+            self.full_window.close()  # closed, not hidden: its drawing is freed (windowWillClose_)
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         if not self.detached:
             self.hide_panel()  # docked: goes away like a popover
@@ -322,6 +323,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                 self.canvas.close()
                 self.canvas = None
                 AppHelper.callAfter(self.forget_full_window)
+            from .memory import trim_soon
+            trim_soon()
 
     @objc.python_method
     def forget_full_window(self):
@@ -442,6 +445,13 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                         self.panel.isVisible())
 
     @objc.python_method
+    def trim_regularly(self):
+        """Every 10 minutes: memory freed by usage checks and redraws goes back to macOS."""
+        from .memory import trim
+        trim()
+        AppHelper.callLater(600, self.trim_regularly)
+
+    @objc.python_method
     def clicked_elsewhere(self, _event):
         if not self.detached:
             self.hide_panel()
@@ -450,6 +460,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     def hide_panel(self):
         if self.panel is not None and self.panel.isVisible():
             self.panel.orderOut_(None)
+            from .memory import trim_soon
+            trim_soon()
         if self.click_monitor is not None:
             from AppKit import NSEvent
             NSEvent.removeMonitor_(self.click_monitor)
