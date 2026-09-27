@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 VERSION = "1.0.0"
-REPO = "doge006/Account-Switcher"
+REPO = "doge006/LimitSwitch"
 ROOT = Path(__file__).resolve().parent.parent
 
 
