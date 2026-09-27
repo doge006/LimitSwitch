@@ -64,16 +64,6 @@ Measure the tray alone, with the panel open, and with the full view open, a few 
 - **Saved logins** are encrypted with a random key kept in your login Keychain, under `~/Library/Application Support/AccountSwitcher`.
 - **Start at login:** a LaunchAgent (`~/Library/LaunchAgents/com.accountswitcher.app.plist`).
 
-## Run it by hand (Windows)
-
-```powershell
-.\Launch.cmd            # starts the tray and opens the full view
-.\Launch.cmd --quiet    # starts in the tray only
-.\Launch.cmd --demo     # sample accounts, no real logins touched
-```
-
-**Start menu shortcut:** the installer adds it. `Add-Shortcut.cmd -Desktop` also puts one on the desktop, and `-Remove` takes them away. The shortcut starts the app without a console window. If the app is already running, it opens the full view instead.
-
 ## Your accounts
 
 - **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
@@ -147,7 +137,8 @@ Resource use: one Python process that sleeps until an account is due for a check
 ## Development (any OS)
 
 ```sh
-python -m account_switcher.tray --demo   # the app with sample accounts (Linux: needs python3-tk for the full view)
+python -m account_switcher.tray          # the app (from a source copy: .venv\\Scripts\\python on Windows)
+python -m account_switcher.tray --demo   # sample accounts, no real logins touched (Linux: needs python3-tk)
 python -m unittest discover -s tests -v
 ```
 
