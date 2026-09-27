@@ -251,7 +251,7 @@ class LiveAccounts:
                 message = str(error)
                 if error.rate_limited:  # temporary: say until when
                     message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
-                        time.strftime("%H:%M", time.localtime(time.time() + wait))
+                        clock_text(time.time() + wait, self.meta.get("clock24"))
                 if error.relogin and (is_active or is_live):
                     message = f"Waiting for {meta['provider'].title()} to refresh its login"
                 self._set(account_id, status=message)
@@ -579,6 +579,21 @@ class LiveAccounts:
                 parts.append(f"{label} {max(0, 100 - window['used']):.0f}% left")
         return " · ".join(parts)
 
+    def claude_limits(self):
+        """The freshest 5-hour and weekly numbers the app has for the account in Claude Code,
+        in Claude Code's own rate_limits shape (for the user's own status line command: an idle
+        session would otherwise show the numbers from its last reply, however old)."""
+        account_id = self.live_ids.get("claude")
+        entry = self.meta["accounts"].get(account_id) if account_id else None
+        if entry is None:
+            return None
+        limits = {}
+        for window in project(entry.get("usage") or [], time.time()):
+            key = {"five_hour": "five_hour", "weekly": "seven_day"}.get(window.get("key"))
+            if window.get("scope") == "account" and key:
+                limits[key] = {"used_percentage": window["used"], "resets_at": window.get("resetsAt")}
+        return limits or None
+
     def _best_other(self, name, current, allow_unknown=False):
         """The other account with the most headroom. allow_unknown also accepts accounts whose
         usage has not been read yet (after the known ones): a client just hit a limit, and
@@ -749,6 +764,17 @@ class LiveAccounts:
             self.logins.pop(name, None)
             shutil.rmtree(directory, ignore_errors=True)
             self.notify("accounts", None)
+
+def clock_text(ts, clock24=None):
+    """A time of day in the app's clock setting (Settings → 24-hour clock; unset: the system's)."""
+    if clock24 is None:
+        from .fullview_render import clock_12h
+        clock24 = not clock_12h()
+    moment = time.localtime(ts)
+    if clock24:
+        return time.strftime("%H:%M", moment)
+    return time.strftime("%I:%M %p", moment).lstrip("0")
+
 
 def project(usage, now):
     """Apply reset times that have passed since the last fetch, so the display is right

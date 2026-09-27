@@ -288,6 +288,9 @@ class Controller:
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
 
+    def statusline_limits(self):
+        return self.gateway.manager.claude_limits() if self.live else None
+
     def statusline(self, body):
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
@@ -395,7 +398,8 @@ def make_server(controller, port=0):
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 8192 else {}
-                    self.respond(200, {"line": controller.statusline(body if isinstance(body, dict) else {})})
+                    line = controller.statusline(body if isinstance(body, dict) else {})
+                    self.respond(200, {"line": line, "rate_limits": controller.statusline_limits()})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return

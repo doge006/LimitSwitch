@@ -27,7 +27,7 @@ header { display: flex; align-items: center; gap: 9px; padding: 13px 12px 8px 14
 .pill:hover { background: var(--pill-hover); }
 .pill:hover span { transform: translateX(2px); }
 
-#list { padding: 0 6px 8px; }
+#list { padding: 0 6px 48px; }  /* room above the switches */
 .section { display: flex; align-items: center; gap: 6px; padding: 10px 10px 5px; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .section img { width: 13px; height: 13px; }
 .section .count { color: var(--faint); font-weight: 600; }
@@ -116,10 +116,8 @@ body.compact #list { padding: 4px 4px 4px; }
 .tools { margin-left: auto; display: inline-flex; gap: 1px; }
 .icon-btn.tiny { width: 22px; height: 22px; margin: -3px 0; border-radius: 5px; }
 .icon-btn.tiny svg { width: 13px; height: 13px; }
-#full { margin-left: auto; }
-#dock { margin-left: auto; }
-#dock:not([hidden]) + #full { margin-left: 4px; }
-header .title { flex: 0 1 auto; }
+[hidden] { display: none !important; }  /* .icon-btn's display must not show a hidden button */
+header .title { flex: 1 1 auto; }  /* the dock button and Full view sit together on the right */
 /* Compact motion: a swap slides the old account out to the left, then the new one in from the right. */
 .slot { position: relative; overflow: hidden; }
 .row.mini.leaving { position: absolute; top: 0; left: 0; right: 0; animation: slide-out .2s cubic-bezier(.4, 0, 1, 1) forwards; }
@@ -127,3 +125,8 @@ header .title { flex: 0 1 auto; }
 @keyframes slide-out { to { transform: translateX(-36px); opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(36px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .row.mini.leaving, .row.mini.entering { animation-duration: 1ms; animation-delay: 0s; } }
+
+/* In the Mac app's own panel window: its rounded corners and the thin light edge a popover has. */
+.native body { border-radius: 12px; overflow: hidden; }
+.native body::after { content: ""; position: fixed; inset: 0; border-radius: 12px; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); }

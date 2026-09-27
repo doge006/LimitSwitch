@@ -344,6 +344,7 @@ class ClaudeHookTests(unittest.TestCase):
             line = json.loads(path.read_text())["statusLine"]
             self.assertIn(claude_hooks.STATUS_MARK, line["command"])
             self.assertEqual(line["padding"], 2)  # their options stay
+            self.assertEqual(line["refreshInterval"], claude_hooks.STATUS_REFRESH)  # idle sessions stay current
             claude_hooks.uninstall_statusline(state, tmp)
             self.assertEqual(json.loads(path.read_text()), theirs)
             path.write_text(json.dumps({"model": "opus"}))  # no status line of their own
@@ -647,6 +648,32 @@ if __name__ == "__main__":
 
 
 class StatusLineMarkerTests(unittest.TestCase):
+    def test_own_status_line_gets_the_apps_freshest_numbers(self):
+        """An idle session hands over the numbers from its last reply; the user's command gets
+        the app's current ones instead (everything else in the input unchanged)."""
+        import io
+        from account_switcher import statusline
+        seen = {}
+
+        def run(command, raw):
+            seen["input"] = json.loads(raw)
+            return b"mine\n"
+        stale = {"session_id": "idle", "model": {"id": "x"},
+                 "rate_limits": {"five_hour": {"used_percentage": 0, "resets_at": 1}}}
+        fresh = {"five_hour": {"used_percentage": 91, "resets_at": 2}, "seven_day": {"used_percentage": 40, "resets_at": 3}}
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({"url": "http://127.0.0.1:1/x", "token": "t", "statusline": "my-line.sh"}))
+            out = io.BytesIO()
+            with mock.patch.object(statusline, "report", return_value=("line", fresh)), \
+                    mock.patch.object(statusline, "run_previous", side_effect=run), \
+                    mock.patch.object(sys, "stdin", mock.Mock(buffer=io.BytesIO(json.dumps(stale).encode()))), \
+                    mock.patch.object(sys, "stdout", mock.Mock(buffer=out)):
+                statusline.main(["statusline.py", str(state)])
+        self.assertEqual(seen["input"]["rate_limits"], fresh)
+        self.assertEqual(seen["input"]["model"], {"id": "x"})
+        self.assertTrue(out.getvalue().startswith(b"mine  "))
+
     def test_own_status_line_gets_the_marker_after_its_last_line(self):
         from account_switcher import statusline
         self.assertEqual(statusline.with_marker(b"~/proj main\n"), b"~/proj main  " + statusline.MARKER.encode() + b"\n")
