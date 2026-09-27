@@ -252,6 +252,12 @@ class LiveTests(unittest.TestCase):
             self.assertGreater(claude["renewsAt"], time.time())
             with self.assertRaises(ValueError):
                 controller.action("run", {"scenario": "normal"})
+            self.assertTrue(state["launchAtLogin"])  # on by default: Codex goes through the app
+            with mock.patch("account_switcher.integrations.set_start_with_windows") as start:
+                controller.action("startup", {"on": False})
+            start.assert_called_once_with(False)
+            self.assertFalse(controller.snapshot()["launchAtLogin"])
+            self.assertFalse(controller.gateway.manager.meta["startWithWindows"])  # remembered
         finally:
             controller.close()
 

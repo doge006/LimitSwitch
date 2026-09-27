@@ -110,6 +110,7 @@ class Controller:
                 "taskbarDisplays": list(self.taskbar_displays),
                 "taskbarAvailable": self.taskbar_available,
                 "nameMode": name_mode,
+                "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
                 "signingIn": sorted(getattr(getattr(self.gateway, "manager", None), "logins", {})),
@@ -118,10 +119,21 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
+            self.notify("changed", None)
+            return
+        if action == "startup":  # start at sign-in (Windows Run entry / macOS login item); instant
+            if not self.live:
+                raise ValueError("Starting at sign-in needs real-account mode")
+            on = bool(body.get("on"))
+            with self.gateway.manager.lock:
+                self.gateway.manager.meta["startWithWindows"] = on
+                self.gateway.manager.save()
+            from .integrations import set_start_with_windows
+            set_start_with_windows(on)
             self.notify("changed", None)
             return
         if action in {"compact", "taskbar"}:  # the panel's size / the taskbar view and its display; instant

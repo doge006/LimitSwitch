@@ -346,8 +346,8 @@ def _set_launch_agent(enabled):
     plist = {"Label": LAUNCH_AGENT, "ProgramArguments": arguments, "RunAtLoad": True,
              "ProcessType": "Interactive", "WorkingDirectory": str(script.parent)}
     from .vault import data_dir
-    log = str(data_dir() / "app.log")  # a failed start at login is not silent either
-    plist.update(StandardOutPath=log, StandardErrorPath=log)
+    log_file = str(data_dir() / "app.log")  # a failed start at login is not silent either
+    plist.update(StandardOutPath=log_file, StandardErrorPath=log_file)
     data = plistlib.dumps(plist)
     try:
         if not path.exists() or path.read_bytes() != data:
