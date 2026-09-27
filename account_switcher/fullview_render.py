@@ -204,8 +204,11 @@ def ring_alpha(w, h, r, width, alpha):
 class Canvas:
     """Draws in logical px on an RGB(A) image of scale x that size."""
 
-    def __init__(self, image, scale, bg):
+    def __init__(self, image, scale, bg, origin=(0, 0)):
+        """origin: where `image` sits in the whole picture (device px), to redraw one part of
+        it on its own: everything lands on exactly the pixels it would in the whole."""
         self.image, self.s, self.bg = image, scale, bg
+        self.ox, self.oy = origin
         self.draw = ImageDraw.Draw(image)
 
     def px(self, v):
@@ -213,7 +216,7 @@ class Canvas:
 
     def box(self, x, y, w, h):
         x0, y0 = self.px(x), self.px(y)
-        return x0, y0, max(1, self.px(x + w) - x0), max(1, self.px(y + h) - y0)
+        return x0 - self.ox, y0 - self.oy, max(1, self.px(x + w) - x0), max(1, self.px(y + h) - y0)
 
     def rect(self, x, y, w, h, r, fill):
         x0, y0, pw, ph = self.box(x, y, w, h)
@@ -233,16 +236,18 @@ class Canvas:
     def line(self, x, y, w, color):
         """A hairline across (1 device px)."""
         x0, y0 = self.px(x), self.px(y)
-        self.image.paste(over(self.bg, color) if len(color) == 4 else color, (x0, y0, self.px(x + w), y0 + max(1, round(self.s))))
+        x1 = self.px(x + w)
+        self.image.paste(over(self.bg, color) if len(color) == 4 else color,
+                         (x0 - self.ox, y0 - self.oy, x1 - self.ox, y0 - self.oy + max(1, round(self.s))))
 
     def text(self, x, y, value, size, fill, bold=False, anchor="ls", bg=None):
         if len(fill) == 4:
             fill = over(bg or self.bg, fill)
-        self.draw.text((x * self.s, y * self.s), value, font=fr.font(size, bold, self.s), fill=fill, anchor=anchor)
+        fr.draw_text(self.draw, (x * self.s - self.ox, y * self.s - self.oy), value, size, bold, self.s, fill, anchor)
 
     def image_at(self, x, y, name, size):
         icon = fr.asset(name, self.px(size))
-        self.image.paste(icon, (self.px(x), self.px(y)), icon)
+        self.image.paste(icon, (self.px(x) - self.ox, self.px(y) - self.oy), icon)
 
     def glyph(self, kind, cx, cy, size, color):
         icon = glyph(kind, self.px(size), color)

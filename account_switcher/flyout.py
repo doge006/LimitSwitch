@@ -453,29 +453,46 @@ class Popup:
         self._push(image, self.alpha)
 
     def _push(self, image, alpha, offset=(0, 0)):
-        """Blit a premultiplied-BGRA copy of `image` to the layered window."""
+        """Show `image` on the layered window. Its premultiplied-BGRA copy lives in a bitmap kept
+        for the window's life, written only when the image changes: fading and sliding (the open
+        and close animations) move and fade the same pixels, so they skip the conversion."""
         self.alpha, self.image = alpha, image
         width, height = image.size
-        screen = user32.GetDC(None)
-        memory = gdi32.CreateCompatibleDC(screen)
-        info = BITMAPINFO()
-        info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        info.bmiHeader.biWidth, info.bmiHeader.biHeight = width, -height  # top-down
-        info.bmiHeader.biPlanes, info.bmiHeader.biBitCount = 1, 32
-        bits = ctypes.c_void_p()
-        bitmap = gdi32.CreateDIBSection(screen, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
-        if bitmap and bits.value:
-            data = image.convert("RGBa").tobytes("raw", "BGRa")
-            ctypes.memmove(bits, data, len(data))
+        surface = getattr(self, "_surface", None)
+        if surface is None or surface[0] != (width, height):
+            self._release_surface()
+            screen = user32.GetDC(None)
+            memory = gdi32.CreateCompatibleDC(screen)
+            info = BITMAPINFO()
+            info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            info.bmiHeader.biWidth, info.bmiHeader.biHeight = width, -height  # top-down
+            info.bmiHeader.biPlanes, info.bmiHeader.biBitCount = 1, 32
+            bits = ctypes.c_void_p()
+            bitmap = gdi32.CreateDIBSection(screen, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
+            user32.ReleaseDC(None, screen)
+            if not bitmap or not bits.value:
+                gdi32.DeleteDC(memory)
+                return
             old = gdi32.SelectObject(memory, bitmap)
-            blend = BLENDFUNCTION(0, 0, max(0, min(255, round(alpha * 255))), 1)
-            user32.UpdateLayeredWindow(self.hwnd, screen, ctypes.byref(wintypes.POINT(self.x + offset[0], self.y + offset[1])),
-                                       ctypes.byref(wintypes.SIZE(width, height)), memory,
-                                       ctypes.byref(wintypes.POINT(0, 0)), 0, ctypes.byref(blend), ULW_ALPHA)
+            surface = self._surface = [(width, height), memory, bitmap, bits, old, None]
+        if surface[5] is not image:
+            data = image.convert("RGBa").tobytes("raw", "BGRa")
+            ctypes.memmove(surface[3], data, len(data))
+            surface[5] = image
+        screen = user32.GetDC(None)
+        blend = BLENDFUNCTION(0, 0, max(0, min(255, round(alpha * 255))), 1)
+        user32.UpdateLayeredWindow(self.hwnd, screen, ctypes.byref(wintypes.POINT(self.x + offset[0], self.y + offset[1])),
+                                   ctypes.byref(wintypes.SIZE(width, height)), surface[1],
+                                   ctypes.byref(wintypes.POINT(0, 0)), 0, ctypes.byref(blend), ULW_ALPHA)
+        user32.ReleaseDC(None, screen)
+
+    def _release_surface(self):
+        surface, self._surface = getattr(self, "_surface", None), None
+        if surface:
+            _, memory, bitmap, _, old, _ = surface
             gdi32.SelectObject(memory, old)
             gdi32.DeleteObject(bitmap)
-        gdi32.DeleteDC(memory)
-        user32.ReleaseDC(None, screen)
+            gdi32.DeleteDC(memory)
 
     # ---------- animation (timer only while moving) ----------
     def _animate(self, start, end, duration):
@@ -598,6 +615,7 @@ class Popup:
             for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS):
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
+            self._release_surface()
             if not any(popup.modal for popup in Popup._windows.values()):
                 OutsideClicks.stop()
                 if self.modal:

@@ -5,12 +5,14 @@ timers this asks for (a minute tick for "resets in", toast expiry, a switch time
 while the window is idle, and closing it frees every cached tile.
 """
 import calendar
+import math
 import re
 import time
 
 from PIL import Image
 
 from . import fullview_render as vr
+from .flyout_render import text_w as fr_text_w
 
 FAIL = re.compile(r"fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without", re.I)
 SWAP = re.compile(r"→|swap|selected|routed|failover|continue|now uses", re.I)
@@ -39,6 +41,38 @@ def blend_region(image, before, box, t, scale):
     region = (max(0, region[0]), max(0, region[1]), min(image.width, region[2]), min(image.height, region[3]))
     if region[2] > region[0] and region[3] > region[1]:
         image.paste(Image.blend(before.crop(region), image.crop(region), max(0.0, min(1.0, t))), region[:2])
+
+
+def widest_percent():
+    """Logical width of the widest percentage a card shows ("100%")."""
+    global _widest
+    if _widest is None:
+        _widest = fr_text_w("100%", 13, True)
+    return _widest
+
+
+_widest = None
+
+
+def merge_boxes(boxes, size):
+    """Boxes clipped to the page, with overlapping ones merged (each area is then drawn once)."""
+    width, height = size
+    out = []
+    for x0, y0, x1, y1 in boxes:
+        box = [max(0, x0), max(0, y0), min(width, x1), min(height, y1)]
+        if box[0] >= box[2] or box[1] >= box[3]:
+            continue
+        merged = True
+        while merged:
+            merged = False
+            for other in out:
+                if box[0] <= other[2] and other[0] <= box[2] and box[1] <= other[3] and other[1] <= box[3]:
+                    out.remove(other)
+                    box = [min(box[0], other[0]), min(box[1], other[1]), max(box[2], other[2]), max(box[3], other[3])]
+                    merged = True
+                    break
+        out.append(box)
+    return [tuple(b) for b in out]
 
 
 def ease(p):
@@ -120,6 +154,10 @@ class FullView:
         self.pressed = None
         self.motion = Motion()
         self.seen = set()          # tiles already on screen (new ones rise in, like the web page)
+        self.last_page = None      # (layout, [(box, what)], image): the page, to redraw only what changes
+        self.incremental = True
+        self.changed = None        # device boxes the last frame changed (None: all of it), for the host
+        self.had_overlays = False
         self.take_log(state)
         try:
             controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
@@ -248,8 +286,8 @@ class FullView:
         for key, on in prefs.items():
             motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
             ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
-        image = vr.backdrop(self.width, self.height, s).copy()
-        canvas = vr.Canvas(image, s, vr.BG)
+        # What goes on the page, in drawing order: (device box, what it shows, how to draw it).
+        ops = []
         hits = []
         keep = set()
         fresh = []
@@ -265,10 +303,14 @@ class FullView:
             if top > self.height or top + h < -vr.SHADOW:
                 continue  # off screen: not drawn (still cached)
             t = self.tile(kind, key, w, h, data)
-            mask = t.image if rise >= 1 else t.image.getchannel("A").point(lambda v: round(v * rise))
-            image.paste(t.image, (round(x * s) - t.margin, round(top * s) - t.margin), mask)
+            tx, ty = round(x * s) - t.margin, round(top * s) - t.margin
+            ops.append(((tx, ty, tx + t.image.width, ty + t.image.height),
+                        ("tile", key, self.tiles[key][0], tx, ty, rise), ("tile", t, tx, ty, rise)))
             for part in t.live:  # bars fill and percentages count, on top of the cached card
-                moving |= self.draw_live(canvas, part, x, top, rise)
+                params, still = self.live(part, x, top, rise)
+                moving |= still
+                if params:
+                    ops.append((self.live_box(params), params, ("live", params)))
             for (hx, hy, hw, hh), action, cursor in t.hits:
                 hits.append(((x + hx, y + hy, hw, hh), action, cursor, key))
         for key in list(self.tiles):  # accounts that went away
@@ -278,9 +320,18 @@ class FullView:
         for key, delay in fresh:  # drawing them took a moment: start their rise from here
             start, end, _, seconds = motion.runs[("rise", key)]
             motion.runs[("rise", key)] = (start, end, now + delay, seconds)
+        image = self.compose(ops)
         self.page_hits = hits
         self.overlay_hits = []
-        moving |= self.draw_overlays(image)
+        overlays = self.overlays_showing()
+        if overlays:
+            image = image.copy()  # the page stays as it is, for the next frame to build on
+            moving |= self.draw_overlays(image)
+        else:
+            self.draw_overlays(image)  # nothing to draw; keeps the toast timers right
+        if overlays or self.had_overlays:
+            self.changed = None  # menus and toasts sit on top of the page: all of it (while they show)
+        self.had_overlays = overlays
         moving |= bool(motion.runs)
         if moving:
             self.host.set_timer("anim", 16)
@@ -288,8 +339,54 @@ class FullView:
             self.host.kill_timer("anim")
         return image
 
-    def draw_live(self, canvas, part, x, top, rise):
-        """One bar fill or percentage, at its animated value. True while it still moves."""
+    def overlays_showing(self):
+        ui = self.ui
+        return bool(ui.menu or ui.editor or [t for t in self.toast_list if t[2] > time.monotonic()])
+
+    def compose(self, ops):
+        """The page: the backdrop with the tiles and live parts on it. Only what changed since
+        the last frame is drawn again: each changed area is rebuilt from the backdrop up, with
+        everything that touches it, in the same order, so it comes out pixel for pixel as a
+        whole redraw would (tests compare the two). A new size or scroll redraws everything."""
+        s = self.scale
+        backdrop = vr.backdrop(self.width, self.height, s)
+        last = self.last_page
+        same_layout = (last is not None and last[0] == (backdrop.size, self.scroll, s)
+                       and [o[1][:2] for o in last[1]] == [o[1][:2] for o in ops])
+        if not same_layout or not self.incremental:
+            page = backdrop.copy()
+            self.paint_region(page, (0, 0) + page.size, ops)
+            self.changed = None  # everything
+        else:
+            page = last[2]
+            dirty = []
+            for (old_box, old_sig, _), (box, sig, _) in zip(last[1], ops):
+                if old_sig != sig:
+                    dirty += [old_box, box]
+            self.changed = merge_boxes(dirty, page.size)
+            for box in self.changed:
+                region = backdrop.crop(box)
+                self.paint_region(region, box, ops)
+                page.paste(region, box[:2])
+        self.last_page = ((backdrop.size, self.scroll, s), [(box, sig, None) for box, sig, _ in ops], page)
+        return page
+
+    def paint_region(self, region, box, ops):
+        """Draw every op that touches `box` (device px) onto `region`, the image of that box."""
+        ox, oy, x1, y1 = box
+        canvas = vr.Canvas(region, self.scale, vr.BG, origin=(ox, oy))
+        for (bx0, by0, bx1, by1), _, how in ops:
+            if bx1 <= ox or bx0 >= x1 or by1 <= oy or by0 >= y1:
+                continue
+            if how[0] == "tile":
+                _, t, tx, ty, rise = how
+                mask = t.image if rise >= 1 else t.image.getchannel("A").point(lambda v: round(v * rise))
+                region.paste(t.image, (tx - ox, ty - oy), mask)
+            else:
+                self.paint_live(canvas, how[1])
+
+    def live(self, part, x, top, rise):
+        """One bar fill or percentage at its animated value: (what to draw or None, still moving)."""
         kind, key, px, py, *rest = part
         motion = self.motion
         spent = rest[-1]
@@ -301,14 +398,33 @@ class FullView:
             else:
                 motion.to(("bar", key), target, 0.5)
             value = motion.get(("bar", key))
+            params = None
             if value > 0.3:
-                canvas.rect(x + px, top + py, max(6, width * value / 100), 6, 3, vr.level(target) + (round(255 * alpha),))
+                params = ("bar", x + px, top + py, max(6, width * value / 100), vr.level(target) + (round(255 * alpha),))
         else:
             target = rest[0]
             motion.to(("pct", key), target, 0.35)
             value = motion.get(("pct", key))
-            canvas.text(x + px, top + py, f"{value:.0f}%", 13, vr.level(target) + (round(255 * alpha),), True, anchor="rs")
-        return ("bar", key) in motion.runs or ("pct", key) in motion.runs
+            params = ("pct", x + px, top + py, f"{value:.0f}%", vr.level(target) + (round(255 * alpha),))
+        return params, ("bar", key) in motion.runs or ("pct", key) in motion.runs
+
+    def live_box(self, params):
+        """Device box that holds everything a live part draws (generous for the text)."""
+        s = self.scale
+        if params[0] == "bar":
+            _, x, y, w, _ = params
+            return (round(x * s) - 1, round(y * s) - 1, round((x + w) * s) + 2, round((y + 6) * s) + 2)
+        _, x, y, _, _ = params
+        width = widest_percent() * s
+        return (math.floor(x * s - width) - 4, math.floor((y - 17) * s) - 2, math.ceil(x * s) + 4, math.ceil((y + 6) * s) + 2)
+
+    def paint_live(self, canvas, params):
+        if params[0] == "bar":
+            _, x, y, w, color = params
+            canvas.rect(x, y, w, 6, 3, color)
+        else:
+            _, x, y, text, color = params
+            canvas.text(x, y, text, 13, color, True, anchor="rs")
 
     def draw_overlays(self, image):
         """Menus, the date editor and toasts, fading in (and toasts out). True while any moves."""

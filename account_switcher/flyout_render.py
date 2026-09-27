@@ -4,6 +4,7 @@ Pure Pillow; no windowing. Shapes are drawn at 2x on an opaque canvas and downsa
 (anti-aliased edges, correct blending); text is drawn at final size by FreeType.
 Everything is in logical pixels times `scale`.
 """
+from collections import OrderedDict
 from functools import lru_cache
 import math
 import os
@@ -127,6 +128,67 @@ def font(size, bold, scale):
         return face
     except OSError:
         return ImageFont.load_default(round(size * scale))
+
+
+_glyphs = OrderedDict()   # (font, text, anchor, sub-pixel start) -> (mask, offset)
+_GLYPHS_MAX = 400
+_fast_text = True
+
+
+def draw_text(draw, xy, value, size, bold, scale, fill, anchor):
+    """draw.text, with the rasterised text kept: the same label at the same sub-pixel position
+    is drawn from its cached mask instead of by FreeType again. Pixel for pixel what draw.text
+    draws (it is the same getmask2 and draw_bitmap that draw.text uses; tests compare them)."""
+    global _fast_text
+    face = font(size, bold, scale)
+    if _fast_text:
+        try:
+            ink = draw._getink(fill)[0]
+            x, y = xy
+            start = (math.modf(x)[0], math.modf(y)[0])
+            key = (size, bold, scale, value, anchor, start, draw.fontmode)
+            hit = _glyphs.get(key)
+            if hit is None:
+                hit = _glyphs[key] = face.getmask2(value, draw.fontmode, None, None, None, 0, anchor, ink, start)
+                if len(_glyphs) > _GLYPHS_MAX:
+                    _glyphs.popitem(last=False)
+            else:
+                _glyphs.move_to_end(key)
+            mask, offset = hit
+            draw.draw.draw_bitmap((int(x) + offset[0], int(y) + offset[1]), mask, ink)
+            return
+        except (AttributeError, TypeError, ValueError):  # another Pillow: its own path, from now on
+            _fast_text = False
+    draw.text(xy, value, font=face, fill=fill, anchor=anchor)
+
+
+_masks = OrderedDict()   # a label's coverage mask, by text and sub-pixel position
+
+
+def text_mask(x, y, value, size, bold, scale, anchor):
+    """(mask, left, top): a label's coverage at device position (x, y), as the taskbar blocks
+    draw it. The mask only depends on the text and the position's fraction, so it is kept and
+    moved to whole pixels (the same pixels as making it again; tests compare them)."""
+    ix, iy = math.floor(x), math.floor(y)
+    key = (value, size, bold, scale, anchor, x - ix, y - iy)
+    hit = _masks.get(key)
+    if hit is None:
+        f = font(size, bold, scale)
+        fx, fy = x - ix + 64, y - iy + 64  # made away from 0, where int() and floor() agree
+        box = _probe.textbbox((fx, fy), value, font=f, anchor=anchor)
+        left, top = int(box[0]) - 1, int(box[1]) - 1
+        mask = Image.new("L", (int(box[2]) + 2 - left, int(box[3]) + 2 - top), 0)
+        ImageDraw.Draw(mask).text((fx - left, fy - top), value, font=f, fill=255, anchor=anchor)
+        hit = _masks[key] = (mask, left - 64, top - 64)
+        if len(_masks) > 200:
+            _masks.popitem(last=False)
+    else:
+        _masks.move_to_end(key)
+    mask, left, top = hit
+    return mask, left + ix, top + iy
+
+
+_probe = ImageDraw.Draw(Image.new("L", (1, 1)))
 
 
 def text_w(value, size, bold=False):
@@ -661,11 +723,22 @@ def paint(layout, width, height, scale):
             # Pillow ignores the ink's alpha for text, so fade by mixing with the panel colour.
             t = fill[3] / 255
             fill = tuple(round(BG[i] * (1 - t) + fill[i] * t) for i in range(3)) + (255,)
-        draw.text(((M + x) * scale, (M + y) * scale), value, font=font(size, bold, scale), fill=fill, anchor=anchor)
+        draw_text(draw, ((M + x) * scale, (M + y) * scale), value, size, bold, scale, fill, anchor)
     panel = panel.convert("RGBA")
     panel.putalpha(mask)
     image = shadow.copy()
-    image.alpha_composite(panel)
+    # Only the rounded edge blends with the shadow; inside it the result is the panel's own pixel.
+    # So blend the four edge strips and copy the middle straight across (tests check the result
+    # is identical to blending all of it).
+    edge = math.ceil((M + RADIUS) * scale) + 2
+    fw, fh = image.size
+    if fw > 2 * edge and fh > 2 * edge:
+        for box in ((0, 0, fw, edge), (0, fh - edge, fw, fh), (0, edge, edge, fh - edge), (fw - edge, edge, fw, fh - edge)):
+            image.alpha_composite(panel, dest=box[:2], source=box)
+        middle = (edge, edge, fw - edge, fh - edge)
+        image.paste(panel.crop(middle), middle[:2])
+    else:
+        image.alpha_composite(panel)
     return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
 
@@ -865,15 +938,10 @@ def paint_clear(layout, width, height, scale):
             icon, px = icon.crop((-px, 0, icon.width, icon.height)), 0
         if px < canvas.width:
             canvas.alpha_composite(icon, (px, max(0, py)))
-    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
     for x, y, value, size, bold, fill, anchor in layout.texts:
         if fill[3] <= 0:
             continue
-        f = font(size, bold, scale)
-        box = probe.textbbox((x * scale, y * scale), value, font=f, anchor=anchor)
-        left, top = int(box[0]) - 1, int(box[1]) - 1
-        mask = Image.new("L", (int(box[2]) + 2 - left, int(box[3]) + 2 - top), 0)
-        ImageDraw.Draw(mask).text((x * scale - left, y * scale - top), value, font=f, fill=255, anchor=anchor)
+        mask, left, top = text_mask(x * scale, y * scale, value, size, bold, scale, anchor)
         _mask_blit(canvas, mask, left, top, fill)
     return canvas, list(layout.hits)
 

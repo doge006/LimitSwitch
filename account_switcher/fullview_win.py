@@ -28,7 +28,7 @@ WM_DESTROY, WM_SIZE, WM_PAINT, WM_CLOSE, WM_ERASEBKGND = 0x0002, 0x0005, 0x000F,
 WM_SETCURSOR, WM_GETMINMAXINFO, WM_KEYDOWN, WM_CHAR, WM_TIMER = 0x0020, 0x0024, 0x0100, 0x0102, 0x0113
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEWHEEL, WM_MOUSELEAVE = 0x0200, 0x0201, 0x0202, 0x020A, 0x02A3
 WM_DPICHANGED, WM_ACTIVATE = 0x02E0, 0x0006
-WM_APP_STATE, WM_APP_SHOW = 0x8000 + 31, 0x8000 + 32
+WM_APP_STATE, WM_APP_SHOW, WM_APP_RENDER = 0x8000 + 31, 0x8000 + 32, 0x8000 + 33
 HTCLIENT, TME_LEAVE, SW_SHOW, SW_RESTORE = 1, 2, 5, 9
 CURSORS = {"arrow": 32512, "hand": 32649, "text": 32513}
 KEYS = {0x1B: "escape", 0x0D: "enter", 0x08: "backspace", 0x2E: "delete", 0x25: "left", 0x27: "right",
@@ -131,8 +131,9 @@ class FullViewWindow:
         self.hwnd = None
         self.view = None
         self.scale = 1.0
-        self.frame = None          # (bytes, width, height) last drawn
+        self.frame = None          # (bytearray of BGRX pixels, width, height): the window's picture
         self.dirty = True
+        self.render_posted = False
         self.tracking = False
         self.cursor = "arrow"
         self.timers = set()
@@ -231,9 +232,34 @@ class FullViewWindow:
 
     # ---------- the host interface FullView uses ----------
     def invalidate(self):
+        """Draw a new frame soon (once, however many changes come in before it)."""
         self.dirty = True
-        if self.hwnd:
+        if self.hwnd and not self.render_posted:
+            self.render_posted = True
+            user32.PostMessageW(self.hwnd, WM_APP_RENDER, 0, 0)
+
+    def render(self):
+        """Draw the view's next frame into the window's picture: only the areas it changed are
+        converted to Windows' pixel format and marked for repainting."""
+        self.render_posted = False
+        if not self.dirty or not self.view:
+            return
+        self.dirty = False
+        image = self.view.frame()
+        changed = self.view.changed
+        width, height = image.size
+        if self.frame is None or self.frame[1:] != (width, height) or changed is None:
+            self.frame = (bytearray(image.tobytes("raw", "BGRX")), width, height)
             user32.InvalidateRect(self.hwnd, None, False)
+            return
+        picture, stride = memoryview(self.frame[0]), width * 4
+        for x0, y0, x1, y1 in changed:
+            part = image.crop((x0, y0, x1, y1)).tobytes("raw", "BGRX")
+            row = (x1 - x0) * 4
+            for i in range(y1 - y0):
+                start = (y0 + i) * stride + x0 * 4
+                picture[start:start + row] = part[i * row:(i + 1) * row]
+            user32.InvalidateRect(self.hwnd, ctypes.byref(wintypes.RECT(x0, y0, x1, y1)), False)
 
     def set_timer(self, name, ms):
         if self.hwnd:
@@ -277,13 +303,16 @@ class FullViewWindow:
         ps = PAINTSTRUCT()
         hdc = user32.BeginPaint(self.hwnd, ctypes.byref(ps))
         try:
-            if self.dirty or self.frame is None:
-                image = self.view.frame()
-                self.frame = (image.tobytes("raw", "BGRX"), image.width, image.height)
-                self.dirty = False
-            data, width, height = self.frame
-            header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
-            gdi32.SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, data, ctypes.byref(header), 0)
+            if self.frame is None:
+                self.dirty = True
+                self.render()
+            if self.frame is not None:
+                # Windows limits this to the area that needs painting (what render() marked, and
+                # anything uncovered), so only those pixels are copied.
+                data, width, height = self.frame
+                buffer = (ctypes.c_char * len(data)).from_buffer(data)
+                header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
+                gdi32.SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, buffer, ctypes.byref(header), 0)
         finally:
             user32.EndPaint(self.hwnd, ctypes.byref(ps))
 
@@ -300,6 +329,9 @@ class FullViewWindow:
             return 1  # every pixel is painted: no white flash
         if msg == WM_SIZE:
             self.on_size()
+            return 0
+        if msg == WM_APP_RENDER:
+            self.render()
             return 0
         if msg == WM_APP_STATE:
             view.set_state(self.tray.state)
