@@ -190,7 +190,7 @@ jobs:
         run: |
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
-          LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
+          SMOKE_WINDOW_CLOSED=1 LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
       - name: The bundle is unchanged after running (its signature still holds)
         run: |
           codesign --verify --deep --strict /Applications/LimitSwitcher.app
