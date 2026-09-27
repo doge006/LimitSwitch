@@ -49,6 +49,8 @@ Measure the tray alone, with the panel open, and with the full view open, a few 
 
 Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitch-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup), installs it silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
 
+The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitch-AppleSilicon.dmg` and `LimitSwitch-Intel.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs the Apple silicon one into /Applications from the DMG, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMGs are kept on the run for 14 days.
+
 ## Layout
 
 - `account_switcher/tray.py`: the app (tray icon, notifications, startup).
@@ -67,5 +69,6 @@ Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release**
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
 - `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
+- `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitch.app with its own Python).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
 - `docs/media/`: the README's screenshots and GIF.

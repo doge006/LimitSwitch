@@ -3,6 +3,11 @@ name: macOS app
 on:
   workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
     inputs:
+      job:
+        description: "smoke: install from source on each macOS; dmg: build the DMGs and test one like a user (one runner)"
+        type: choice
+        options: [smoke, dmg]
+        default: smoke
       os:
         description: "One runner (e.g. macos-15) to spend a third of the minutes; empty for all"
         required: false
@@ -13,6 +18,7 @@ permissions:
 
 jobs:
   smoke:
+    if: inputs.job == 'smoke'
     strategy:
       fail-fast: false
       matrix:
@@ -80,6 +86,94 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ matrix.os }}
+          path: shots
+          retention-days: 7
+          if-no-files-found: ignore
+
+  dmg:
+    if: inputs.job == 'dmg'
+    runs-on: macos-15  # Apple silicon; the Intel DMG is built here too (wheels for x86_64)
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build the DMGs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install --quiet Pillow
+          python scripts/build_mac.py --arch arm64
+          python scripts/build_mac.py --arch x86_64
+          ls -la build/*.dmg
+      - name: Install from the DMG, as a user does (drag to Applications)
+        run: |
+          mkdir -p ~/.codex
+          sw_vers
+          # A downloaded DMG is quarantined; opening it the first time asks (Open Anyway). This
+          # checks the same bundle without the prompt, which a runner can't click.
+          hdiutil attach -nobrowse -mountpoint /tmp/dmg build/LimitSwitch-AppleSilicon.dmg
+          ls -la /tmp/dmg
+          test -L /tmp/dmg/Applications
+          cp -R /tmp/dmg/LimitSwitch.app /Applications/
+          touch /tmp/installed
+          hdiutil detach /tmp/dmg
+          codesign --verify --deep --strict /Applications/LimitSwitch.app
+          open /Applications/LimitSwitch.app
+          url="$HOME/Library/Application Support/AccountSwitcher/running.url"
+          for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
+          if [ ! -f "$url" ]; then cat "$HOME/Library/Application Support/AccountSwitcher/app.log"; exit 1; fi
+          ps axww -o pid,rss,comm,args | grep -i limitswitch | grep -v grep
+      - name: Claude Code's status line command works (the bundle's own Python)
+        run: |
+          sleep 8
+          python3 - <<'PY'
+          import json, os, subprocess, time
+          settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+          command = settings["statusLine"]["command"]
+          print("command:", command)
+          assert "/Applications/LimitSwitch.app/" in command, "not the bundle's Python"
+          sample = json.dumps({"session_id": "ci", "rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": time.time() + 3600}}})
+          done = subprocess.run(["/bin/bash", "-c", command], input=sample, capture_output=True, text=True, timeout=20)
+          print("exit:", done.returncode, "stdout:", done.stdout[:300], "stderr:", done.stderr[:600])
+          assert done.returncode == 0 and "LimitSwitch" in done.stdout, "status line command failed"
+          PY
+      - name: The README's measuring snippet works
+        run: |
+          snippet=$(python3 - <<'PY'
+          import re
+          text = open("README.md").read()
+          match = re.search(r"```sh\n(pids=.*?)```", text, re.S)
+          print(match.group(1).replace("sleep 60", "sleep 5").replace("/60*100", "/5*100"))
+          PY
+          )
+          [ -n "$snippet" ] || { echo "no snippet in README.md"; exit 1; }
+          out=$(bash -c "$snippet")
+          echo "$out"
+          echo "$out" | grep -q "MB memory"
+      - name: Smoke test (menu bar icon, window, quit)
+        run: |
+          python3 -m venv /tmp/probe
+          /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
+          LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
+      - name: The bundle is unchanged after running (its signature still holds)
+        run: |
+          codesign --verify --deep --strict /Applications/LimitSwitch.app
+          if find /Applications/LimitSwitch.app -newer /tmp/installed -type f | grep .; then
+            echo "files written inside the app"; exit 1
+          fi
+      - name: Keep the DMGs
+        uses: actions/upload-artifact@v4
+        with:
+          name: LimitSwitch-mac
+          path: build/*.dmg
+          retention-days: 14
+      - name: Keep screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-dmg
           path: shots
           retention-days: 7
           if-no-files-found: ignore
