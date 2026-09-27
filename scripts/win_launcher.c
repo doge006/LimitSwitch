@@ -1,5 +1,5 @@
-/* Account Switcher.exe: the portable copy's launcher. Starts the bundled windowless Python
-   (runtime\pythonw.exe) on AccountSwitcher.pyw next to this exe, passing its arguments on,
+/* LimitSwitch.exe: the installed copy's launcher. Starts the bundled windowless Python
+   (runtime\pythonw.exe) on LimitSwitch.pyw next to this exe, passing its arguments on,
    then exits. It carries the app icon, so Explorer, the Start menu and pins show it. */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -27,14 +27,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command, int s
     if (!slash) return 1;
     *slash = 0;
     swprintf(python, MAX_PATH, L"%ls\\runtime\\pythonw.exe", folder);
-    swprintf(script, MAX_PATH, L"%ls\\AccountSwitcher.pyw", folder);
+    swprintf(script, MAX_PATH, L"%ls\\LimitSwitch.pyw", folder);
     swprintf(line, 4 * MAX_PATH, L"\"%ls\" \"%ls\" %ls", python, script, arguments());
     AllowSetForegroundWindow(ASFW_ANY); /* the app may bring its window to the front */
     STARTUPINFOW startup = {sizeof(startup)};
     PROCESS_INFORMATION process;
     if (!CreateProcessW(python, line, NULL, NULL, FALSE, 0, NULL, folder, &startup, &process)) {
-        MessageBoxW(NULL, L"Account Switcher couldn't start: runtime\\pythonw.exe is missing. Download it again.",
-                    L"Account Switcher", MB_ICONERROR);
+        MessageBoxW(NULL, L"LimitSwitch couldn't start: runtime\\pythonw.exe is missing. Install LimitSwitch again.",
+                    L"LimitSwitch", MB_ICONERROR);
         return 1;
     }
     CloseHandle(process.hThread);

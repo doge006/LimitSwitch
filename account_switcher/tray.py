@@ -1,4 +1,4 @@
-"""Account Switcher: a notification-area icon is the whole resident app.
+"""LimitSwitch: a notification-area icon is the whole resident app.
 
 Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / Auto resume) with a
 "Full view" button that opens the dashboard (the local Web UI) in a browser app window.
@@ -11,7 +11,6 @@ menu are rebuilt only when what they show actually changes.
 import argparse
 import json
 import logging
-import os
 from pathlib import Path
 import sys
 import threading
@@ -23,7 +22,7 @@ from PIL import Image, ImageDraw
 
 from .web import Controller, clear_url_file, make_server, write_url_file
 
-APP = "Account Switcher"
+APP = "LimitSwitch"
 PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 ASSETS = Path(__file__).with_name("static") / "assets"
 LEVEL_RGB = {"good": (76, 195, 138), "warn": (229, 181, 74), "bad": (239, 106, 91)}
@@ -108,30 +107,6 @@ def app_version():
         return f"{VERSION} ({head[:7]})"
     except OSError:
         return VERSION
-
-
-def start_menu_shortcut():
-    """A portable copy adds itself to the Start menu on its first run (and fixes the shortcut if the
-    folder moved). One PowerShell call, only when the shortcut is missing or points elsewhere."""
-    from .version import ROOT, install_kind
-    if sys.platform != "win32" or install_kind() != "portable":
-        return
-    programs = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-    link, exe = programs / "Account Switcher.lnk", ROOT / "Account Switcher.exe"
-    marker = ROOT / ".runtime" / "shortcut"
-    try:
-        if link.exists() and marker.exists() and marker.read_text(encoding="utf-8") == str(exe):
-            return
-        script = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:AS_LINK); $s.TargetPath = $env:AS_EXE; "
-                  "$s.WorkingDirectory = $env:AS_DIR; $s.Description = 'Claude Code and Codex usage limits and account switching'; $s.Save()")
-        import subprocess
-        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], check=True, timeout=30,
-                       env=dict(os.environ, AS_LINK=str(link), AS_EXE=str(exe), AS_DIR=str(ROOT)),
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), capture_output=True)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(str(exe), encoding="utf-8")
-    except Exception:  # never stop the app over a shortcut
-        logging.getLogger("account_switcher").warning("Start menu shortcut", exc_info=True)
 
 
 def show_running(url):
@@ -398,7 +373,6 @@ def main(argv=None):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
-    threading.Thread(target=start_menu_shortcut, daemon=True).start()
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
     write_url_file(args.url_file, server.launch_url)

@@ -1,36 +1,38 @@
-# Account Switcher
+# LimitSwitch
 
 A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit.
 
+![The full view](docs/media/demo.gif)
+
+<p align="center"><img src="docs/media/panel.png" alt="The tray panel" width="420"></p>
+
+**Website:** https://doge006.github.io/Account-Switcher/
+
+
 ## Install (Windows)
 
-Either way installs the same portable copy: `Account Switcher.exe`, the app and its own Python. Nothing else is needed (no Python, no git), and nothing is installed system-wide.
+Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
 
-- **One line:** in PowerShell, run
-  ```powershell
-  irm https://raw.githubusercontent.com/doge006/Account-Switcher/main/install.ps1 | iex
-  ```
-  It asks where to install (press Enter for `%LOCALAPPDATA%\Programs\Account Switcher`, or where you installed it last time), downloads the latest release there and starts it. Run it again to update.
-- **Download:** get `AccountSwitcher-windows.zip` from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest), unzip it anywhere, and double-click `Account Switcher.exe`.
+Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
-On its first run it adds itself to the Start menu and starts with Windows (switch that off in the full view's Settings). Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder.
+Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder, so updating or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
 
-**Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads it, closes the app, puts the new files in place and starts it again. **Check for updates** checks now.
+**Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads the new installer, which closes the app, replaces its files and starts it again. **Check for updates** checks now.
 
 ## Install and update from source (Windows and macOS)
 
-For development, or macOS (no portable build yet). One installer for both; it detects the OS. Run it again at any time to update.
+For development, or macOS (no installer yet). One installer for both; it detects the OS. Run it again at any time to update.
 
 - **Windows:** double-click `Install.cmd` (or `Update.cmd`, which does the same).
 - **macOS:** in Terminal, run `bash Install.command` in this folder (or `bash Update.command`).
   - Double-clicking works only if the folder came from `git clone`. A downloaded ZIP is flagged by macOS, and it refuses to open the script ("can't verify it's free of malware"). To double-click anyway, clear the flag once with `xattr -dr com.apple.quarantine <folder>`, or use **System Settings → Privacy & Security → Open Anyway**.
-  - The **Account Switcher** app the installer creates opens without that warning, because it's made on your Mac.
+  - The **LimitSwitch** app the installer creates opens without that warning, because it's made on your Mac.
 
 Each run:
 1. Makes sure Python 3.10+ and git are there. Windows installs them with winget; macOS asks for Apple's command line tools.
 2. Updates this folder from GitHub (`main`). Local edits and local-only commits are never lost: without `--force` it stops and says why, and with `--force` it saves them to `git stash` or a backup branch first.
 3. Sets up a private Python environment (`.venv`) with this OS's requirements; they're only reinstalled when they change.
-4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **Account Switcher** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable).
+4. Puts the app where you'd expect it: a Start menu shortcut on Windows, **LimitSwitch** in Applications on macOS (`/Applications`, or `~/Applications` if that isn't writable).
 5. Closes any running copy and starts the new version. Its output is also saved to `update.log` next to `app.log`.
 
 Options: `--branch NAME` (follow another branch), `--force`, `--no-launch`. A copy from source also offers updates in Settings; there, **Update** runs this installer.
@@ -39,14 +41,14 @@ A first install from nothing: `git clone https://github.com/doge006/Account-Swit
 
 ## Publishing a release
 
-Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds the portable zip (`scripts/build_portable.ps1`), installs it with `install.ps1` and checks that it runs, then publishes release `v<VERSION>`. Users get it on their next launch.
+Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitch-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup), installs it silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
 
 ## Performance
 
 `scripts/measure.py` measures the running app: memory (working set and private), CPU share and threads over a stretch of time.
 
 ```powershell
-.venv\Scripts\python -m pip install psutil     # once (a portable copy: runtime\python.exe -m pip ...)
+.venv\Scripts\python -m pip install psutil     # once (an installed copy: runtime\python.exe -m pip ...)
 .venv\Scripts\python scripts\measure.py        # 60 s; --seconds N
 ```
 
@@ -161,7 +163,9 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/macos_app.py` + `static/menu.*`: the macOS menu bar app and its panel.
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
-- `scripts/build_portable.ps1` + `win_launcher.c`, `install.ps1`: the portable Windows release and its one-line installer.
+- `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
+- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` (the **Media** workflow runs it on Windows): the screenshots and GIF in `docs/media`.
+- `docs/`: the website (GitHub Pages).
 
 ## Credits
 

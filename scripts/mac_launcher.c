@@ -1,4 +1,4 @@
-/* Account Switcher.app's own executable (macOS). It runs Python inside this process, so the
+/* LimitSwitch.app's own executable (macOS). It runs Python inside this process, so the
  * process macOS sees is the app itself (its bundle, name, icon and menu bar item); macOS 26+
  * gives no menu bar space to a bundle whose script hands over to another program.
  *
@@ -6,7 +6,7 @@
  * written by the installer:
  *   1. Python's library (the framework's Python, or libpython*.dylib)
  *   2. .venv/bin/python3 (Python then uses the .venv)
- *   3. AccountSwitcher.pyw
+ *   3. LimitSwitch.pyw
  *   4. app.log (anything the app prints goes there)
  * and Python is loaded at run time, so one build works with any Python 3.10+. The installer
  * builds this with the Mac's own clang; scripts/mac_launcher is the same source built by CI,
@@ -23,7 +23,7 @@
 static void alert(const char *message) {
     char command[PATH_MAX + 512];
     snprintf(command, sizeof command,
-             "/usr/bin/osascript -e 'display alert \"Account Switcher did not start\" message \"%s\" as critical' >/dev/null 2>&1",
+             "/usr/bin/osascript -e 'display alert \"LimitSwitch did not start\" message \"%s\" as critical' >/dev/null 2>&1",
              message);
     system(command);
 }
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     }
     char *end = strstr(app, ".app/Contents/MacOS/");
     if (!end) {
-        alert("The launcher must run from inside Account Switcher.app.");
+        alert("The launcher must run from inside LimitSwitch.app.");
         return 1;
     }
     end[4] = '\0';
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
              && read_line(file, script, sizeof script) && read_line(file, log, sizeof log);
     if (file) fclose(file);
     if (!ok) {
-        alert("Its settings are missing. Run Update.command in the Account Switcher folder again.");
+        alert("Its settings are missing. Run Update.command in the LimitSwitch folder again.");
         return 1;
     }
 
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
     int (*py_main)(int, char **) = handle ? (int (*)(int, char **))dlsym(handle, "Py_BytesMain") : NULL;
     if (!py_main) {
         fprintf(stderr, "Startup failed: can't load Python from %s: %s\n", library, dlerror());
-        alert("Its Python could not be loaded. Run Update.command in the Account Switcher folder again.");
+        alert("Its Python could not be loaded. Run Update.command in the LimitSwitch folder again.");
         return 1;
     }
     int quiet = argc > 1 && strcmp(argv[1], "--at-login") == 0;

@@ -1,4 +1,4 @@
-"""Measure the running Account Switcher: memory and CPU over a stretch of time.
+"""Measure the running LimitSwitch: memory and CPU over a stretch of time.
 
     .venv\\Scripts\\python -m pip install psutil      (once; Windows)
     .venv\\Scripts\\python scripts\\measure.py         (60 s; --seconds N to change)
@@ -21,13 +21,13 @@ except ImportError:
 
 
 def app_processes():
-    """The app's processes: Python running AccountSwitcher.pyw or account_switcher.tray. A venv's
+    """The app's processes: Python running LimitSwitch.pyw or account_switcher.tray. A venv's
     pythonw.exe is a launcher that starts the real Python as its child: both are counted."""
     found = []
     for process in psutil.process_iter(["name", "cmdline"]):
         line = " ".join(process.info.get("cmdline") or [])
         if "python" in (process.info.get("name") or "").lower() and (
-                "AccountSwitcher.pyw" in line or "account_switcher.tray" in line or "Account Switcher" in line):
+                "LimitSwitch.pyw" in line or "account_switcher.tray" in line or "LimitSwitch" in line):
             found.append(process)
     return found
 
@@ -54,7 +54,7 @@ def main():
     args = parser.parse_args()
     processes = app_processes()
     if not processes:
-        sys.exit("Account Switcher isn't running.")
+        sys.exit("LimitSwitch isn't running.")
     _, _, cpu_before, _ = snapshot(processes)
     start = time.monotonic()
     peak = 0.0
@@ -65,7 +65,7 @@ def main():
     elapsed = time.monotonic() - start
     used = cpu_after - cpu_before
     mb = 1024 * 1024
-    print(f"Account Switcher over {elapsed:.0f} s ({len(processes)} process{'es' if len(processes) != 1 else ''}):")
+    print(f"LimitSwitch over {elapsed:.0f} s ({len(processes)} process{'es' if len(processes) != 1 else ''}):")
     print(f"  memory     {memory / mb:.1f} MB working set, {private / mb:.1f} MB private (peak {peak / mb:.1f} MB)")
     print(f"  CPU        {100 * used / elapsed:.3f}% of one core ({used * 1000:.0f} ms of CPU time)")
     print(f"  threads    {threads:.0f}")

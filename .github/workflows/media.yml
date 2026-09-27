@@ -1,0 +1,33 @@
+name: Media
+
+# Draws the README's and the website's screenshots and GIF on Windows (Segoe UI, as users see
+# it) with scripts/make_media.py and the demo accounts, then commits docs/media to the branch it
+# ran on.
+on:
+  workflow_dispatch:  # manual only
+
+permissions:
+  contents: write
+
+jobs:
+  media:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Requirements
+        run: python -m pip install --quiet --disable-pip-version-check -r requirements-native.txt
+      - name: Draw
+        run: python scripts/make_media.py
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/media
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host 'No changes'; exit 0 }
+          git commit -m "Media: screenshots and GIF drawn on Windows"
+          git push origin "HEAD:${{ github.ref_name }}"

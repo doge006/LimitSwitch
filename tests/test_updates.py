@@ -16,7 +16,7 @@ class VersionTests(unittest.TestCase):
 
 class UpdateCheckTests(unittest.TestCase):
     def release(self, tag):
-        return {"version": tag, "url": "https://example.invalid/r", "zip": "https://example.invalid/z.zip", "notes": ""}
+        return {"version": tag, "url": "https://example.invalid/r", "setup": "https://example.invalid/LimitSwitch-Setup.exe", "notes": ""}
 
     def test_newer_release_is_available(self):
         with mock.patch.object(updates, "latest_release", return_value=self.release("99.0.0")):

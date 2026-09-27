@@ -1,4 +1,4 @@
-# Adds "Account Switcher" to the Start menu (and, with -Desktop, the desktop), with the app icon.
+# Adds "LimitSwitch" to the Start menu (and, with -Desktop, the desktop), with the app icon.
 # Run again at any time; it overwrites the shortcut. -Remove deletes it.
 param([switch]$Desktop, [switch]$Remove, [string]$Python = "")
 $ErrorActionPreference = 'Stop'
@@ -7,7 +7,7 @@ $places = @([Environment]::GetFolderPath('Programs'))
 if ($Desktop) { $places += [Environment]::GetFolderPath('Desktop') }
 
 if ($Remove) {
-    foreach ($place in $places) { Remove-Item -LiteralPath (Join-Path $place 'Account Switcher.lnk') -ErrorAction SilentlyContinue }
+    foreach ($place in $places) { Remove-Item -LiteralPath (Join-Path $place 'LimitSwitch.lnk') -ErrorAction SilentlyContinue }
     Write-Host 'Shortcut removed.'
     exit 0
 }
@@ -22,9 +22,11 @@ if (-not (Test-Path -LiteralPath $pythonw)) {
     $pythonw = $found.Source
 }
 
+# The app's shortcut before it was renamed LimitSwitch.
+foreach ($place in $places) { Remove-Item -LiteralPath (Join-Path $place 'Account Switcher.lnk') -ErrorAction SilentlyContinue }
 $shell = New-Object -ComObject WScript.Shell
 foreach ($place in $places) {
-    $path = Join-Path $place 'Account Switcher.lnk'
+    $path = Join-Path $place 'LimitSwitch.lnk'
     $link = $shell.CreateShortcut($path)
     $link.TargetPath = $pythonw
     $link.Arguments = "-m account_switcher.tray --url-file `"$root\.runtime\tray.url`""

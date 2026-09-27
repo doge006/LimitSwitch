@@ -21,7 +21,7 @@ WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPA
 H = wintypes.HANDLE
 
 CLASS_NAME = "AccountSwitcherFullView"
-TITLE = "Account Switcher"
+TITLE = "LimitSwitch"
 ICON = Path(__file__).with_name("static") / "assets" / "switcher.ico"
 WS_OVERLAPPEDWINDOW = 0x00CF0000
 WM_DESTROY, WM_SIZE, WM_PAINT, WM_CLOSE, WM_ERASEBKGND = 0x0002, 0x0005, 0x000F, 0x0010, 0x0014

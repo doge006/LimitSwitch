@@ -127,7 +127,7 @@ function compactTools() {
   // Compact: its buttons sit in line with the first account, top right (no header or footer).
   const tools = el('span', 'tools');
   if (native) tools.append(toolButton(popped ? POP_IN : POP_OUT, popped ? 'Back to the menu bar' : 'Pop out', popToggle));
-  tools.append(toolButton(EXPAND, 'Show everything', toggleSize), toolButton(QUIT, 'Quit Account Switcher', quit));
+  tools.append(toolButton(EXPAND, 'Show everything', toggleSize), toolButton(QUIT, 'Quit LimitSwitch', quit));
   return tools;
 }
 

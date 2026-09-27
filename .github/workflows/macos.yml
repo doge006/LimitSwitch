@@ -58,7 +58,7 @@ jobs:
           assert done.returncode == 0, "status line command failed"
           assert time.time() - start < 5, "status line command is slow"
           PY
-          pgrep -fl "Account Switcher" || true
+          pgrep -fl "LimitSwitch" || true
       - name: Smoke test
         run: |
           python3 -m venv /tmp/probe

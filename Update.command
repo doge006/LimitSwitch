@@ -1,5 +1,5 @@
 #!/bin/bash
-# Update Account Switcher (macOS): same as Install.command. Double-click in Finder, or run in Terminal.
+# Update LimitSwitch (macOS): same as Install.command. Double-click in Finder, or run in Terminal.
 # Options: --branch NAME, --force, --no-launch
 cd "$(dirname "$0")" || exit 1
 if ! xcode-select -p >/dev/null 2>&1; then

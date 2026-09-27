@@ -26,7 +26,8 @@ from .vault import atomic_write
 
 log = logging.getLogger("account_switcher.integrations")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_NAME = "AccountSwitcher"
+RUN_NAME = "LimitSwitch"
+OLD_RUN_NAME = "AccountSwitcher"  # before the rename
 THREADS = "codex-threads"   # encrypted: which account made which item, checkpoint texts
 
 
@@ -294,7 +295,7 @@ class Integrations:
 
 
 def launcher():
-    """Command that starts the app quietly (the portable exe, or pythonw running AccountSwitcher.pyw)."""
+    """Command that starts the app quietly (the installed exe, or pythonw running LimitSwitch.pyw)."""
     from .version import launcher as command
     return command()
 
@@ -317,9 +318,9 @@ def set_start_with_windows(enabled):
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launcher())
-            else:
+            for name in ((OLD_RUN_NAME,) if enabled else (RUN_NAME, OLD_RUN_NAME)):
                 try:
-                    winreg.DeleteValue(key, RUN_NAME)
+                    winreg.DeleteValue(key, name)
                 except FileNotFoundError:
                     pass
     except OSError as error:
@@ -349,11 +350,11 @@ def _set_launch_agent(enabled):
             pass
         return
     python = Path(sys.executable)
-    script = Path(__file__).resolve().parent.parent / "AccountSwitcher.pyw"
+    script = Path(__file__).resolve().parent.parent / "LimitSwitch.pyw"
     arguments = [str(python), str(script)]
     app = os.environ.get("ACCOUNT_SWITCHER_APP")
     if app:  # started as the app: log in as the app (its launcher, quietly)
-        for name in ("Account Switcher", "AccountSwitcher"):
+        for name in ("LimitSwitch", "AccountSwitcher"):
             if (Path(app) / "Contents" / "MacOS" / name).exists():
                 arguments = [str(Path(app) / "Contents" / "MacOS" / name), "--at-login"]
                 break

@@ -1,7 +1,7 @@
 """The app's version and how this copy was installed.
 
 VERSION is bumped for each release; the release workflow tags `v<VERSION>` and publishes
-AccountSwitcher-Setup.exe. An installed copy has its own Python in `runtime/` and the
+LimitSwitch-Setup.exe. An installed copy has its own Python in `runtime/` and the
 uninstaller next to it; a copy from source has `.git`.
 """
 from pathlib import Path
@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def install_kind():
-    if (ROOT / "runtime" / "pythonw.exe").exists():
-        return "installer" if (ROOT / "unins000.exe").exists() else "portable"
+    if (ROOT / "unins000.exe").exists():
+        return "installer"
     if (ROOT / ".git").exists():
         return "git"
     return "other"
@@ -22,15 +22,15 @@ def install_kind():
 
 def launcher():
     """Command that starts the app quietly (start at sign-in, shortcuts): the installed copy's
-    exe, else windowless Python running AccountSwitcher.pyw."""
-    exe = ROOT / "Account Switcher.exe"
-    if install_kind() in ("installer", "portable") and exe.exists():
+    exe, else windowless Python running LimitSwitch.pyw."""
+    exe = ROOT / "LimitSwitch.exe"
+    if install_kind() == "installer" and exe.exists():
         return f'"{exe}"'
     python = Path(sys.executable)
     windowless = python.with_name("pythonw.exe")
     if windowless.exists():
         python = windowless
-    return f'"{python}" "{ROOT / "AccountSwitcher.pyw"}"'
+    return f'"{python}" "{ROOT / "LimitSwitch.pyw"}"'
 
 
 def newer(latest, current=VERSION):

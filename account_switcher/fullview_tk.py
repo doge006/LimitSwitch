@@ -73,7 +73,7 @@ class TkFullView:
             self.root = root  # callbacks queued now run once the loop starts
         self.tk, self.ImageTk = tkinter, ImageTk
         self.timers, self.pending_draw, self.photo, self.cursor = {}, False, None, "arrow"
-        root.title("Account Switcher")
+        root.title("LimitSwitch")
         root.configure(background="#%02x%02x%02x" % vr.BG)
         try:
             root.iconphoto(True, tkinter.PhotoImage(file=str(ICON)))

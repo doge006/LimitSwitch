@@ -172,8 +172,8 @@ class Controller:
                 if error:
                     self.update = dict(self.update, installing=False, error=error)
                     self.notify("log", "Update failed: " + error)
-                elif self.quit_app and self.update.get("kind") == "portable":
-                    self.quit_app()  # the new files go in once the app has closed; it starts again by itself
+                elif self.quit_app and self.update.get("kind") == "installer":
+                    self.quit_app()  # the installer replaces the files once the app has closed, then starts it
             threading.Thread(target=install, daemon=True).start()
             return
         if action == "startup":  # start at sign-in (Windows Run entry / macOS login item); instant

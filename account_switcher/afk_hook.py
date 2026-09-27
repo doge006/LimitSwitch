@@ -1,4 +1,4 @@
-"""Claude Code StopFailure hook (installed by Account Switcher while AFK is on).
+"""Claude Code StopFailure hook (installed by LimitSwitch while AFK is on).
 
 Runs in the background (asyncRewake). On a usage limit it asks the running app what to do:
   continue -> print the continuation note and exit 2, which wakes the Claude session

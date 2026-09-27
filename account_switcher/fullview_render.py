@@ -578,7 +578,7 @@ def draw_topbar(state, w, scale, ui):
     rounded = Image.new("RGBA", mark.size, (0, 0, 0, 0))
     rounded.paste(mark, (0, 0), Image.composite(mark.getchannel("A"), Image.new("L", mark.size, 0), rr_mask(*mark.size, c.px(12))))
     image.alpha_composite(rounded, (0, c.px(11)))
-    c.text(58, 30, "Account Switcher", 22, TEXT, True)
+    c.text(58, 30, "LimitSwitch", 22, TEXT, True)
     c.text(58, 51, "Every Claude and Codex limit, at a glance.", 13, MUTED)
     live = state.get("mode") == "live"
     x = w

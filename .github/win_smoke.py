@@ -1,5 +1,5 @@
 """Windows smoke test on a real Windows machine (GitHub Actions): the app starts, its full view
-opens with Account Switcher's own taskbar identity (not Edge's), and quitting cleans up; then,
+opens with LimitSwitch's own taskbar identity (not Edge's), and quitting cleans up; then,
 in demo mode, the taskbar view shows a block per provider and animates a swap.
 Screenshots go to ./shots."""
 import ctypes
@@ -82,7 +82,7 @@ for _ in range(80):
     time.sleep(0.25)
 check(bool(windows), "the full view opened in its own window")
 if windows:
-    check(win_window.get_identity(windows[0]) == win_window.APP_ID, "the window has Account Switcher's taskbar identity")
+    check(win_window.get_identity(windows[0]) == win_window.APP_ID, "the window has LimitSwitch's taskbar identity")
     time.sleep(1)
     rect = (ctypes.c_long * 4)()
     ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(windows[0]), rect)
@@ -108,7 +108,7 @@ if windows:
         print("reopened size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
         check(tuple(rect) == first, "it opens again at the same size and place")
         windows = again
-    subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "AccountSwitcher.pyw"], cwd=ROOT)
+    subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "LimitSwitch.pyw"], cwd=ROOT)
     time.sleep(6)
     check(len(full_views()) == 1, "launching the app again keeps one full view")
     ws, private = memory(windows[0])
@@ -137,7 +137,7 @@ user32 = ctypes.windll.user32
 
 
 def blocks():
-    """Visible Account Switcher popups sitting on the taskbar: [(left, top, right, bottom)]."""
+    """Visible LimitSwitch popups sitting on the taskbar: [(left, top, right, bottom)]."""
     found = []
     bar = taskbar.window_rect(user32.FindWindowW("Shell_TrayWnd", None))
 
@@ -176,7 +176,7 @@ time.sleep(3)
 info = taskbar.read_bar(*taskbar.taskbars()[0])
 print("taskbar:", info and {"rect": info.rect, "scale": info.scale, "free from": info.left, "to": info.right,
                             "buttons": sorted(info.occupied), "measured": info.measured, "light": info.light}, flush=True)
-subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "AccountSwitcher.pyw", "--demo"], cwd=ROOT)
+subprocess.Popen([str(ROOT / ".venv" / "Scripts" / "pythonw.exe"), "LimitSwitch.pyw", "--demo"], cwd=ROOT)
 for _ in range(120):
     if (ROOT / ".runtime" / "tray.url").exists():
         break

@@ -264,7 +264,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
     if compact:
         return _build_compact(L, COMPACT_WIDTH, state, fx, h, pinned, armed)
     L.image(16, 16, "switcher", 22)
-    L.text(46, 27, "Account Switcher", 14, TEXT, bold=True)
+    L.text(46, 27, "LimitSwitch", 14, TEXT, bold=True)
     pill_w = 92
     pill_x = W - 16 - pill_w
     L.rect(pill_x, 13, pill_w, 28, 6, mix(PILL, PILL_HOVER, h("full")))
