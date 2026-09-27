@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace as R
 
-from account_switcher.placement import panel_contains, place_above, place_menu
+from account_switcher.placement import free_gaps, panel_contains, place_above, place_blocks, place_menu
 
 MONITOR = R(left=0, top=0, right=1920, bottom=1080)
 
@@ -42,3 +42,19 @@ class PlacementTests(unittest.TestCase):
     def test_shadow_margin_is_not_the_panel(self):
         self.assertFalse(panel_contains(5, 5, 440, 560))
         self.assertTrue(panel_contains(220, 280, 440, 560))
+
+    def test_taskbar_gaps_leave_room_around_the_buttons(self):
+        self.assertEqual(free_gaps(0, 1600, [(600, 1300), (0, 180)], 12), [(192, 588), (1312, 1600)])
+        self.assertEqual(free_gaps(0, 1000, [], 12), [(0, 1000)])
+        self.assertEqual(free_gaps(0, 1000, [(0, 1000)], 12), [])
+
+    def test_blocks_go_left_and_right_and_shrink_before_giving_up(self):
+        claude, codex = {3: 540, 2: 420, 1: 300}, {2: 420, 1: 300}
+        spots = place_blocks([(192, 588), (1312, 1760)], [("claude", claude, "left"), ("codex", codex, "right")], 12)
+        self.assertEqual(spots["claude"], (192, 300, 1))      # the left gap holds one column only
+        self.assertEqual(spots["codex"], (1340, 420, 2))      # right-aligned in the right gap
+        spots = place_blocks([(100, 1800)], [("claude", claude, "left"), ("codex", codex, "right")], 12)
+        self.assertEqual(spots, {"claude": (100, 540, 3), "codex": (1380, 420, 2)})  # one wide gap: both
+        self.assertEqual(place_blocks([(0, 200)], [("claude", claude, "left")], 12), {})    # no room: not shown
+        self.assertEqual(place_blocks([(0, 400)], [("codex", codex, "right")], 12), {"codex": (100, 300, 1)})
+

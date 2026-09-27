@@ -54,3 +54,52 @@ def panel_contains(x, y, width, height):
     """Is a logical point (incl. margin) on the visible panel rather than its shadow?"""
     m = fr.MARGIN
     return m <= x < width - m and m <= y < height - m
+
+
+# ---------- taskbar view: blocks in the empty stretches of the taskbar ----------
+def free_gaps(left, right, occupied, margin):
+    """Empty stretches of [left, right) once the taskbar's own buttons (occupied: (left, right)
+    spans), each widened by margin, are taken out. Sorted left to right."""
+    gaps, x = [], left
+    for a, b in sorted((a - margin, b + margin) for a, b in occupied):
+        if a > x:
+            gaps.append((x, min(a, right)))
+        x = max(x, b)
+        if x >= right:
+            break
+    if right > x:
+        gaps.append((x, right))
+    return [(a, b) for a, b in gaps if b > a]
+
+
+def place_blocks(gaps, wanted, spacing):
+    """Where each provider's block goes. wanted: [(provider, {columns: width}, side)], at most two,
+    left side first: a "left" block sits left-aligned in its gap, a "right" one right-aligned,
+    never to the left of the other. Most blocks shown wins, then most limit columns, then the first further left and
+    the second further right. Returns {provider: (x, width, columns)}, x the left edge."""
+    def fits(gap, width):
+        return gap[1] - gap[0] >= width
+
+    options = [sorted(o.items(), reverse=True) for _, o, _ in wanted]
+    best, best_score = {}, None
+    if len(wanted) == 2:
+        for i, a in enumerate(gaps):
+            for c1, w1 in options[0]:
+                for j in range(i, len(gaps)):
+                    b = gaps[j]
+                    for c2, w2 in options[1]:
+                        ok = fits(a, w1 + spacing + w2) if i == j else fits(a, w1) and fits(b, w2)
+                        score = (2, c1 + c2, -i, j)
+                        if ok and (best_score is None or score > best_score):
+                            best_score = score
+                            best = {wanted[0][0]: (a[0], w1, c1), wanted[1][0]: (b[1] - w2, w2, c2)}
+    if best:
+        return best
+    for index, (provider, _, side) in enumerate(wanted):  # not both: one alone, the first one first
+        side_left = side == "left"
+        for columns, width in options[index]:
+            order = gaps if side_left else list(reversed(gaps))
+            gap = next((g for g in order if fits(g, width)), None)
+            if gap:
+                return {provider: (gap[0] if side_left else gap[1] - width, width, columns)}
+    return {}

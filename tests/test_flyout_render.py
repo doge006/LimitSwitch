@@ -115,6 +115,40 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertLess(image.size[1], full_image.size[1] * 0.5)
         self.assertLess(image.size[0], full_image.size[0])
 
+    def test_taskbar_block_shows_the_account_in_use_sideways(self):
+        self.assertEqual(fr.short_email("daniel41215@gmail.com"), "daniel41215@gmail")
+        self.assertEqual(fr.short_email("someone"), "someone")
+        layout, width = fr.build_block(self.state, "codex")
+        names = [t[2] for t in layout.texts]
+        self.assertIn("personal@example", names)          # the in-use account, shortened
+        self.assertNotIn("second@example", names)
+        self.assertIn("Codex · Pro", names)
+        self.assertTrue(any(n.startswith("resets in") for n in names))
+        self.assertEqual([a for _, a in layout.hits], ["open"])
+        image, hits = fr.render_block(self.state, "codex", scale=1.5)
+        self.assertEqual(image.size, (round(width * 1.5), 66))
+        self.assertGreater(image.getpixel((2, 30))[3], 0)  # the resting plate catches the mouse
+        self.assertLess(image.getpixel((2, 30))[3], 40)    # but is barely there
+        # Fewer limit columns when the taskbar is short on room.
+        self.assertLess(fr.block_width(self.state, "claude", columns=1), fr.block_width(self.state, "claude", columns=3))
+        light, _ = fr.render_block(self.state, "codex", light=True)  # dark text for a light taskbar
+        self.assertEqual(light.size, (width, 44))
+
+    def test_taskbar_block_swap_slides_one_out_then_the_next_in(self):
+        state = self.controller.snapshot()
+        for account in state["accounts"]:
+            if account["provider"] == "codex":
+                account["active"] = account["id"] == "codex-b"
+        def shown(t):
+            layout, _ = fr.build_block(state, "codex", fx={("active", "codex-a"): t, ("active", "codex-b"): 1 - t})
+            return {t[2] for t in layout.texts}
+        self.assertIn("personal@example", shown(0.8))       # first half: the old one leaving
+        self.assertNotIn("second@example", shown(0.8))
+        self.assertIn("second@example", shown(0.2))         # second half: the new one arriving
+        self.assertNotIn("personal@example", shown(0.2))
+        for t in (0.9, 0.55, 0.3, 0.0):
+            fr.render_block(state, "codex", fx={("active", "codex-a"): t, ("active", "codex-b"): 1 - t})
+
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])
         _, actions = self.actions(state)
