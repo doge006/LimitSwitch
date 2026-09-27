@@ -12,6 +12,10 @@ on:
         description: "Publish the release (off: build and test only)"
         type: boolean
         default: true
+      prerelease:
+        description: "As a pre-release for testing (tag v<version>-test.<run number>; the app's update check skips it)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -159,7 +163,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(python3 -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)")
-          if gh release view "v$v" >/dev/null 2>&1; then echo "v$v is already released: bump VERSION in account_switcher/version.py"; exit 1; fi
+          tag="v$v"; title="LimitSwitch $v"; extra=""
+          if [ "${{ inputs.prerelease }}" = true ]; then
+            tag="v$v-test.${{ github.run_number }}"; title="LimitSwitch $v (test build ${{ github.run_number }})"; extra="--prerelease"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then echo "$tag is already released: bump VERSION in account_switcher/version.py"; exit 1; fi
           ls -la build
-          gh release create "v$v" build/LimitSwitch-Setup.exe build/LimitSwitch-AppleSilicon.dmg build/LimitSwitch-Intel.dmg \
-            --title "LimitSwitch $v" --generate-notes --target "${{ github.sha }}"
+          gh release create "$tag" build/LimitSwitch-Setup.exe build/LimitSwitch-AppleSilicon.dmg build/LimitSwitch-Intel.dmg \
+            --title "$title" --generate-notes --target "${{ github.sha }}" $extra

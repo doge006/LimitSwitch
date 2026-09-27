@@ -42,9 +42,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. The disk image.
+# 1. The disk image: the latest release's, or the newest pre-release's while there is no release.
 if [ -z "$DMG" ]; then
   DMG="https://github.com/$REPO/releases/latest/download/LimitSwitch-$KIND.dmg"
+  if ! curl -fsIL -o /dev/null "$DMG" 2>/dev/null; then
+    DMG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=10" 2>/dev/null \
+      | grep -o "\"browser_download_url\": *\"[^\"]*/LimitSwitch-$KIND\.dmg\"" | head -n 1 | sed 's/.*"\(https[^"]*\)"$/\1/' || true)"
+    [ -n "$DMG" ] || fail "No release to install yet (github.com/$REPO/releases)."
+  fi
 fi
 case "$DMG" in
   http://*|https://*)
