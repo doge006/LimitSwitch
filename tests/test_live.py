@@ -255,6 +255,14 @@ class LiveTests(unittest.TestCase):
         finally:
             controller.close()
 
+    def test_every_setting_survives_a_restart(self):
+        m = self.manager()
+        m.meta.update({"taskbarDisplay": "right", "taskbarView": False, "compactPanel": True})
+        m.save()
+        again = self.manager()
+        for key, value in {"taskbarDisplay": "right", "taskbarView": False, "compactPanel": True}.items():
+            self.assertEqual(again.meta.get(key), value)
+
     def test_secrets_are_not_in_metadata(self):
         m = self.manager()
         m.sync_live()

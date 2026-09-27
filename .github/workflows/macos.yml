@@ -1,11 +1,7 @@
 name: macOS app
 
 on:
-  push:
-    branches: ["main", "claude/**"]
-  workflow_dispatch:
-  schedule:
-    - cron: "17 6 * * 1"  # weekly, so a new macOS image (macos-latest) is tested without a code change
+  workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
 
 permissions:
   contents: write
