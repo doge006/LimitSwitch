@@ -30,7 +30,7 @@ GOOD, WARN, BAD = (76, 195, 138), (229, 181, 74), (239, 106, 91)
 ACCENT = {"claude": (224, 138, 104), "codex": (162, 149, 247)}
 ON_ACCENT = (22, 22, 22)
 FOCUS = (138, 180, 255)
-PROVIDERS = (("claude", "Claude", "Claude Code CLI & app"), ("codex", "Codex", "Codex CLI & app"))
+PROVIDERS = (("claude", "Claude", ""), ("codex", "Codex", ""))  # (id, title, caption shown at the right)
 
 PAD = 28           # page padding
 MAX_W = 1180       # content max width
@@ -654,7 +654,8 @@ def draw_group(data, w, scale):
     c.text(32, 22, title, 15, ACCENT[provider], True)
     tx = 32 + fr.text_w(title, 15, True) + 10
     c.text(tx, 22, f"{count} account{'s' if count != 1 else ''}", 12, MUTED)
-    c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
+    if caption:
+        c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
     return Tile(image, [])
 
 
