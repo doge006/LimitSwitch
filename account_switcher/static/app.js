@@ -53,14 +53,14 @@ function subscriptionText(account) {
   const est = sub.estimated ? '~' : '';
   return `${sub.ends ? 'Ends' : 'Renews'} ${est}${dateText(sub.at)} · ${daysLeft(sub.at)}`;
 }
-// Credits and banked resets as [label, value] pairs, one line each.
+// Credits and banked resets as [label, value] pairs, side by side on one row.
 function creditsItems(account) {
   const c = account.credits;
   if (!c) return [];
   const items = [];
   const main = creditsMain(c);
   if (main) items.push(main);
-  if (typeof c.resets === 'number') items.push(['Usage limit resets', `${c.resets} available`]);
+  if (typeof c.resets === 'number') items.push(['Usage limit resets', String(c.resets)]);
   return items;
 }
 function creditsMain(c) {
