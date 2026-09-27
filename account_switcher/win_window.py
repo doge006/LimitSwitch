@@ -96,24 +96,28 @@ def set_icon(hwnd, icon):
             user32.SendMessageW(hwnd, WM_SETICON, which, handle)
 
 
-def find_windows(address=None):
-    """Top-level Edge windows showing the full view: its page title is the app's name, or, before
-    the page has loaded, its address (e.g. 127.0.0.1:52100)."""
+def edge_windows():
+    """Every titled top-level Edge / Chromium window, shown or not: {hwnd: (visible, title)}."""
     user32 = ctypes.windll.user32
-    found = []
+    found = {}
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def each(hwnd, _):
-        if user32.IsWindowVisible(hwnd):
-            cls, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, cls, 64)
+        cls, title = ctypes.create_unicode_buffer(64), ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, cls, 64)
+        if cls.value == WINDOW_CLASS:
             user32.GetWindowTextW(hwnd, title, 256)
-            if cls.value == WINDOW_CLASS and (title.value.startswith(TITLE) or (address and title.value.startswith(address))):
-                found.append(hwnd)
+            if title.value:
+                found[hwnd] = (bool(user32.IsWindowVisible(hwnd)), title.value)
         return True
 
     user32.EnumWindows(each, 0)
     return found
+
+
+def find_windows(address=None):
+    """Shown Edge windows with the full view: its page title is the app's name."""
+    return [hwnd for hwnd, (visible, title) in edge_windows().items() if visible and title.startswith(TITLE)]
 
 
 def fit_window(hwnd, size):
@@ -144,23 +148,29 @@ def focus_full_view(address=None):
     return False
 
 
-def brand_full_view(relaunch, icon, seconds=15, size=None, address=None):
-    """Watch briefly for the full view's window (it takes Edge a moment to open), give it our
-    identity and, when given, its size. Runs in the background; does nothing when there's no
-    such window."""
+def brand_full_view(relaunch, icon, seconds=15, size=None, address=None, before=()):
+    """Catch the full view's new window (not one in before) and give it our identity and, when
+    given, its size and place. Edge creates the window hidden and shows it a moment later, titled
+    by its host ("127.0.0.1_/") until the page loads, so this polls closely and changes it while
+    still hidden: it then appears once, as it should, with no hide / show or jump. Runs in the
+    background; does nothing when there's no such window."""
+    host = (address or "").split(":")[0]
+    before = set(before)
+
+    def ours(title):
+        return title.startswith(TITLE) or bool(host and title.startswith(host))
+
     def work():
         user32 = ctypes.windll.user32
         ctypes.oledll.ole32.CoInitialize(None)
         deadline = time.monotonic() + seconds
-        done = set()
         while time.monotonic() < deadline:
-            for hwnd in find_windows(address):
-                if hwnd in done:
-                    continue
-                # One change instead of several visible ones: the taskbar button would otherwise
-                # vanish and come back (new identity) and the window jump (new size).
-                done.add(hwnd)  # once only, even if a step fails
-                user32.ShowWindow(hwnd, 0)  # SW_HIDE
+            found = [(hwnd, visible) for hwnd, (visible, title) in edge_windows().items()
+                     if hwnd not in before and ours(title)]
+            if found:
+                hwnd, visible = found[0]
+                if visible:  # caught late: one hidden change rather than several visible ones
+                    user32.ShowWindow(hwnd, 0)  # SW_HIDE
                 try:
                     set_identity(hwnd, relaunch, icon)
                     set_icon(hwnd, icon)
@@ -168,11 +178,25 @@ def brand_full_view(relaunch, icon, seconds=15, size=None, address=None):
                         fit_window(hwnd, size)
                 except OSError:
                     pass
-                finally:
+                if visible:
                     user32.ShowWindow(hwnd, 5)  # SW_SHOW
-                    user32.SetForegroundWindow(hwnd)
-            if done:
+                else:
+                    settle(hwnd)
+                user32.SetForegroundWindow(hwnd)
                 return
-            time.sleep(0.03)  # catch the window the moment Edge shows it
+            time.sleep(0.005)  # Edge shows it ~0.3 s after creating it
+
+    def settle(hwnd):
+        """Wait for Edge to show the window; should it restore its own bounds on showing, fit it again."""
+        user32 = ctypes.windll.user32
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        placed = (rect.left, rect.top, rect.right, rect.bottom)
+        end = time.monotonic() + 5
+        while time.monotonic() < end and user32.IsWindow(hwnd) and not user32.IsWindowVisible(hwnd):
+            time.sleep(0.001)  # fit it within a frame of appearing
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if size and (rect.left, rect.top, rect.right, rect.bottom) != placed and user32.IsZoomed(hwnd) == 0:
+            fit_window(hwnd, size)
 
     threading.Thread(target=work, daemon=True, name="full-view-identity").start()
