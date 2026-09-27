@@ -186,7 +186,7 @@ def subscription_text(account):
 
 def targets(state, hover=None):
     """Resting values of everything that animates, derived from state + hover."""
-    fx = {("toggle", p): 1.0 if state[p] else 0.0 for p in ("autoSwap", "afk")}
+    fx = {("toggle", p): 1.0 if state.get(p, True) else 0.0 for p in ("autoSwap", "afk", "taskbar")}
     for a in state["accounts"]:
         fx[("active", a["id"])] = 1.0 if a["active"] else 0.0
         for w in a["windows"][:3]:
@@ -211,10 +211,11 @@ def dim_row(layout, marks):
         layout.texts[i] = (x, y, value, size, bold, fade(fill, DIM), anchor)
 
 
-def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, compact=None):
+def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, compact=None, only=None):
     """Lay out the flyout. Returns (layout, panel_height). Coordinates exclude MARGIN.
 
     fx holds in-between animation values (see targets()); missing keys use resting values.
+    only: a provider; the panel opened from its taskbar block lists just that provider's accounts.
     """
     L, W = Layout(), WIDTH
     busy = state.get("busy")
@@ -222,6 +223,9 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
     fx = {**rest, **(fx or {})}
     h = lambda action: fx.get(("hover", action), 0.0)
     compact = state.get("compact") if compact is None else compact  # only the accounts in use
+    if only:  # opened from a taskbar block, to switch: always the full list for that provider
+        compact = False
+        state = dict(state, accounts=[a for a in state["accounts"] if a["provider"] == only])
 
     # Header: mark, title, pop-out, "Full view" (none when compact).
     if compact:
@@ -365,15 +369,20 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
     L.rect(0, y, W, 1, 0, BORDER)
     cy = y + footer_h / 2
     x = 16
-    for pref, label in (("autoSwap", "Auto swap"), ("afk", "AFK")):
+    prefs = [("autoSwap", "Auto swap"), ("afk", "AFK")]
+    if state.get("taskbarAvailable"):
+        prefs.append(("taskbar", "Taskbar"))
+    for pref, label in prefs:
         action = "toggle:" + pref
+        locked = busy and pref != "taskbar"
         switch(L, x, cy, fx[("toggle", pref)], h(action))
-        L.text(x + 42, cy, label, 12, TEXT if not busy else MUTED)
-        width = 42 + text_w(label, 12) + 18
-        if not busy:
+        L.text(x + 42, cy, label, 12, TEXT if not locked else MUTED)
+        width = 42 + text_w(label, 12) + (14 if len(prefs) > 2 else 18)
+        if not locked:
             L.hit(x - 4, cy - 14, width, 28, action)
         x += width + 4
-    icon_button(L, W - 16 - 64, cy - 15, 30, "compact", "compact", h("compact"))
+    if not only:
+        icon_button(L, W - 16 - 64, cy - 15, 30, "compact", "compact", h("compact"))
     icon_button(L, W - 16 - 30, cy - 15, 30, "power", "quit", h("quit"))
     return L, y + footer_h
 
@@ -599,9 +608,9 @@ def paint(layout, width, height, scale):
     return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
 
-def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None):
-    layout, height = build(state, hover, pending, pinned, fx, armed, compact)
-    compact = state.get("compact") if compact is None else compact
+def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None, only=None):
+    layout, height = build(state, hover, pending, pinned, fx, armed, compact, only)
+    compact = (state.get("compact") if compact is None else compact) and not only
     return paint(layout, COMPACT_WIDTH if compact else WIDTH, height, scale)
 
 
@@ -645,12 +654,6 @@ def dark_asset(name, px):
     return dark
 
 
-def short_email(name):
-    """daniel@gmail.com -> daniel@gmail: the user and the site, without the ending."""
-    user, at, domain = name.partition("@")
-    return f"{user}@{domain.split('.')[0]}" if at and domain else name
-
-
 def _block_level(theme, left):
     return theme["good"] if left > 30 else theme["warn"] if left > 10 else theme["bad"]
 
@@ -661,9 +664,11 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     provider = account["provider"]
     y1, bar_y, y3 = round(height * .3), height * .5, round(height * .74)
     L.image(x + BLOCK_PAD, y1 - 8, provider + ("@dark" if theme is THEMES[True] and provider == "codex" else ""), 16)
-    name = fit(short_email(display_name(account)), 12, True, 170)
+    name = fit(display_name(account), 12, True, 260)
     note = status_note(account)
-    title = dict(PROVIDERS)[provider] + (" · " + account["plan"] if account.get("plan") else "")
+    resets = (account.get("credits") or {}).get("resets")
+    title = " · ".join([dict(PROVIDERS)[provider]] + ([account["plan"]] if account.get("plan") else [])
+                       + ([f"{resets} reset" + ("s" if resets != 1 else "")] if resets else []))
     sub, sub_color = (note, theme["warn"]) if note else (title, theme["accent"][provider])
     tx = x + BLOCK_PAD + 22
     L.text(tx, y1, name, 12, theme["text"], bold=True)

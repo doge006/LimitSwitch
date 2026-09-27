@@ -31,6 +31,9 @@ class Controller:
         self.afk = False
         self.compact = False  # the tray / menu bar panel shows only the accounts in use
         self.taskbar = True   # Windows: the accounts in use shown on the taskbar
+        self.taskbar_display = "main"  # which display's taskbar
+        self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
+        self.taskbar_available = False  # set by the Windows tray
         self.closed = False
         self.session = None
         self.simulator = simulator
@@ -85,6 +88,9 @@ class Controller:
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
                 "compact": bool(self.gateway.manager.meta.get("compactPanel")) if self.live else self.compact,
                 "taskbar": bool(self.gateway.manager.meta.get("taskbarView", True)) if self.live else self.taskbar,
+                "taskbarDisplay": (self.gateway.manager.meta.get("taskbarDisplay") or "main") if self.live else self.taskbar_display,
+                "taskbarDisplays": list(self.taskbar_displays),
+                "taskbarAvailable": self.taskbar_available,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -98,12 +104,19 @@ class Controller:
             raise RuntimeError("The server is shutting down")
         if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription", "compact", "taskbar"}:
             raise ValueError("Unknown action")
-        if action in {"compact", "taskbar"}:  # the panel's size / the taskbar view; instant
-            on = bool(body.get("on"))
-            setattr(self, action, on)
-            if self.live:
+        if action in {"compact", "taskbar"}:  # the panel's size / the taskbar view and its display; instant
+            changes = {}
+            if "on" in body:
+                on = bool(body["on"])
+                setattr(self, action, on)
+                changes["compactPanel" if action == "compact" else "taskbarView"] = on
+            if action == "taskbar" and "display" in body:
+                if not isinstance(body["display"], str) or len(body["display"]) > 40:
+                    raise ValueError("Unknown display")
+                self.taskbar_display = changes["taskbarDisplay"] = body["display"]
+            if self.live and changes:
                 with self.gateway.manager.lock:
-                    self.gateway.manager.meta["compactPanel" if action == "compact" else "taskbarView"] = on
+                    self.gateway.manager.meta.update(changes)
                     self.gateway.manager.save()
             self.notify("changed", None)
             return

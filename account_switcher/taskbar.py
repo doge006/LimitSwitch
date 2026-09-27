@@ -14,6 +14,7 @@ import ctypes
 from ctypes import wintypes
 import logging
 import math
+import time
 import winreg
 
 from . import flyout as fl
@@ -25,14 +26,11 @@ log = logging.getLogger("account_switcher.taskbar")
 
 WM_APP_TASKBAR = 0x8000 + 20
 WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
-WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE = 0x0205, 0x0021, 3
+WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
 TIMER_LAYOUT, TIMER_MINUTE = 71, 72
-HWND_TOPMOST = wintypes.HWND(-1)
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x1, 0x2, 0x10, 0x200
 EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT = 0x0003, 0
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
-QUNS_FULL_SCREEN = (2, 3, 4)  # busy (full-screen app), Direct3D full screen, presentation mode
 PROVIDER_ORDER = ("claude", "codex")
 
 WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
@@ -59,7 +57,6 @@ sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
 shell32 = ctypes.WinDLL("shell32")
 sig(shell32.SHAppBarMessage, ctypes.c_size_t, wintypes.DWORD, ctypes.POINTER(APPBARDATA))
-sig(shell32.SHQueryUserNotificationState, ctypes.c_long, ctypes.POINTER(ctypes.c_int))
 
 
 def window_rect(hwnd):
@@ -84,11 +81,6 @@ def light_taskbar():
 def auto_hide():
     data = APPBARDATA(ctypes.sizeof(APPBARDATA))
     return bool(shell32.SHAppBarMessage(4, ctypes.byref(data)) & 1)  # ABM_GETSTATE & ABS_AUTOHIDE
-
-
-def full_screen():
-    state = ctypes.c_int(0)
-    return shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0 and state.value in QUNS_FULL_SCREEN
 
 
 # ---------- the taskbar's own buttons, through UI Automation (plain COM calls) ----------
@@ -164,9 +156,10 @@ class _COM:
 
 
 class Bar:
-    """The primary taskbar's geometry, in physical pixels."""
+    """One taskbar's geometry, in physical pixels."""
 
-    def __init__(self, rect, scale, left, right, occupied, light, measured):
+    def __init__(self, hwnd, key, label, rect, scale, left, right, occupied, light, measured):
+        self.hwnd, self.key, self.label = hwnd, key, label
         self.rect, self.scale, self.light, self.measured = rect, scale, light, measured
         self.left, self.right, self.occupied = left, right, occupied
 
@@ -176,21 +169,50 @@ class Bar:
         return max(30, min(44, round((self.rect[3] - self.rect[1]) / self.scale) - 4))
 
 
-def read_bar():
-    """Where the taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide)."""
-    tray = user32.FindWindowW("Shell_TrayWnd", None)
-    rect = window_rect(tray)
-    if not rect or not user32.IsWindowVisible(tray) or auto_hide():
+def taskbars():
+    """[(hwnd, key, label)]: the main taskbar, then those on other displays (when Windows shows
+    the taskbar on all displays), named by where they are next to the main one."""
+    main = user32.FindWindowW("Shell_TrayWnd", None)
+    found = [(main, "main", "Main display")] if main else []
+    main_rect = window_rect(main)
+    others = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        name = ctypes.create_unicode_buffer(40)
+        user32.GetClassNameW(hwnd, name, 40)
+        rect = window_rect(hwnd)
+        if name.value == "Shell_SecondaryTrayWnd" and rect and user32.IsWindowVisible(hwnd):
+            others.append((rect, hwnd))
+        return True
+
+    user32.EnumWindows(each, 0)
+    counts = {}
+    for rect, hwnd in sorted(others):
+        side = "left" if main_rect and rect[0] < main_rect[0] else "right"
+        counts[side] = counts.get(side, 0) + 1
+        suffix = f" {counts[side]}" if counts[side] > 1 else ""
+        found.append((hwnd, side + suffix.replace(" ", "-"), f"{side.title()} display{suffix}"))
+    return found
+
+
+def read_bar(hwnd, key="main", label="Main display"):
+    """Where a taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide)."""
+    rect = window_rect(hwnd)
+    if not rect or not user32.IsWindowVisible(hwnd) or auto_hide():
         return None
     width, height = rect[2] - rect[0], rect[3] - rect[1]
     if width <= height * 3:
         return None  # a taskbar on the side of the screen has no room for a wide block
     _, _, scale = fl.monitor_at((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
-    notify = window_rect(user32.FindWindowExW(tray, None, "TrayNotifyWnd", None))
-    right = notify[0] if notify and notify[0] > rect[0] + width // 2 else rect[2] - round(260 * scale)
+    notify = window_rect(user32.FindWindowExW(hwnd, None, "TrayNotifyWnd", None))
+    if notify and notify[0] > rect[0] + width // 2:
+        right = notify[0]
+    else:  # other displays: no notification area, maybe a clock (a button, measured below)
+        right = rect[2] - round((260 if key == "main" else 8) * scale)
     occupied, measured = None, False
     try:
-        spans = _COM.buttons(tray)
+        spans = _COM.buttons(hwnd)
         if spans:
             occupied = [(a, b) for a, b, top, bottom in spans
                         if b - a < width * .4 and bottom - top >= height * .4 and a < right and b > rect[0]
@@ -203,9 +225,38 @@ def read_bar():
         centred = setting("TaskbarAl", 1) == 1
         mid = (rect[0] + rect[2]) // 2
         occupied = [(mid - width // 4, mid + width // 4)] if centred else [(rect[0], rect[0] + width // 2)]
-        if centred and setting("TaskbarDa", 1):
+        if centred and setting("TaskbarDa", 1) and key == "main":
             occupied.append((rect[0], rect[0] + round(190 * scale)))
-    return Bar(rect, scale, rect[0] + round(8 * scale), right - round(12 * scale), occupied, light_taskbar(), measured)
+        if key != "main":
+            occupied.append((rect[2] - round(130 * scale), rect[2]))  # its clock
+    return Bar(hwnd, key, label, rect, scale, rect[0] + round(8 * scale), right - round(12 * scale), occupied,
+               light_taskbar(), measured)
+
+
+DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+sig(user32.MonitorFromWindow, wintypes.HANDLE, wintypes.HWND, wintypes.DWORD)
+
+
+def full_screen_on(bar):
+    """Is the foreground window covering the whole display this taskbar is on (a game, a video)?"""
+    if bar is None:
+        return False
+    window = user32.GetForegroundWindow()
+    if not window:
+        return False
+    window = user32.GetAncestor(window, 2) or window  # GA_ROOT
+    name = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(window, name, 64)
+    rect = window_rect(window)
+    if name.value in DESKTOP_CLASSES or not rect:
+        return False
+    info = fl.MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetMonitorInfoW(user32.MonitorFromWindow(window, 2), ctypes.byref(info)):
+        return False
+    screen = info.rcMonitor
+    covers = rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right and rect[3] >= screen.bottom
+    return covers and screen.left <= bar.rect[0] < screen.right and screen.top <= bar.rect[1] < screen.bottom
 
 
 class TaskbarBlock(fl.Popup):
@@ -262,14 +313,20 @@ class TaskbarBlock(fl.Popup):
             self.x, self.y, _ = self.position(*image.size)
         self._push(image, self.alpha)
 
-    def raise_up(self):
-        if self.hwnd:
-            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+    @property
+    def owner(self):
+        # Owned by the taskbar: Windows keeps it just above the taskbar in one step whenever the
+        # taskbar comes forward (clicks, focus changes), so it never drops behind and back.
+        return self.bar.hwnd if self.bar else None
 
     def wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_MOUSEACTIVATE:
             return MA_NOACTIVATE
+        if msg == WM_DESTROY and self.hwnd == hwnd:  # its taskbar went away (Explorer restarted)
+            fl.Popup._windows.pop(hwnd, None)
+            self.hwnd, self.anim, self.fx_anims, self.closing = None, None, {}, False
+            self.view.later()
+            return 0
         if msg == WM_RBUTTONUP:
             self.view.open_menu()
             return 0
@@ -364,12 +421,10 @@ class TaskbarView:
             self.later()  # a taskbar button came or went: the free space moved
 
     def on_foreground(self, *_):
+        """Only a change in full-screen state matters; the blocks' z-order follows the taskbar."""
         try:
-            if full_screen() != self.hidden_full_screen:
+            if full_screen_on(self.bar) != self.hidden_full_screen:
                 self.sync()
-            else:
-                for block in self.blocks.values():
-                    block.raise_up()  # clicking the taskbar raises it over us: step back on top
         except Exception:
             log.exception("taskbar foreground check failed")
 
@@ -389,11 +444,20 @@ class TaskbarView:
             self.unhook()
             return
         self.hook()
-        self.hidden_full_screen = full_screen()
-        if self.stale or self.bar is None:
-            self.bar, self.stale = read_bar(), False
-        bar = self.bar
         state = self.tray.state
+        wanted_key = state.get("taskbarDisplay") or "main"
+        if wanted_key != getattr(self, "wanted_key", None):  # moved to another display in the settings
+            self.wanted_key, self.stale = wanted_key, True
+        if self.stale or self.bar is None:
+            found = taskbars()
+            displays = [{"id": key, "label": label} for _, key, label in found]
+            if displays != getattr(self.tray.controller, "taskbar_displays", None):
+                self.tray.controller.taskbar_displays = displays  # the settings list them
+                self.tray.controller.notify("changed", None)
+            chosen = next((t for t in found if t[1] == wanted_key), found[0] if found else None)
+            self.bar, self.stale = (read_bar(*chosen) if chosen else None), False
+        bar = self.bar
+        self.hidden_full_screen = full_screen_on(bar)
         in_use = [p for p in PROVIDER_ORDER if any(a["provider"] == p and a["active"] for a in state["accounts"])]
         if bar is None or self.hidden_full_screen or not in_use:
             self.close_all()
@@ -417,10 +481,11 @@ class TaskbarView:
             spot = (x if side == "left" else x + width, side, columns)
             if block is None:
                 block = self.blocks[provider] = TaskbarBlock(self, provider)
+            if block.hwnd and block.bar is not None and block.bar.hwnd != bar.hwnd:
+                block._destroy()  # moving to another display's taskbar: a new window owned by it
             block.place(bar, spot)
             if block.hwnd and not block.closing:
                 block.redraw()
-                block.raise_up()
             else:
                 block.open()
 
@@ -434,12 +499,20 @@ class TaskbarView:
 
     # ---------- clicks ----------
     def open_panel(self, block):
+        """The panel above the block, listing just that provider's accounts. A second click on
+        the same block closes it; a click on the other block switches it over."""
         flyout = self.tray.flyout
         if flyout is None:
             return
-        flyout.origin = (block.x, self.bar.rect[1], block.x + block.size[0], self.bar.rect[3])
-        flyout.toggle()
-        flyout.origin = None  # used only if that opened it
+        same = flyout.only == block.provider
+        if same and flyout.hwnd and not flyout.closing:
+            flyout.close()
+            return
+        if same and time.monotonic() < flyout.suppress_until:
+            flyout.suppress_until = 0.0  # the press on this block already closed it
+            return
+        flyout.origin = ((block.x, self.bar.rect[1], block.x + block.size[0], self.bar.rect[3]), block.provider)
+        flyout.open()
 
     def open_menu(self):
         menu = self.tray.menu

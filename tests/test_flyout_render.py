@@ -116,12 +116,10 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertLess(image.size[0], full_image.size[0])
 
     def test_taskbar_block_shows_the_account_in_use_sideways(self):
-        self.assertEqual(fr.short_email("daniel41215@gmail.com"), "daniel41215@gmail")
-        self.assertEqual(fr.short_email("someone"), "someone")
         layout, width = fr.build_block(self.state, "codex")
         names = [t[2] for t in layout.texts]
-        self.assertIn("personal@example", names)          # the in-use account, shortened
-        self.assertNotIn("second@example", names)
+        self.assertIn("personal@example.com", names)          # the in-use account, full email
+        self.assertNotIn("second@example.com", names)
         self.assertIn("Codex · Pro", names)
         self.assertTrue(any(n.startswith("resets in") for n in names))
         self.assertEqual([a for _, a in layout.hits], ["open"])
@@ -142,12 +140,29 @@ class FlyoutRenderTests(unittest.TestCase):
         def shown(t):
             layout, _ = fr.build_block(state, "codex", fx={("active", "codex-a"): t, ("active", "codex-b"): 1 - t})
             return {t[2] for t in layout.texts}
-        self.assertIn("personal@example", shown(0.8))       # first half: the old one leaving
-        self.assertNotIn("second@example", shown(0.8))
-        self.assertIn("second@example", shown(0.2))         # second half: the new one arriving
-        self.assertNotIn("personal@example", shown(0.2))
+        self.assertIn("personal@example.com", shown(0.8))       # first half: the old one leaving
+        self.assertNotIn("second@example.com", shown(0.8))
+        self.assertIn("second@example.com", shown(0.2))         # second half: the new one arriving
+        self.assertNotIn("personal@example.com", shown(0.2))
         for t in (0.9, 0.55, 0.3, 0.0):
             fr.render_block(state, "codex", fx={("active", "codex-a"): t, ("active", "codex-b"): 1 - t})
+
+    def test_panel_from_a_taskbar_block_lists_only_that_provider(self):
+        state = dict(self.state, compact=True, taskbarAvailable=True)
+        layout, _ = fr.build(state, only="codex")
+        names = [t[2] for t in layout.texts]
+        self.assertIn("CODEX", names)
+        self.assertNotIn("CLAUDE", names)
+        self.assertIn("second@example.com", names)  # every Codex account, to switch to, even in compact mode
+        actions = [a for _, a in layout.hits]
+        self.assertIn("toggle:taskbar", actions)     # the Taskbar switch, next to AFK
+        self.assertNotIn("compact", actions)
+
+    def test_block_puts_resets_after_the_plan(self):
+        state = self.controller.snapshot()
+        state["accounts"][0]["credits"] = {"resets": 2}
+        layout, _ = fr.build_block(state, "claude")
+        self.assertIn("Claude · Max 5x · 2 resets", [t[2] for t in layout.texts])
 
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])

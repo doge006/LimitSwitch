@@ -210,6 +210,7 @@ class Tray:
                 from .taskbar import TaskbarView
                 self.taskbar = TaskbarView(self)
                 self.taskbar.attach(self.icon)
+                controller.taskbar_available = True
             except Exception:
                 logging.getLogger("account_switcher").exception("taskbar view unavailable")
                 self.taskbar = None
