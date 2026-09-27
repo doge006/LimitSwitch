@@ -85,8 +85,13 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
     def userContentController_didReceiveScriptMessage_(self, _controller, message):
         body = message.body()
         kind = body.get("type") if hasattr(body, "get") else None
-        if kind == "height":
-            self.app.resize_panel(float(body.get("value") or 0))
+        popped = self.app.float_view is not None and message.webView() == self.app.float_view
+        if kind in ("height", "width"):
+            self.app.resize_panel(kind, float(body.get("value") or 0), popped)
+        elif kind == "popout":
+            self.app.pop_out()
+        elif kind == "popin":
+            self.app.pop_in()
         elif kind == "full":
             self.app.popover.performClose_(None)
             self.app.showFullView_(None)
@@ -102,6 +107,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.state = controller.snapshot()
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
         self.full_window = None
+        self.float_panel = self.float_view = None  # the popped-out panel
+        self.panel_size = [PANEL_WIDTH, 420]
+        self.float_size = [PANEL_WIDTH, 420]
         self.quitting = False
         return self
 
@@ -237,9 +245,10 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             self.full_window.orderOut_(None)
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
-    def windowWillClose_(self, _note):
-        # Back to a menu bar app: no Dock icon once the window is closed.
-        AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
+    def windowWillClose_(self, note):
+        # Back to a menu bar app: no Dock icon once the full view is closed (not the popped-out panel).
+        if note.object() == self.full_window:
+            AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
 
     def popoverShouldDetach_(self, _popover):
         return True  # drag it off the menu bar to keep it open as a floating panel
@@ -268,9 +277,59 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             pass
 
     @objc.python_method
-    def resize_panel(self, height):
-        if height > 0:
-            self.popover.setContentSize_(NSMakeSize(PANEL_WIDTH, min(height, 760)))
+    def resize_panel(self, kind, value, popped=False):
+        """The page's size (compact is narrower and shorter), for the popover or the popped-out panel."""
+        if value <= 0:
+            return
+        size = self.float_size if popped else self.panel_size
+        if kind == "width":
+            size[0] = value
+        else:
+            size[1] = min(value, 760)
+        if popped and self.float_panel is not None:
+            frame = self.float_panel.frame()
+            top = frame.origin.y + frame.size.height
+            content = self.float_panel.frameRectForContentRect_(NSMakeRect(0, 0, size[0], size[1]))
+            self.float_panel.setFrame_display_(NSMakeRect(frame.origin.x, top - content.size.height,
+                                                          content.size.width, content.size.height), True)
+        elif not popped:
+            self.popover.setContentSize_(NSMakeSize(size[0], size[1]))
+
+    @objc.python_method
+    def pop_out(self):
+        """The panel as a small floating window that stays above other windows (the Mac version
+        of the tray panel's pop out). Its own button brings it back into the menu bar."""
+        from AppKit import NSAppearance, NSFloatingWindowLevel, NSPanel, NSScreen
+        self.popover.performClose_(None)
+        if self.float_panel is None:
+            style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | (1 << 4) | (1 << 7)  # utility, non-activating
+            width, height = self.panel_size
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
+            panel.setTitle_(APP)
+            dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
+            if dark is not None:
+                panel.setAppearance_(dark)
+            panel.setFloatingPanel_(True)
+            panel.setLevel_(NSFloatingWindowLevel)
+            panel.setHidesOnDeactivate_(False)
+            panel.setReleasedWhenClosed_(False)
+            panel.setDelegate_(self)
+            base, token = self.url.split("/#token=")
+            self.float_view = web_view(f"{base}/menu#token={token}&popped=1", NSMakeRect(0, 0, width, height),
+                                       transparent=True, handler=self.bridge)
+            panel.setContentView_(self.float_view)
+            screen = NSScreen.mainScreen().visibleFrame()
+            panel.setFrameTopLeftPoint_((screen.origin.x + screen.size.width - width - 24,
+                                         screen.origin.y + screen.size.height - 12))
+            panel.setFrameAutosaveName_("AccountSwitcherPanel")
+            self.float_panel = panel
+        self.float_panel.orderFrontRegardless()
+
+    @objc.python_method
+    def pop_in(self):
+        if self.float_panel is not None:
+            self.float_panel.orderOut_(None)
 
     @objc.python_method
     def build_menu(self):

@@ -17,6 +17,7 @@ PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 SS = 2  # supersampling factor for shapes
 
 WIDTH = 404         # panel width
+COMPACT_WIDTH = 300  # compact panel width
 MENU_WIDTH = 232
 MARGIN = 18         # transparent margin that holds the shadow
 RADIUS = 8
@@ -156,11 +157,11 @@ def switch(layout, x, cy, pos, hover):
     layout.dot(x + 8 + 18 * pos, cy, knob / 2, mix(MUTED, (20, 20, 20, 255), pos))
 
 
-def icon_button(layout, x, y, size, kind, action, hover_amount, active=False):
+def icon_button(layout, x, y, size, kind, action, hover_amount, active=False, r=6.5):
     t = max(hover_amount, 0.6 if active else 0.0)
     if t > 0:
-        layout.rect(x, y, size, size, 6, fade(PILL_HOVER, t))
-    layout.icon(kind, x + size / 2, y + size / 2, 6.5, mix(MUTED, TEXT, t))
+        layout.rect(x, y, size, size, 6 if size > 24 else 5, fade(PILL_HOVER, t))
+    layout.icon(kind, x + size / 2, y + size / 2, r, mix(MUTED, TEXT, t))
     layout.hit(x, y, size, size, action)
 
 
@@ -223,7 +224,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
 
     # Header: mark, title, pop-out, "Full view" (none when compact).
     if compact:
-        return _build_compact(L, W, state, fx, h, pinned)
+        return _build_compact(L, COMPACT_WIDTH, state, fx, h, pinned)
     L.image(16, 16, "switcher", 22)
     L.text(46, 27, "Account Switcher", 14, TEXT, bold=True)
     pill_w = 92
@@ -377,60 +378,61 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
 
 
 def _build_compact(L, W, state, fx, h, pinned):
-    """Compact panel: the account in use for each provider (its meters and what's left), and
-    a footer with the buttons to expand and to quit. Nothing to switch or toggle."""
-    y = 8
+    """Compact panel: the account in use for each provider, as small as it gets. Its buttons
+    (pop out, expand, quit) sit at the top right, in line with the first account."""
+    y = 5
+    bx = W - 8
+    for kind, action in (("power", "quit"), ("expand", "expand"), ("popin" if pinned else "popout", "pin")):
+        bx -= 22
+        icon_button(L, bx, y, 22, kind, action, h(action), active=action == "pin" and pinned, r=5)
     shown = [a for provider, _ in PROVIDERS for a in state["accounts"] if a["provider"] == provider and a["active"]]
     if not shown:
-        L.text(W / 2, y + 20, "No account in use", 12, MUTED, anchor="mm")
-        y += 40
-    for account in shown:
+        L.text(12, y + 11, "No account in use", 11, MUTED)
+        return L, y + 28
+    for index, account in enumerate(shown):
         provider, top = account["provider"], y
-        cy = top + 16
-        L.image(22, cy - 7, provider, 14)
+        cy = top + 11
+        L.image(12, cy - 6, provider, 12)
+        right = (bx - 6) if index == 0 else W - 12
         note = status_note(account)
-        right = W - 22
         if note:
-            L.text(right, cy, note, 11, WARN, anchor="rm")
+            L.text(right, cy, note, 10, WARN, anchor="rm")
             if note == "Sign in again":
-                L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
-            right -= text_w(note, 11) + 12
-        L.text(42, cy, fit(display_name(account), 13, True, right - 42), 13, TEXT, bold=True)
+                L.hit(right - text_w(note, 10) - 4, cy - 9, text_w(note, 10) + 8, 18, "relogin:" + account["id"])
+            right -= text_w(note, 10) + 8
+        L.text(28, cy, fit(display_name(account), 12, True, right - 28), 12, TEXT, bold=True)
         windows = account["windows"][:3]
+        ly = top + 27
         if not windows:
-            L.text(22, top + 38, account.get("status") or "Usage not loaded yet", 11, FAINT)
-        else:
-            col_w = (W - 44 + 14) / len(windows)
-            for i, window in enumerate(windows):
-                left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
-                x0, ly = 22 + i * col_w, top + 36
-                label = short_label(window)
-                label_w = max(20, text_w(label, 11) + 7)
-                L.text(x0, ly, label, 11, MUTED)
-                bar_x, bar_w = x0 + label_w, col_w - label_w - 52
-                L.rect(bar_x, ly - 2, bar_w, 4, 2, TRACK)
-                if left > 0.5:
-                    L.rect(bar_x, ly - 2, max(4, bar_w * left / 100), 4, 2, level_rgb(left))
-                L.text(x0 + col_w - 14, ly, f"{remaining(window['used']):.0f}%", 11, level_rgb(remaining(window["used"])),
-                       bold=True, anchor="rm")
-                L.text(x0 + col_w - 14, ly + 14, "left", 10, FAINT, anchor="rm")
-                if window.get("resetsAt"):
-                    room = x0 + col_w - 14 - text_w("left", 10) - 6 - bar_x
-                    full = "resets in " + until(window["resetsAt"])
-                    if text_w(full, 10) <= room:
-                        L.text(bar_x, ly + 14, full, 10, FAINT)
-                    else:
-                        L.icon("clock", bar_x + 4, ly + 14, 3.6, FAINT)
-                        L.text(bar_x + 11, ly + 14, until(window["resetsAt"]), 10, FAINT)
-        y += ROW_H + 2
-    footer_h = 40
-    y += 2
-    L.rect(0, y, W, footer_h, 0, FOOTER)
-    L.rect(0, y, W, 1, 0, BORDER)
-    cy = y + footer_h / 2
-    icon_button(L, W - 16 - 62, cy - 14, 28, "expand", "expand", h("expand"))
-    icon_button(L, W - 16 - 28, cy - 14, 28, "power", "quit", h("quit"))
-    return L, y + footer_h
+            L.text(12, ly, account.get("status") or "Usage not loaded yet", 10, FAINT)
+            y += 38
+            continue
+        col_w = (W - 24 + 10) / len(windows)
+        for i, window in enumerate(windows):
+            left = fx.get(("bar", account["id"], window["key"]), remaining(window["used"]))
+            shown_left = remaining(window["used"])
+            x0 = 12 + i * col_w
+            label = short_label(window)
+            label_w = max(16, text_w(label, 10) + 5)
+            L.text(x0, ly, label, 10, MUTED)
+            pct_right = x0 + col_w - 10
+            bar_x, bar_w = x0 + label_w, col_w - label_w - 42
+            L.rect(bar_x, ly - 1.5, bar_w, 3, 1.5, TRACK)
+            if left > 0.5:
+                L.rect(bar_x, ly - 1.5, max(3, bar_w * left / 100), 3, 1.5, level_rgb(left))
+            L.text(pct_right, ly, f"{shown_left:.0f}%", 10, level_rgb(shown_left), bold=True, anchor="rm")
+            L.text(pct_right, ly + 11, "left", 9, FAINT, anchor="rm")
+            if window.get("resetsAt"):
+                room = pct_right - text_w("left", 9) - 5 - bar_x
+                full = "resets in " + until(window["resetsAt"])
+                if text_w(full, 9) <= room:
+                    L.text(bar_x, ly + 11, full, 9, FAINT)
+                elif text_w(until(window["resetsAt"]), 9) + 10 <= room:  # a clock and the time
+                    L.icon("clock", bar_x + 3.5, ly + 11, 3.2, FAINT)
+                    L.text(bar_x + 10, ly + 11, until(window["resetsAt"]), 9, FAINT)
+                # no room at all: the reset time is in the full panel and the full view
+        y += 46
+    return L, y + 1
 
 
 def build_menu(items, hover=None, fx=None):
@@ -549,7 +551,8 @@ def paint(layout, width, height, scale):
 
 def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None):
     layout, height = build(state, hover, pending, pinned, fx, armed, compact)
-    return paint(layout, WIDTH, height, scale)
+    compact = state.get("compact") if compact is None else compact
+    return paint(layout, COMPACT_WIDTH if compact else WIDTH, height, scale)
 
 
 def render_menu(items, hover=None, scale=1.0, fx=None):

@@ -108,9 +108,10 @@ class FlyoutRenderTests(unittest.TestCase):
         names = [t[2] for t in layout.texts]
         self.assertIn("personal@example.com", names)
         self.assertNotIn("second@example.com", names)  # not in use: not shown
-        self.assertEqual([a for _, a in layout.hits], ["expand", "quit"])  # no switching, no toggles
+        self.assertEqual(sorted(a for _, a in layout.hits), ["expand", "pin", "quit"])  # no switching, no toggles
         image, _ = fr.render(state)
-        self.assertLess(image.size[1], full_image.size[1] * 0.7)
+        self.assertLess(image.size[1], full_image.size[1] * 0.5)
+        self.assertLess(image.size[0], full_image.size[0])
 
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])
