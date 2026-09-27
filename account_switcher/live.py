@@ -12,7 +12,7 @@ How it works
   account. When the app quits, the chosen account is written into ~/.codex/auth.json.
 - Usage is fetched from each provider's own usage endpoint (read-only; it does not use any
   quota). To stay well clear of the endpoints' rate limits, each account has its own schedule:
-  the account in use every 5 minutes (2 when close to a limit), others every 30 minutes or
+  the account in use every 5 minutes (3 when close to a limit), others every 15 minutes or
   just after one of their windows resets. Known reset times are applied locally in between,
   requests are spaced out, and 429s back off exponentially (up to an hour).
 - Subscription renewal / end dates are checked at most once a day per account; a date you
@@ -47,6 +47,9 @@ MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
 # gently and follows live through Claude Code's status line instead (no tokens, no API calls).
 PROVIDER_INTERVALS = {"claude": (300, 180)}   # (in use, near a limit) when not live
+# Accounts not in use: Claude every 15 minutes (and just after a window resets). The same accounts
+# are often checked by a second computer too, which shares the same small allowance.
+PROVIDER_IDLE = {"claude": 900}
 LIVE_FRESH = 900            # status line data this recent counts as live
 LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
 SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
@@ -177,7 +180,8 @@ class LiveAccounts:
             return max(held, meta.get("apiAt", updated) + (urgent if near else active) * pace)
         # Inactive: usage only changes when a window resets (or if used elsewhere).
         resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
-        return min([updated + IDLE_INTERVAL] + resets)
+        idle = PROVIDER_IDLE.get(meta.get("provider"), IDLE_INTERVAL) * pace
+        return max(held, min([updated + idle] + resets))
 
     def refresh(self, only=None, force=False, max_age=None):
         """Fetch usage for accounts that are due (or all/one when forced). Network calls happen

@@ -117,8 +117,8 @@ body.compact #list { padding: 4px 4px 4px; }
 .icon-btn.tiny { width: 22px; height: 22px; margin: -3px 0; border-radius: 5px; }
 .icon-btn.tiny svg { width: 13px; height: 13px; }
 #full { margin-left: auto; }
-#pop { margin-left: auto; }
-#pop:not([hidden]) + #full { margin-left: 4px; }
+#dock { margin-left: auto; }
+#dock:not([hidden]) + #full { margin-left: 4px; }
 header .title { flex: 0 1 auto; }
 /* Compact motion: a swap slides the old account out to the left, then the new one in from the right. */
 .slot { position: relative; overflow: hidden; }
