@@ -310,6 +310,29 @@ def stop_running():
     return True
 
 
+def stop_leftovers():
+    """Windows: end any copy of the app from this folder that is still running (one whose quit
+    request could not reach it, e.g. its URL file was lost). Otherwise the new copy would find it,
+    hand over to it, and the old code would keep running after an update."""
+    if not WINDOWS:
+        return
+    folder = str(ROOT).replace("'", "''")
+    script = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine "
+              f"-and $_.CommandLine.Contains('{folder}') "
+              "-and $_.CommandLine -match 'AccountSwitcher[.]pyw|account_switcher[.]tray' } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }")
+    done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, check=False)
+    ended = done.stdout.split()
+    if ended:
+        say(f"Closed {len(ended)} older Account Switcher process(es) that were still running.", "info")
+        try:
+            (RUNTIME / "tray.url").unlink()
+        except OSError:
+            pass
+        time.sleep(1)
+
+
 def log_path():
     if MAC:
         return Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
@@ -374,6 +397,7 @@ def main(argv=None):
         elif status == "current":
             say("Code is up to date.", "ok")
         was_running = stop_running()
+        stop_leftovers()
         ensure_environment()
         windows_shortcut() if WINDOWS else mac_app()
         if not args.no_launch:

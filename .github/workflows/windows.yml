@@ -24,6 +24,22 @@ jobs:
         run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "AccountSwitcher.pyw","--show" -WorkingDirectory $PWD
       - name: Smoke test
         run: .venv\Scripts\python.exe .github\win_smoke.py
+      - name: Updating replaces a copy it can't reach (its URL file is gone)
+        run: |
+          Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "AccountSwitcher.pyw" -WorkingDirectory $PWD
+          Start-Sleep 8
+          Remove-Item .runtime\tray.url -ErrorAction SilentlyContinue
+          python scripts/installer.py --skip-code
+          Start-Sleep 3
+          $all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'AccountSwitcher[.]pyw' })
+          $all | ForEach-Object { "$($_.ProcessId) <- $($_.ParentProcessId): $($_.CommandLine)" }
+          # A venv's pythonw.exe starts the real Python as its child: one app, two processes.
+          $ids = $all | ForEach-Object { $_.ProcessId }
+          $left = @($all | Where-Object { $ids -notcontains $_.ParentProcessId })
+          $log = Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Tail 5
+          $log
+          if ($left.Count -ne 1) { throw "expected one running copy, found $($left.Count)" }
+          if (-not ($log -match 'started, version')) { throw "the new copy did not start" }
       - name: Keep screenshots
         if: always()
         shell: bash
