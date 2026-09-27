@@ -21,6 +21,24 @@
       </div>
     </div>
     <div class="topbar-tools">
+      <div class="auto-wrap">
+        <button type="button" class="button" id="auto-button" aria-haspopup="true" aria-expanded="false" aria-controls="auto-menu">
+          Automation <span class="state-pill" id="automation-state">Idle</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="caret"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="auto-menu" id="auto-menu" hidden>
+          <label class="toggle">
+            <input type="checkbox" role="switch" id="auto-swap">
+            <span class="track"><span class="thumb"></span></span>
+            <span class="toggle-text"><strong>Auto swap</strong><small>Move to the account with the most headroom when a limit hits</small></span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" role="switch" id="afk">
+            <span class="track"><span class="thumb"></span></span>
+            <span class="toggle-text"><strong>AFK mode</strong><small>Continue a session by itself after a usage limit</small></span>
+          </label>
+        </div>
+      </div>
       <div class="add-wrap">
         <button type="button" class="button" id="add" hidden aria-haspopup="menu">
           <svg viewBox="0 0 24 24" aria-hidden="true" class="plus"><path d="M12 5v14M5 12h14"/></svg>Add account
@@ -36,26 +54,6 @@
     </div>
   </header>
 
-  <section class="overview" aria-label="Active accounts and automation">
-    <article class="tile provider-tile" data-provider="claude" id="tile-claude"></article>
-    <article class="tile provider-tile" data-provider="codex" id="tile-codex"></article>
-    <article class="tile automation">
-      <div class="tile-head">
-        <span class="tile-kicker">Automation</span>
-        <span class="state-pill" id="automation-state">Idle</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" role="switch" id="auto-swap">
-        <span class="track"><span class="thumb"></span></span>
-        <span class="toggle-text"><strong>Auto swap</strong><small>Move to the account with the most headroom when a limit hits</small></span>
-      </label>
-      <label class="toggle">
-        <input type="checkbox" role="switch" id="afk">
-        <span class="track"><span class="thumb"></span></span>
-        <span class="toggle-text"><strong>AFK mode</strong><small>Continue a session by itself after a usage limit</small></span>
-      </label>
-    </article>
-  </section>
 
   <div id="accounts"></div>
 

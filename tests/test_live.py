@@ -342,6 +342,25 @@ class LiveTests(unittest.TestCase):
         self.assertIn("export CLAUDE_CONFIG_DIR=", text)
         self.assertIn("claude auth login", text)
 
+    def test_a_service_hiccup_keeps_the_numbers_quietly(self):
+        from account_switcher.providers import ProviderError
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        before = a.windows()
+        self.providers["claude"].fetch = lambda secret, allow_refresh: (_ for _ in ()).throw(
+            ProviderError("Usage service unavailable (503)", transient=True))
+        for attempt in range(3):
+            m.meta["accounts"][a.id]["backoffUntil"] = 0.0
+            m.refresh(force=True)
+            a = self.by_email(m, "a@example.com")
+            self.assertEqual(a.windows(), before)  # last numbers stay
+            if attempt < 2:
+                self.assertEqual(a.status, "")  # a blip is not worth showing
+        self.assertIn("isn't answering", a.status)  # a problem that lasts is
+        self.assertGreater(m.meta["accounts"][a.id]["backoffUntil"], time.time() + 200)
+
     def test_backoff_on_rate_limit(self):
         from account_switcher.providers import ProviderError
         m = self.manager()

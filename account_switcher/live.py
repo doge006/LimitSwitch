@@ -217,6 +217,16 @@ class LiveAccounts:
                     wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
                     self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
                               pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
+                if error.transient:
+                    # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
+                    # 1, 2, 4... min. Only a problem that lasts gets shown.
+                    failures = meta.get("backoffFailures", 0)
+                    wait = min(900, 60 * 2 ** failures) * random.uniform(1.0, 1.15)
+                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1)
+                    if failures + 1 < 3:
+                        continue
+                    self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
+                    continue
                 message = str(error)
                 if error.rate_limited:  # temporary: say until when
                     message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
