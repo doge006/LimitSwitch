@@ -28,7 +28,7 @@ def app_processes():
     for process in psutil.process_iter(["name", "cmdline"]):
         line = " ".join(process.info.get("cmdline") or [])
         name = (process.info.get("name") or "").lower()
-        if name == "limitswitch.exe" or ("python" in name and (
+        if name == "limitswitcher.exe" or ("python" in name and (
                 "LimitSwitcher.pyw" in line or "account_switcher.tray" in line or "LimitSwitcher" in line)):
             found.append(process)
     return found

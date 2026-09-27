@@ -20,7 +20,7 @@ def check(ok, text):
 
 import subprocess
 listed = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True).stdout.lower()
-check('"limitswitch.exe"' in listed, "the app runs as LimitSwitcher.exe (Task Manager shows LimitSwitcher)")
+check('"limitswitcher.exe"' in listed, "the app runs as LimitSwitcher.exe (Task Manager shows LimitSwitcher)")
 check('"pythonw.exe"' not in listed, "no separate Python process")
 user32 = ctypes.windll.user32
 check(bool(user32.FindWindowW("AccountSwitcherFullView", None)), "the full view window opened (native, bundled Python)")
