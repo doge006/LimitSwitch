@@ -120,6 +120,8 @@ for _ in range(40):
     if len(found) >= 2:
         break
     time.sleep(0.25)
+time.sleep(1)  # let the rise-in animation finish before measuring
+found = blocks()
 print("blocks:", found, flush=True)
 check(len(found) == 2, "a block for Claude and one for Codex sit on the taskbar")
 if found:
