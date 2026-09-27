@@ -289,8 +289,22 @@ $ARCH "$PY" "{ROOT / "LimitSwitch.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 
 # ---------- 4. running copy ----------
 def stop_running():
-    """Ask a running copy to quit (it undoes its Codex / Claude changes on the way out)."""
-    url_file = RUNTIME / "tray.url"
+    """Ask a running copy to quit (it undoes its Codex / Claude changes on the way out): this
+    folder's, and any other copy running for this user (an installed one), since only one may run."""
+    other = log_path().with_name("running.url")
+    if other.exists() and other.read_text(encoding="utf-8", errors="replace").strip() != _read(RUNTIME / "tray.url"):
+        _stop(other)
+    return _stop(RUNTIME / "tray.url")
+
+
+def _read(path):
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _stop(url_file):
     try:
         url = url_file.read_text(encoding="utf-8").strip()
         base, token = url.split("/#token=")

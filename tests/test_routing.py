@@ -538,6 +538,51 @@ class CodexServerWatchTests(unittest.TestCase):
             self.assertEqual(calls.read_text().split(), ["app-server", "daemon", "stop"])
             self.assertFalse(watch.check())  # the same (stale) socket is not stopped twice
 
+    def test_restarts_the_plugins_old_broker_once_idle_and_mentions_old_sessions(self):
+        from account_switcher import integrations, processes
+        from account_switcher.processes import Process
+        now = time.time()
+        found = [Process(10, 1, "node", now - 600, "node C:\\x\\app-server-broker.mjs serve --endpoint pipe"),
+                 Process(11, 10, "codex", now - 600, "codex app-server"),
+                 Process(12, 1, "codex", now - 600, "C:\\bin\\codex.exe"),
+                 Process(13, 1, "node", now - 5, "node /x/app-server-broker.mjs serve --endpoint e"),  # after the router
+                 Process(14, 1, "codex", now - 600, "codex login")]
+        notes, ended = [], []
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(integrations, "codex_home_path", lambda home=None: Path(tmp)), \
+                mock.patch.object(processes, "listing", lambda names: found), \
+                mock.patch.object(processes, "end_tree", ended.append):
+            day = Path(tmp) / "sessions" / "2026" / "09" / "27"
+            day.mkdir(parents=True)
+            log = day / "rollout.jsonl"
+            log.write_text("{}")
+            watch = integrations.CodexServerWatch(tmp, lambda kind, text: notes.append(text), routed_since=now - 60)
+            self.assertEqual([(p.pid, kind) for p, kind in watch.older_codex()], [(10, "broker"), (12, "session")])
+            self.assertFalse(watch.check_older())  # a job is running: leave it
+            self.assertEqual(ended, [])
+            os.utime(log, (now - 600, now - 600))
+            self.assertTrue(watch.check_older())
+            self.assertEqual(ended, [10])
+            self.assertEqual(sum("before LimitSwitch, doesn't go through it" in n for n in notes), 1)  # said once
+        # VS Code's own Codex, started before the router: named, mentioned once, never ended.
+        editor = [Process(20, 21, "codex", now - 600, "codex.exe app-server --analytics-default-enabled")]
+        tree = {21: (22, "code"), 22: (1, "explorer")}
+        notes, ended = [], []
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(integrations, "codex_home_path", lambda home=None: Path(tmp)), \
+                mock.patch.object(processes, "listing", lambda names: editor), \
+                mock.patch.object(processes, "family", lambda: tree), \
+                mock.patch.object(processes, "end_tree", ended.append):
+            watch = integrations.CodexServerWatch(tmp, lambda kind, text: notes.append(text), routed_since=now - 60)
+            watch.check_older(quiet=0)
+            watch.check_older(quiet=0)
+            self.assertEqual(ended, [])
+            self.assertEqual(len(notes), 1)
+            self.assertIn("Codex in VS Code started", notes[0])
+        with mock.patch.object(processes, "listing", lambda names: found):
+            other = integrations.CodexServerWatch("/somewhere/else", routed_since=now)
+            self.assertEqual(other.older_codex(), [])  # another Codex folder: not ours to judge
+
 
 class IntegrationTests(unittest.TestCase):
     def test_start_and_stop_leave_codex_and_claude_as_they_were(self):
@@ -599,3 +644,11 @@ class IntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusLineMarkerTests(unittest.TestCase):
+    def test_own_status_line_gets_the_marker_after_its_last_line(self):
+        from account_switcher import statusline
+        self.assertEqual(statusline.with_marker(b"~/proj main\n"), b"~/proj main  " + statusline.MARKER.encode() + b"\n")
+        self.assertTrue(statusline.with_marker(b"one\ntwo").startswith(b"one\ntwo  "))
+        self.assertEqual(statusline.with_marker(b""), statusline.MARKER.encode() + b"\n")

@@ -30,7 +30,7 @@ GOOD, WARN, BAD = (76, 195, 138), (229, 181, 74), (239, 106, 91)
 ACCENT = {"claude": (224, 138, 104), "codex": (162, 149, 247)}
 ON_ACCENT = (22, 22, 22)
 FOCUS = (138, 180, 255)
-PROVIDERS = (("claude", "Claude", "Claude Code CLI & app"), ("codex", "Codex", "Codex CLI & app"))
+PROVIDERS = (("claude", "Claude", ""), ("codex", "Codex", ""))  # (id, title, caption shown at the right)
 
 PAD = 28           # page padding
 MAX_W = 1180       # content max width
@@ -189,23 +189,46 @@ def ring_mask(w, h, r, width):
     return ImageChops.subtract(rr_mask(w, h, r), hole)
 
 
-@lru_cache(maxsize=256)
+BIG_MASK = 256 * 256  # masks this big (whole cards) aren't kept for every opacity
+
+
 def rr_alpha(w, h, r, alpha):
-    mask = rr_mask(w, h, r)
-    return mask.point(lambda v: v * alpha // 255) if alpha < 255 else mask
+    """rr_mask at `alpha`. Small ones are kept; a card-sized one is made when needed (a fraction
+    of a millisecond, only when a card is drawn again) rather than kept for every hover step."""
+    if alpha >= 255:
+        return rr_mask(w, h, r)
+    if w * h > BIG_MASK:
+        return rr_mask(w, h, r).point(lambda v: v * alpha // 255)
+    return _rr_alpha(w, h, r, alpha)
+
+
+@lru_cache(maxsize=256)
+def _rr_alpha(w, h, r, alpha):
+    return rr_mask(w, h, r).point(lambda v: v * alpha // 255)
+
+
+def ring_alpha(w, h, r, width, alpha):
+    """ring_mask at `alpha` (kept only when small, like rr_alpha)."""
+    if alpha >= 255:
+        return ring_mask(w, h, r, width)
+    if w * h > BIG_MASK:
+        return ring_mask(w, h, r, width).point(lambda v: v * alpha // 255)
+    return _ring_alpha(w, h, r, width, alpha)
 
 
 @lru_cache(maxsize=128)
-def ring_alpha(w, h, r, width, alpha):
-    mask = ring_mask(w, h, r, width)
-    return mask.point(lambda v: v * alpha // 255) if alpha < 255 else mask
+def _ring_alpha(w, h, r, width, alpha):
+    return ring_mask(w, h, r, width).point(lambda v: v * alpha // 255)
 
 
 class Canvas:
     """Draws in logical px on an RGB(A) image of scale x that size."""
 
-    def __init__(self, image, scale, bg):
+    def __init__(self, image, scale, bg, origin=(0, 0)):
+        """origin: where `image` sits in the whole picture (device px), to redraw one part of
+        it on its own: everything lands on exactly the pixels it would in the whole."""
         self.image, self.s, self.bg = image, scale, bg
+        self.ox, self.oy = origin
         self.draw = ImageDraw.Draw(image)
 
     def px(self, v):
@@ -213,7 +236,7 @@ class Canvas:
 
     def box(self, x, y, w, h):
         x0, y0 = self.px(x), self.px(y)
-        return x0, y0, max(1, self.px(x + w) - x0), max(1, self.px(y + h) - y0)
+        return x0 - self.ox, y0 - self.oy, max(1, self.px(x + w) - x0), max(1, self.px(y + h) - y0)
 
     def rect(self, x, y, w, h, r, fill):
         x0, y0, pw, ph = self.box(x, y, w, h)
@@ -233,16 +256,18 @@ class Canvas:
     def line(self, x, y, w, color):
         """A hairline across (1 device px)."""
         x0, y0 = self.px(x), self.px(y)
-        self.image.paste(over(self.bg, color) if len(color) == 4 else color, (x0, y0, self.px(x + w), y0 + max(1, round(self.s))))
+        x1 = self.px(x + w)
+        self.image.paste(over(self.bg, color) if len(color) == 4 else color,
+                         (x0 - self.ox, y0 - self.oy, x1 - self.ox, y0 - self.oy + max(1, round(self.s))))
 
     def text(self, x, y, value, size, fill, bold=False, anchor="ls", bg=None):
         if len(fill) == 4:
             fill = over(bg or self.bg, fill)
-        self.draw.text((x * self.s, y * self.s), value, font=fr.font(size, bold, self.s), fill=fill, anchor=anchor)
+        fr.draw_text(self.draw, (x * self.s - self.ox, y * self.s - self.oy), value, size, bold, self.s, fill, anchor)
 
     def image_at(self, x, y, name, size):
         icon = fr.asset(name, self.px(size))
-        self.image.paste(icon, (self.px(x), self.px(y)), icon)
+        self.image.paste(icon, (self.px(x) - self.ox, self.px(y) - self.oy), icon)
 
     def glyph(self, kind, cx, cy, size, color):
         icon = glyph(kind, self.px(size), color)
@@ -629,7 +654,8 @@ def draw_group(data, w, scale):
     c.text(32, 22, title, 15, ACCENT[provider], True)
     tx = 32 + fr.text_w(title, 15, True) + 10
     c.text(tx, 22, f"{count} account{'s' if count != 1 else ''}", 12, MUTED)
-    c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
+    if caption:
+        c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
     return Tile(image, [])
 
 
@@ -656,10 +682,17 @@ def draw_empty(state, w, scale, ui):
     return Tile(image, hits)
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=1)  # only the window's current size (about 5 MB at 150%)
 def backdrop(width, height, scale):
     """The window background: plain."""
     return Image.new("RGB", (round(width * scale), round(height * scale)), BG)
+
+
+def release():
+    """The full view closed: let go of everything drawn for it (shapes, shadows, the backdrop).
+    It is all drawn again, the same, the next time it opens."""
+    for cached in (rr_mask, ring_mask, _rr_alpha, _ring_alpha, glyph, shadow, backdrop):
+        cached.cache_clear()
 
 
 # ---------- overlays: menus, the date editor, toasts ----------
@@ -696,7 +729,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     rows = list(SETTINGS)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
         rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
-                     "Start in the tray when you sign in, so Codex keeps going through the app"))
+                     "Start in the tray when you sign in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
         rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))

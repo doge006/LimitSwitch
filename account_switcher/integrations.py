@@ -64,6 +64,11 @@ def codex_present(codex_home=None):
     return codex_home_path(codex_home).exists() or shutil.which("codex") is not None
 
 
+# Apps that run their own Codex app-server (named in the notice when one started too early).
+EDITORS = {"code": "VS Code", "code - insiders": "VS Code Insiders", "cursor": "Cursor", "windsurf": "Windsurf",
+           "codium": "VSCodium", "codex": "the Codex app", "chatgpt": "the ChatGPT app", "electron": "an app"}
+
+
 class CodexServerWatch:
     """Stops Codex's shared background server once it is idle.
 
@@ -76,11 +81,15 @@ class CodexServerWatch:
     QUIET = 90      # seconds without session activity that count as idle
     EVERY = 60
 
-    def __init__(self, codex_home=None, notify=lambda *_: None, cli="codex"):
+    def __init__(self, codex_home=None, notify=lambda *_: None, cli="codex", routed_since=None):
         self.home = codex_home_path(codex_home)
         self.notify, self.cli = notify, cli
         self.stopped = threading.Event()
         self.tried_at = None
+        # When Codex's settings started pointing at the router: Codex processes older than this
+        # read them before, so they talk to ChatGPT directly on the login they started with.
+        self.routed_since = routed_since
+        self.told = set()  # Codex sessions already mentioned
 
     @property
     def socket(self):
@@ -94,11 +103,78 @@ class CodexServerWatch:
 
     def _loop(self):
         while not self.stopped.is_set():
-            try:
-                self.check()
-            except Exception:
-                pass
+            for step in (self.check, self.check_older):
+                try:
+                    step()
+                except Exception:
+                    log.debug("codex watch", exc_info=True)
             self.stopped.wait(self.EVERY)
+
+    def older_codex(self):
+        """Codex processes that started before the router: [(Process, kind)], kind "broker" (the
+        Claude Code Codex plugin's app-server broker) or "session" (a Codex window)."""
+        if not self.routed_since or self.home != codex_home_path():
+            return []  # processes can't be told apart by their Codex folder: only the usual one's
+        from . import processes
+        found, servers = [], []
+        for process in processes.listing({"node", "codex"}):
+            if process.started >= self.routed_since - 2:
+                continue
+            command = process.command.replace("\\", "/")
+            if process.name == "node" and "app-server-broker" in command and " serve" in command:
+                found.append((process, "broker"))
+            elif process.name == "codex" and "app-server" in command:
+                servers.append(process)
+            elif process.name == "codex" and not any(word in command for word in (" login", " mcp", "exec ")):
+                found.append((process, "session"))
+        if servers:  # an editor's or app's own Codex (VS Code, Cursor, the Codex app), not the plugin's
+            brokers = {p.pid for p, kind in found if kind == "broker"}
+            tree = processes.family()
+            for server in servers:
+                owner, pid, seen = None, server.parent, set()
+                while pid in tree and pid not in seen and pid not in brokers:
+                    seen.add(pid)
+                    parent, name = tree[pid]
+                    if name in EDITORS and owner is None:
+                        owner = EDITORS[name]
+                    pid = parent
+                if pid in brokers:
+                    continue  # the plugin's: handled with its broker
+                server.owner = owner or "an editor or app"
+                found.append((server, "embedded"))
+        return found
+
+    def check_older(self, quiet=None):
+        """Codex processes older than the router skip it, so they can't switch accounts.
+        - The Claude Code Codex plugin keeps one broker (and its codex app-server) running between
+          jobs, and starts a new one when that one isn't there. So once no Codex session has
+          written anything for a while (no job running), end the old one: the plugin's next job
+          starts a fresh one, which goes through the router.
+        - A Codex window can't be restarted for the user: say so once."""
+        older = self.older_codex()
+        if not older:
+            return False
+        brokers = [p for p, kind in older if kind == "broker"]
+        ended = False
+        if brokers and time.time() - self.last_activity() >= (self.QUIET if quiet is None else quiet):
+            from . import processes
+            for broker in brokers:
+                processes.end_tree(broker.pid)
+            ended = True
+            self.notify("log", "Restarted the Claude Code Codex plugin's background Codex (it started before LimitSwitch), "
+                               "so its jobs switch accounts too")
+        for process, kind in older:
+            if kind in ("session", "embedded") and process.pid not in self.told:
+                self.told.add(process.pid)
+                when = time.strftime("%H:%M", time.localtime(process.started))
+                if kind == "session":
+                    self.notify("log", f"A Codex window opened at {when}, before LimitSwitch, doesn't go through it, so "
+                                       "it won't switch accounts. Restart that Codex session to fix it.")
+                else:
+                    self.notify("log", f"Codex in {process.owner} started at {when}, before LimitSwitch, so it doesn't go "
+                                       f"through it and won't switch accounts. Reload {process.owner} (or restart its "
+                                       "Codex) to fix it.")
+        return ended
 
     @property
     def pid_file(self):
@@ -176,9 +252,8 @@ class Integrations:
         if codex_present(self.codex_home):
             self.start_codex()
         meta = self.manager.meta
-        if "startWithWindows" not in meta:  # first run: what the installer's checkbox chose (on otherwise)
-            from .version import install_kind
-            meta["startWithWindows"] = start_entry_exists() if install_kind() == "installer" else True
+        if "startWithWindows" not in meta:  # first run: on (Settings turns it off)
+            meta["startWithWindows"] = True
             self.manager.save()
         if meta["startWithWindows"]:
             set_start_with_windows(True)
@@ -206,11 +281,19 @@ class Integrations:
         atomic_write(settings_path, json.dumps({"port": proxy.port, "secret": proxy.secret}).encode())
         self.proxy = proxy
         self.manager.enable_routing("codex")
-        self.watch = CodexServerWatch(self.codex_home, self.manager.notify)
+        try:  # unchanged settings (left by a run that ended abruptly) count from when they were written
+            routed_since = os.stat(codex_config.config_path(self.codex_home)).st_mtime
+        except (OSError, AttributeError):
+            routed_since = time.time()
+        self.watch = CodexServerWatch(self.codex_home, self.manager.notify, routed_since=routed_since)
         self.watch.start()
-        # Right after a Codex switch, stop the old shared server as soon as it is quiet.
-        self.manager.on_swap = lambda provider: provider == "codex" and threading.Thread(
-            target=self.watch.check, kwargs={"quiet": 30}, daemon=True).start()
+
+        def after_swap(provider):
+            """Right after a Codex switch, stop what would stay on the old account once it is quiet."""
+            if provider == "codex":
+                for step in (self.watch.check, self.watch.check_older):
+                    threading.Thread(target=step, kwargs={"quiet": 30}, daemon=True).start()
+        self.manager.on_swap = after_swap
 
     def keep_claude_settings(self):
         """Claude Code (updating itself, /config) and other tools rewrite settings.json, which can
@@ -315,7 +398,8 @@ def set_start_with_windows(enabled):
         return
     import winreg
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        # CreateKeyEx: a fresh Windows profile may not have the Run key yet (it opens it when it does).
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
                 winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launcher())
             for name in ((OLD_RUN_NAME,) if enabled else (RUN_NAME, OLD_RUN_NAME)):
@@ -325,19 +409,6 @@ def set_start_with_windows(enabled):
                     pass
     except OSError as error:
         log.warning("start with Windows: %s", error)
-
-
-def start_entry_exists():
-    """Windows: is there a start-at-sign-in entry for the app (the installer writes it when asked)?"""
-    if sys.platform != "win32":
-        return True
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            winreg.QueryValueEx(key, RUN_NAME)
-            return True
-    except OSError:
-        return False
 
 
 def _set_launch_agent(enabled):

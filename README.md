@@ -23,11 +23,11 @@ LimitSwitch does all of it in one small tray app: every limit at a glance, one-c
 
 ## Install (Windows)
 
-Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
+Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
-Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder, so updating or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
+Your accounts and settings are kept in `%LOCALAPPDATA%\AccountSwitcher` (the app's name before it was renamed), so updating, reinstalling or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
 
 **Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads the new installer, which closes the app, replaces its files and starts it again. **Check for updates** checks now.
 
@@ -54,13 +54,11 @@ Built to be barely noticeable:
 In PowerShell, with LimitSwitch running. This samples it over 60 seconds:
 
 ```powershell
-$ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
-$before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum; Start-Sleep 60; $p = Get-Process -Id $ids
-'{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f (($p | Measure-Object WorkingSet64 -Sum).Sum / 1MB),
-    (($p | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB), ((($p | Measure-Object CPU -Sum).Sum - $before) / 60 * 100)
+$before = (Get-Process LimitSwitch).CPU; Start-Sleep 60; $p = Get-Process LimitSwitch
+'{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB), (($p.CPU - $before) / 60 * 100)
 ```
 
-Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **pythonw.exe** under the Details tab.
+Try it idle in the tray, with the panel open, and with the full view open. Task Manager shows it too, as **LimitSwitch**.
 
 ### Measure it on macOS
 
@@ -89,7 +87,8 @@ Try it idle in the menu bar, with the panel open, and with the full view open. A
 
 ## Your accounts
 
-- **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`, or the apps) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
+- **Works with:** Claude Code (the CLI and its VS Code extension) and Codex (the CLI, its editor extensions and the Claude Code Codex plugin). Not the Claude desktop or web app, which have their own login. A Codex session or editor that was already open before LimitSwitch started keeps its account until it's reloaded; LimitSwitch tells you when that's the case.
+- **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
 - **Switching:** click an account and every session moves to it, including sessions that are already open. Nothing needs restarting.
   - *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request.
   - *Codex:* the chosen login is written into `~/.codex/auth.json` (so new windows and Codex's `/status` show it), and while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. So a switch also applies to sessions that are already open, on their next request.

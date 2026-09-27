@@ -1,7 +1,7 @@
 ; LimitSwitch's Windows installer (Inno Setup 6), built by scripts\build_windows.ps1:
 ;   iscc /DAppVersion=1.0.0 /DSourceDir=<build\LimitSwitch> scripts\LimitSwitch.iss
-; Per user, no admin rights. It asks where to install, adds a Start menu entry (and, if ticked, a
-; desktop one and start at sign-in). The app's in-app updater runs it with
+; Per user, no admin rights. It asks where to install, has boxes for a Start menu entry (on)
+; and a desktop shortcut (off); starting at sign-in is the app's own setting (on at first run). The app's in-app updater runs it with
 ; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<this folder>: it closes the app, replaces the
 ; files and starts the app again. Saved accounts and settings live in %LOCALAPPDATA%\AccountSwitcher
 ; and are kept, also by the uninstaller.
@@ -48,7 +48,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
-Name: "startup"; Description: "Start {#AppName} when I sign in"
+Name: "startmenu"; Description: "Add to the Start menu"
 Name: "desktopicon"; Description: "Add a desktop shortcut"; Flags: unchecked
 
 [InstallDelete]
@@ -60,14 +60,9 @@ Type: filesandordirs; Name: "{app}\runtime"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Claude Code and Codex usage limits and account switching"
+Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Claude Code and Codex usage limits and account switching"; \
+    AppUserModelID: "LimitSwitch.App"; Tasks: startmenu
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
-
-[Registry]
-; Start at sign-in, as chosen here. After the first install the app's own setting owns it, so
-; a silent update leaves it alone.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#AppName}"; \
-    ValueData: """{app}\{#AppExe}"""; Tasks: startup; Check: ChooseStartup
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "--show"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
@@ -83,14 +78,6 @@ Type: filesandordirs; Name: "{app}\account_switcher"
 Type: filesandordirs; Name: "{app}\runtime"
 
 [Code]
-var
-  WasInstalled: Boolean;
-
-function ChooseStartup(): Boolean;
-begin
-  Result := (not WasInstalled) or (not WizardSilent);
-end;
-
 procedure QuitRunningCopy();
 var
   Python: String;
@@ -107,7 +94,6 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  WasInstalled := FileExists(ExpandConstant('{app}\{#AppExe}'));
   QuitRunningCopy();
   Result := '';
 end;

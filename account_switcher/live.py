@@ -79,6 +79,8 @@ class LiveAccounts:
         self.routed = set()      # providers whose requests go through the local router
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
+        self.session_reports = {}  # Claude session -> its last status line numbers
+        self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
         self.signatures = {}
         self.last_refresh = 0.0
         self.last_manual = 0.0
@@ -198,7 +200,10 @@ class LiveAccounts:
                     held = False  # Refresh retries after a hiccup (offline, timeout); only a real 429 holds
                 if due <= now and not held:
                     targets.append((i, dict(m), is_active, is_live))
+        # The accounts in use first: their numbers matter now; the rest can follow a few seconds later.
+        targets.sort(key=lambda target: (not target[2], not target[3]))
         fetched = False
+        subscriptions = []
         for account_id, meta, is_active, is_live in targets:
             provider = self.providers.get(meta["provider"])
             try:
@@ -254,6 +259,10 @@ class LiveAccounts:
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
+            subscriptions.append((account_id, meta, provider, secret))
+            if len(targets) > 1:
+                self.notify("accounts", None)  # show each account as it arrives, not after all of them
+        for account_id, meta, provider, secret in subscriptions:  # renewal dates after every account's usage
             self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
@@ -508,9 +517,15 @@ class LiveAccounts:
             self.notify("accounts", None)
         return changed
 
-    def statusline(self, limits):
+    def statusline(self, limits, session=None):
         """Live usage from a Claude Code status line (rate_limits), for the account signed in to
-        Claude Code. Returns the compact status line text."""
+        Claude Code. Returns the compact status line text.
+
+        Every open Claude Code session reports the numbers from its own last reply, also long
+        after it (an idle session may still hold another account's numbers). So a session's report
+        counts only once its numbers moved since its previous one, i.e. it just got a reply. A
+        session's first report counts only while no other session is busy. Otherwise an old
+        session and a fresh one take turns and the bar jumps between their numbers."""
         name = "claude"
         self.sync_live()
         account_id = self.live_ids.get(name)
@@ -530,12 +545,26 @@ class LiveAccounts:
             # Claude Code repeats its last numbers with every reply, also after a limit when it gets
             # no new ones. Only a report that changes something counts as live; otherwise the API
             # goes back to its normal pace and catches what the status line misses.
-            if windows and self.observe(account_id, windows, add=True):
+            fresh = True
+            if session is not None:
+                key = tuple(windows)
+                with self.lock:
+                    previous = self.session_reports.get(session)
+                    self.session_reports[session] = key
+                    if len(self.session_reports) > 200:  # sessions come and go
+                        self.session_reports.pop(next(iter(self.session_reports)))
+                    if previous is None:  # a session's first report: fine unless another one is busy now
+                        fresh = now - self.session_moved_at >= LIVE_FRESH
+                    else:
+                        fresh = previous != key
+                    if fresh and previous is not None:
+                        self.session_moved_at = now
+            if windows and fresh and self.observe(account_id, windows, add=True):
                 with self.lock:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        parts = ["⇄ " + (entry.get("email") or entry.get("identity") or "Claude")]
+        parts = ["⇄ LimitSwitch", entry.get("email") or entry.get("identity") or "Claude"]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"

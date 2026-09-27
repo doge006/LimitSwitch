@@ -8,7 +8,7 @@ our name and icon, also when pinned.
 import ctypes
 from ctypes import wintypes
 
-APP_ID = "AccountSwitcher.App"
+APP_ID = "LimitSwitch.App"  # a new ID also leaves the old name's cached taskbar icon behind
 TITLE = "LimitSwitch"
 
 VT_LPWSTR = 31

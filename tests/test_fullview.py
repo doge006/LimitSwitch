@@ -1,5 +1,6 @@
 import time
 import unittest
+import unittest.mock
 
 try:
     from account_switcher import fullview, fullview_render as vr
@@ -238,5 +239,55 @@ class ClockTests(unittest.TestCase):
             self.assertTrue(controller.snapshot()["clock24"])
             controller.action("clock", {"on": False})
             self.assertFalse(controller.snapshot()["clock24"])
+        finally:
+            controller.close()
+
+
+class IncrementalDrawingTests(unittest.TestCase):
+    """Redrawing only what changed must give exactly the pixels of a whole redraw."""
+
+    def test_every_frame_matches_a_whole_redraw(self):
+        from account_switcher.web import Controller
+        clock = [1000.0]
+        controller = Controller()
+        try:
+            with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]):
+                views = []
+                for incremental in (True, False):
+                    view = fullview.FullView(controller, Host(), controller.snapshot())
+                    view.resize(900, 600, 1.25)
+                    view.incremental = incremental
+                    views.append(view)
+
+                def step(n):
+                    for _ in range(n):
+                        clock[0] += 0.04
+                        state = controller.snapshot()
+                        frames = []
+                        for view in views:
+                            view.set_state(state)
+                            frames.append(view.frame().tobytes())
+                        self.assertEqual(frames[0], frames[1])
+
+                step(25)  # rising in
+                cards = [item for item in views[0].items if item[0] == "card"]
+                for _, _, x, y, w, h, _ in cards[:3]:
+                    for view in views:
+                        view.mouse_move(x + w / 2, y + h / 2 - view.scroll)
+                    step(6)
+                    for view in views:
+                        view.mouse_move(x + w * 0.85, y + h - 40 - view.scroll)
+                    step(5)
+                account = controller.gateway.router.current("claude")
+                account.five_hour = min(100, account.five_hour + 8)  # usage goes up: bars and % animate
+                step(15)
+                for view in views:
+                    view.activate("settings")
+                step(8)
+                for view in views:
+                    view.activate("settings")
+                    view.wheel(100)
+                step(8)
+                self.assertIsNotNone(views[0].last_page)
         finally:
             controller.close()

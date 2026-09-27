@@ -19,6 +19,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 import pystray
 from PIL import Image, ImageDraw
+from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loaded up front, Pillow
+# doesn't load all ~40 of its format plugins (TIFF, PDF, ...) to find it
 
 from .web import Controller, clear_url_file, make_server, write_url_file
 
@@ -130,6 +132,12 @@ def quit_running(url):
             pass
     except (OSError, ValueError):
         pass
+
+
+def user_url_file():
+    """The running copy's URL for this user, whichever folder it runs from."""
+    from .vault import data_dir
+    return data_dir() / "running.url"
 
 
 def existing_instance(url_file):
@@ -334,6 +342,8 @@ class Tray:
             threading.Thread(target=self.watch, daemon=True).start()
             if open_now:
                 self.open_full_view()
+        from .memory import trim_soon
+        trim_soon(30)  # after start-up (imports, first usage fetch) has settled
         self.icon.run(setup=setup)
 
 
@@ -347,18 +357,23 @@ def main(argv=None):
     parser.add_argument("--quit", action="store_true", help="Close the running copy (the installer and uninstaller use it)")
     args = parser.parse_args(argv)
 
+    # This folder's copy (--url-file), and whichever copy runs for this user: two copies at once
+    # (an installed one and one from source) would both refresh the same saved logins, and a
+    # refresh by one makes the other's copy of the token invalid ("Sign in again").
+    url_files = [f for f in (args.url_file, user_url_file()) if f]
     if args.quit:  # closes cleanly: Codex and Claude Code settings are put back first
-        running = existing_instance(args.url_file) if args.url_file else None
-        if running:
-            quit_running(running)
-            for _ in range(60):
-                if not Path(args.url_file).exists():
-                    break
-                time.sleep(0.25)
+        for url_file in url_files:
+            running = existing_instance(url_file)
+            if running:
+                quit_running(running)
+                for _ in range(60):
+                    if not Path(url_file).exists():
+                        break
+                    time.sleep(0.25)
         return
 
     if args.url_file:
-        running = existing_instance(args.url_file)
+        running = next((url for url in map(existing_instance, url_files) if url), None)
         if running:  # second launch: just bring up the dashboard of the running copy
             if sys.platform == "win32":  # this launch may take the foreground; let the running copy
                 import ctypes
@@ -373,9 +388,13 @@ def main(argv=None):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
+    from .profiler import start as start_profiler
+    profiler = start_profiler()  # only with LIMITSWITCH_PROFILE set (a development tool)
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
     write_url_file(args.url_file, server.launch_url)
+    if args.url_file:
+        write_url_file(user_url_file(), server.launch_url)
     # A long poll interval: the loop never has to exit on its own because quitting
     # goes through the tray, so this thread just sleeps between connections.
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 60}, daemon=True).start()
@@ -402,6 +421,9 @@ def main(argv=None):
         finally:
             controller.close()  # stops any proxy / Claude processes this app owns
             clear_url_file(args.url_file, server.launch_url)
+            clear_url_file(user_url_file(), server.launch_url)
+            if profiler:
+                profiler.report()
 
     try:
         if sys.platform == "darwin":

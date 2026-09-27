@@ -40,7 +40,7 @@ jobs:
       - name: Install silently and run it (demo accounts)
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startup').WaitForExit()
+          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startmenu').WaitForExit()
           if (-not (Test-Path "$dir\LimitSwitch.exe")) { throw 'the exe was not installed' }
           if (-not (Test-Path "$dir\unins000.exe")) { throw 'no uninstaller' }
           # A silent install starts the app in the tray; close it and start it in demo mode instead.
@@ -63,16 +63,25 @@ jobs:
           (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
           foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
-          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' })
           Write-Host "PASS updated in place and started again ($($running.Count) process(es))"
-          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
-          if (-not $run) { throw 'start at sign-in was not set' }
+          # The app's own setting (on at first run) writes the entry once it has started.
+          foreach ($i in 1..60) {
+            $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
+            if ($run) { break }; Start-Sleep -Milliseconds 250
+          }
+          if (-not $run) {
+            Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -ErrorAction SilentlyContinue
+            Get-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue | Format-List
+            throw 'start at sign-in was not set'
+          }
+          if ($run -notmatch 'LimitSwitch[.]exe') { throw "start at sign-in runs '$run', not LimitSwitch.exe" }
           Write-Host "PASS start at sign-in: $run"
       - name: The README's measuring snippet works
         run: |
           # The Windows snippet from README.md (Performance), sampling 5 s instead of 60.
           $readme = Get-Content README.md -Raw
-          $snippet = [regex]::Match($readme, '(?s)```powershell\r?\n(\$ids = .*?)```').Groups[1].Value
+          $snippet = [regex]::Match($readme, '(?s)```powershell\r?\n(\$before = .*?)```').Groups[1].Value
           if (-not $snippet) { throw 'no snippet in README.md' }
           $out = Invoke-Expression ($snippet -replace 'Start-Sleep 60', 'Start-Sleep 5' -replace '/ 60 \* 100', '/ 5 * 100')
           Write-Host $out
@@ -85,7 +94,7 @@ jobs:
           foreach ($i in 1..120) { if (-not (Test-Path "$dir\unins000.exe")) { break }; Start-Sleep -Milliseconds 500 }
           Start-Sleep 2
           if (Test-Path "$dir\LimitSwitch.exe") { throw 'the exe is still there' }
-          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitch.exe' -or ($_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw') })
           if ($left.Count) { throw 'the app is still running' }
           if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue) { throw 'start at sign-in was left behind' }
           $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\LimitSwitch.lnk'
