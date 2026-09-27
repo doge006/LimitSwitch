@@ -12,7 +12,6 @@ from PIL import Image
 
 from . import fullview_render as vr
 
-LOCK_KINDS = ("swap:", "remove:")
 FAIL = re.compile(r"fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without", re.I)
 SWAP = re.compile(r"→|swap|selected|routed|failover|continue|now uses", re.I)
 OK = re.compile(r"added|completed|started|restored|opened", re.I)
@@ -244,7 +243,7 @@ class FullView:
         s, motion, ui = self.scale, self.motion, self.ui
         moving = motion.step()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
-        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar")}
+        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin")}
         for key, on in prefs.items():
             motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
             ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
@@ -459,6 +458,8 @@ class FullView:
                 self.act("names", {"on": not state.get("nameMode")})
             elif arg == "taskbar":
                 self.act("taskbar", {"on": not state.get("taskbar")})
+            elif arg == "launchAtLogin":
+                self.act("startup", {"on": not state.get("launchAtLogin")})
         elif kind == "display":
             self.act("taskbar", {"display": arg})
         elif kind == "swap":

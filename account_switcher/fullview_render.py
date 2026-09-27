@@ -30,7 +30,7 @@ GOOD, WARN, BAD = (76, 195, 138), (229, 181, 74), (239, 106, 91)
 ACCENT = {"claude": (224, 138, 104), "codex": (162, 149, 247)}
 ON_ACCENT = (22, 22, 22)
 FOCUS = (138, 180, 255)
-PROVIDERS = (("claude", "Claude", "Claude Code"), ("codex", "Codex", "Codex CLI & app"))
+PROVIDERS = (("claude", "Claude", "Claude Code CLI & app"), ("codex", "Codex", "Codex CLI & app"))
 
 PAD = 28           # page padding
 MAX_W = 1180       # content max width
@@ -591,7 +591,7 @@ def draw_topbar(state, w, scale, ui):
         ui.anchors["add"] = (x, bw)
     # Settings, with the automation state pill and a caret
     busy = state.get("busy")
-    pill = "Working…" if busy else "AFK armed" if state.get("afk") else "Watching" if state.get("autoSwap") else "Manual"
+    pill = "Working…" if busy else "Auto resume" if state.get("afk") else "Auto swap" if state.get("autoSwap") else "Manual"
     pill_bg, pill_fg = ((229, 181, 74, 38), WARN) if busy else ((76, 195, 138, 36), GOOD) if (state.get("afk") or state.get("autoSwap")) else (SURFACE_3 + (255,), MUTED)
     pw = fr.text_w(pill, 11, True) + 18
     bw = 14 + fr.text_w("Settings", 13) + 8 + pw + 8 + 12 + 14
@@ -672,20 +672,23 @@ def toggle(c, x, y, pos, hot, bg):
 
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
-            ("afk", "AFK mode", "Continue a session by itself after a usage limit"),
+            ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"))
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
     w = 320
     rows = list(SETTINGS)
+    if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
+        rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
+                     "Start in the tray when you sign in, so Codex keeps going through the app"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
         rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and len(displays) > 1
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (34 if chooser else 0)
+    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (38 if chooser else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
     ry = y + 8
@@ -704,22 +707,27 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
         ry += row_h
-    if chooser:
-        c.text(x + 66, ry + 13, "Show on", 13, MUTED, anchor="lm")
+    if chooser:  # which display: a row of buttons, the chosen one marked like a switch that is on
+        c.text(x + 66, ry + 15, "Show on", 13, MUTED, anchor="lm")
         cx = x + 66 + fr.text_w("Show on", 13) + 10
         current = state.get("taskbarDisplay") or "main"
         for d in displays:
             label = d["label"].replace(" display", "")
-            bw = fr.text_w(label, 12) + 16
+            bw = fr.text_w(label, 12) + 22
             chosen = d["id"] == current
             hot = ui.hover == "display:" + d["id"]
-            fill = (76, 195, 138, 36) if chosen else ((255, 255, 255, 16) if hot else (255, 255, 255, 0))
-            if fill[3]:
-                c.rect(cx, ry + 1, bw, 24, 7, fill)
-            c.text(cx + bw / 2, ry + 13, label, 12, GOOD if chosen else (TEXT if hot else MUTED), anchor="mm",
-                   bg=over(SURFACE_3, fill) if fill[3] else SURFACE_3)
-            hits.append(((cx, ry + 1, bw, 24), "display:" + d["id"], "hand"))
-            cx += bw + 4
+            if chosen:
+                fill = (76, 195, 138, 40)
+                c.rect(cx, ry + 2, bw, 26, 7, fill)
+                c.outline(cx, ry + 2, bw, 26, 7, GOOD + (150,))
+                c.text(cx + bw / 2, ry + 15, label, 12, GOOD, True, anchor="mm", bg=over(SURFACE_3, fill))
+            else:
+                base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
+                c.rect(cx, ry + 2, bw, 26, 7, base + (255,))
+                c.outline(cx, ry + 2, bw, 26, 7, LINE_STRONG)
+                c.text(cx + bw / 2, ry + 15, label, 12, TEXT if hot else MUTED, anchor="mm", bg=base)
+            hits.append(((cx, ry + 2, bw, 26), "display:" + d["id"], "hand"))
+            cx += bw + 6
     return (x, y, w, h), hits
 
 

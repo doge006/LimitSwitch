@@ -1,6 +1,6 @@
 """Account Switcher: a notification-area icon is the whole resident app.
 
-Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / AFK) with a
+Left-click shows a compact flyout (accounts, usage, one-click swap, Auto swap / Auto resume) with a
 "Full view" button that opens the dashboard (the local Web UI) in a browser app window.
 Right-click offers a short menu.
 
@@ -11,13 +11,11 @@ menu are rebuilt only when what they show actually changes.
 import argparse
 import json
 import logging
-import os
 from pathlib import Path
 import sys
 import threading
 import time
 from urllib.request import ProxyHandler, Request, build_opener
-import webbrowser
 
 import pystray
 from PIL import Image, ImageDraw
@@ -69,7 +67,7 @@ def tooltip(state):
         if account:
             status = f"{headroom(account):.0f}% left" if account["eligible"] else "limit reached"
             lines.append(f"{title}: {short_name(account)} · {status}")
-    modes = ["Auto swap" if state["autoSwap"] else "Manual"] + (["AFK"] if state["afk"] else [])
+    modes = ["Auto swap" if state["autoSwap"] else "Manual"] + (["Auto resume"] if state["afk"] else [])
     lines.append(" · ".join(modes))
     return "\n".join(lines)[:127]  # Windows tooltip limit
 
@@ -97,33 +95,6 @@ def icon_image(status):
 
 
 # ---------- full view ----------
-def full_view_size(area_width=None, area_height=None):
-    """Half the work area's width, and tall enough for two rows of cards (920, or 95% of a
-    shorter screen), in logical px so a scaled display gets the same share. Without an area,
-    the main display's work area is used."""
-    if area_width is None:
-        if sys.platform != "win32":
-            return 1080, 800
-        try:
-            import ctypes
-            from ctypes import wintypes
-            area = wintypes.RECT()
-            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # SPI_GETWORKAREA
-            scale = ctypes.windll.user32.GetDpiForSystem() / 96 if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 1
-            area_width, area_height = (area.right - area.left) / scale, (area.bottom - area.top) / scale
-        except (OSError, AttributeError, ZeroDivisionError):
-            return 1080, 800
-    from .fullview import window_size
-    return window_size(area_width, area_height)
-
-
-def open_dashboard(url):
-    """The web full view in the default browser: only where there is no native window (Linux
-    without Tk). Never on Windows or macOS, which have their own."""
-    logging.getLogger("account_switcher").warning("full view: opening the web page (no native window)")
-    webbrowser.open(url)
-
-
 def app_version():
     """The commit this copy runs (from .git, no git needed), for app.log."""
     git = Path(__file__).resolve().parent.parent / ".git"
@@ -233,7 +204,7 @@ class Tray:
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Auto swap", self.toggle("autoSwap"),
                                checked=lambda _: state["autoSwap"], enabled=not state["busy"])
-        yield pystray.MenuItem("AFK mode", self.toggle("afk"),
+        yield pystray.MenuItem("Auto resume", self.toggle("afk"),
                                checked=lambda _: state["afk"], enabled=not state["busy"])
         yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Quit", self.quit)
@@ -245,11 +216,9 @@ class Tray:
         """Any thread: open the full view, or bring it to the front. Only ever the app's own window."""
         if self.full_view:
             self.full_view.post_show()
-        elif sys.platform == "win32":
-            logging.getLogger("account_switcher").error("full view: no native window (see the error above)")
-            self.icon.notify("The full view couldn't open. Details are in app.log.", APP)
         else:
-            open_dashboard(self.url)
+            logging.getLogger("account_switcher").error("full view: no native window (see the error above)")
+            self.icon.notify("The full view couldn't open (on Linux it needs python3-tk). Details are in app.log.", APP)
 
     def popup_visible(self, shown):
         """Hide the tooltip while the panel or menu is open so it can't cover them."""
@@ -356,11 +325,10 @@ class Tray:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--demo", action="store_true", help="Synthetic accounts and the Recovery lab instead of your real logins")
-    parser.add_argument("--simulator", action="store_true", help="Demo mode with a lightweight routing simulation instead of the compiled proxy")
+    parser.add_argument("--demo", action="store_true", help="Synthetic sample accounts instead of your real logins")
     parser.add_argument("--url-file", help="Where the private dashboard URL is kept while running")
-    parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the dashboard")
-    parser.add_argument("--show", action="store_true", help="Open the dashboard even with --quiet (opened by the user)")
+    parser.add_argument("--quiet", action="store_true", help="Start in the tray without opening the full view")
+    parser.add_argument("--show", action="store_true", help="Open the full view even with --quiet (opened by the user)")
     args = parser.parse_args(argv)
 
     if args.url_file:
@@ -369,8 +337,7 @@ def main(argv=None):
             if sys.platform == "win32":  # this launch may take the foreground; let the running copy
                 import ctypes
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
-            if not show_running(running) and sys.platform != "win32":
-                open_dashboard(running)  # Windows: the running copy opens its own window, never a browser
+            show_running(running)  # the running copy opens (or brings up) its own window
             return
 
     if sys.platform == "win32":
@@ -380,8 +347,8 @@ def main(argv=None):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
-    controller = Controller(args.simulator, live=not (args.demo or args.simulator))
-    server = make_server(controller, args.port, idle_seconds=0)
+    controller = Controller(live=not args.demo)
+    server = make_server(controller, args.port)
     write_url_file(args.url_file, server.launch_url)
     # A long poll interval: the loop never has to exit on its own because quitting
     # goes through the tray, so this thread just sleeps between connections.

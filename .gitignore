@@ -4,17 +4,4 @@ __pycache__/
 *.log
 .env
 .env.local
-experiments/claude/*-results.json
-experiments/codex/*-results.json
-experiments/proxy/dummy-config.yaml
-experiments/proxy/cli-proxy-api
-experiments/proxy/go/
-experiments/proxy/toolchain/
-experiments/proxy/fixture-*/
-experiments/proxy/*.zip
-experiments/proxy/*.exe
-experiments/proxy/.cache/
-experiments/proxy/gocache/
-experiments/proxy/gomodcache/
 .runtime/
-experiments/proxy/proxy-fork/

@@ -1,13 +1,6 @@
-"""Small routing and recovery state machine, independent of the UI and client."""
+"""Accounts and routing (which account each provider uses), independent of the UI."""
 from dataclasses import dataclass, field
 import time
-
-
-CONTINUE = (
-    "Continue the interrupted task from the last confirmed state. "
-    "Check the outcome of any interrupted tool action before repeating it. "
-    "Keep the existing scope and approval requirements."
-)
 
 
 @dataclass
@@ -85,53 +78,6 @@ class Router:
             raise ValueError("This account has no confirmed available quota.")
         self.active[account.provider] = account.id
         return account
-
-    def exhaust(self, account):
-        account.exhausted = True
-        account.five_hour = 100
-
-    def fallback(self, provider):
-        if not self.auto_swap:
-            return None
-        # Prefer the account with the most headroom rather than list order,
-        # so a failover does not land on an account that is nearly spent.
-        candidates = [a for a in self.accounts if a.provider == provider and a.eligible]
-        if not candidates:
-            return None
-        return self.swap(max(candidates, key=lambda a: a.headroom).id)
-
-
-class Recovery:
-    """Only a terminal failure plus trusted quota evidence permits a continuation.
-
-    This prototype is deliberately tool-free. A future coding controller must
-    implement tool/approval reconciliation before lifting that restriction.
-    """
-    def __init__(self):
-        self.afk = False
-        self.enabled_at = 0
-        self.attempts = 0
-        self.seen = set()
-        self.blocked_tools = False
-        self.cancelled = False
-
-    def enable(self, enabled):
-        self.afk = enabled
-        self.enabled_at = time.monotonic() if enabled else 0
-
-    def should_continue(self, event, quota_observed):
-        if event.get("type") != "result" or not event.get("is_error"):
-            return False
-        event_id = event.get("uuid")
-        if not event_id or event_id in self.seen:
-            return False
-        self.seen.add(event_id)
-        return (self.afk and quota_observed and not self.cancelled
-                and not self.blocked_tools and self.attempts < 3
-                and time.monotonic() - self.enabled_at < 24 * 3600)
-
-    def submitted(self):
-        self.attempts += 1
 
 
 def demo_accounts():

@@ -258,7 +258,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
 
     # Header: mark, title, pop-out, "Full view" (none when compact).
     if compact:
-        return _build_compact(L, COMPACT_WIDTH, state, fx, h, pinned)
+        return _build_compact(L, COMPACT_WIDTH, state, fx, h, pinned, armed)
     L.image(16, 16, "switcher", 22)
     L.text(46, 27, "Account Switcher", 14, TEXT, bold=True)
     pill_w = 92
@@ -398,9 +398,15 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
     L.rect(0, y, W, 1, 0, BORDER)
     cy = y + footer_h / 2
     x = 16
-    prefs = [("autoSwap", "Auto swap"), ("afk", "AFK")]
+    prefs = [("autoSwap", "Auto swap"), ("afk", "Auto resume")]
     if state.get("taskbarAvailable"):
         prefs.append(("taskbar", "Taskbar"))
+    room = W - 16 - 64 - 12 - x if not only else W - 16 - 30 - 12 - x
+    if sum(42 + text_w(label, 12) + 18 for _, label in prefs) > room:  # short names when the full ones don't fit
+        prefs = [(pref, {"Auto swap": "Swap", "Auto resume": "Resume"}.get(label, label)) for pref, label in prefs]
+    if armed == "quit":  # the first click on the power button asks for a second
+        L.text(x, cy, "Click again to quit", 12, BAD, bold=True)
+        prefs = []
     for pref, label in prefs:
         action = "toggle:" + pref
         locked = busy and pref != "taskbar"
@@ -412,20 +418,40 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
         x += width + 4
     if not only:
         icon_button(L, W - 16 - 64, cy - 15, 30, "compact", "compact", h("compact"))
-    icon_button(L, W - 16 - 30, cy - 15, 30, "power", "quit", h("quit"))
+    quit_button(L, W - 16 - 30, cy - 15, 30, h("quit"), armed == "quit")
     return L, y + footer_h
 
 
-def _build_compact(L, W, state, fx, h, pinned):
+def quit_button(L, x, y, size, hover, armed, r=6.5):
+    """The power button; red once clicked, until the second click quits (or it times out)."""
+    if armed:
+        L.rect(x, y, size, size, 6 if size > 24 else 5, BAD[:3] + (60,))
+        L.icon("power", x + size / 2, y + size / 2, r, BAD)
+        L.hit(x, y, size, size, "quit")
+    else:
+        icon_button(L, x, y, size, "power", "quit", hover, r=r)
+
+
+def _build_compact(L, W, state, fx, h, pinned, armed=None):
     """Compact panel: the account in use for each provider, small but readable. It is always
     popped out (it stays open and can be dragged), so its buttons are quit, expand and hide, at
     the top right in line with the first account. When an account swaps, the old row slides out
     to the left while the new one slides in from the right."""
     y = 6
     bx = W - 8
-    for kind, action in (("power", "quit"), ("expand", "expand"), ("minimize", "hide")):
+    if armed == "quit":  # the first click on the power button: "Quit?" where expand and hide were
         bx -= 24
-        icon_button(L, bx, y, 24, kind, action, h(action), r=5.5)
+        quit_button(L, bx, y, 24, h("quit"), True, r=5.5)
+        L.text(bx - 6, y + 12, "Quit?", 11, BAD, bold=True, anchor="rm")
+        L.hit(bx - 6 - text_w("Quit?", 11, True), y, text_w("Quit?", 11, True) + 6, 24, "quit")
+        bx -= 48
+    else:
+        for kind, action in (("power", "quit"), ("expand", "expand"), ("minimize", "hide")):
+            bx -= 24
+            if action == "quit":
+                quit_button(L, bx, y, 24, h(action), False, r=5.5)
+            else:
+                icon_button(L, bx, y, 24, kind, action, h(action), r=5.5)
     slots = []
     for provider, _ in PROVIDERS:
         rows = [a for a in state["accounts"] if a["provider"] == provider
@@ -694,7 +720,7 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     Returns its width, padding included."""
     provider = account["provider"]
     y1, bar_y, y3 = round(height * .3), height * .5, round(height * .74)
-    L.image(x + BLOCK_PAD, y1 - 8, provider + ("@dark" if theme is THEMES[True] and provider == "codex" else ""), 16)
+    L.image(x + BLOCK_PAD, round(height / 2) - 8, provider + ("@dark" if theme is THEMES[True] and provider == "codex" else ""), 16)
     name = fit(display_name(account), 12, True, 260)
     note = status_note(account)
     resets = (account.get("credits") or {}).get("resets")

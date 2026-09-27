@@ -23,7 +23,7 @@ from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSMinYEdge, NSOffState, NSOnState,
                     NSPopover, NSPopoverBehaviorTransient, NSStatusBar, NSVariableStatusItemLength, NSViewController,
-                    NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskFullSizeContentView,
+                    NSWindow, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
@@ -358,7 +358,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         add("Full View…", "showFullView:")
         menu.addItem_(NSMenuItem.separatorItem())
         add("Auto Swap", "toggleAutoSwap:", checked=state["autoSwap"], enabled=not state["busy"])
-        add("AFK Mode", "toggleAfk:", checked=state["afk"], enabled=not state["busy"])
+        add("Auto Resume", "toggleAfk:", checked=state["afk"], enabled=not state["busy"])
         menu.addItem_(NSMenuItem.separatorItem())
         add(f"Quit {APP}", "quit:", "q")
         return menu
@@ -399,15 +399,16 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
             window.setReleasedWhenClosed_(False)
             window.setMinSize_(NSMakeSize(600, 400))
-            try:  # drawn natively like the Windows one (no WebKit); the web page is the fallback
+            try:  # drawn natively like the Windows one (no WebKit)
                 from .fullview_mac import FullViewCanvas
                 self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
                     NSMakeRect(0, 0, width, height), self.controller, self.state)
-                window.setContentView_(self.canvas)
             except Exception:
                 log.exception("native full view unavailable")
                 self.canvas = None
-                window.setContentView_(web_view(self.url, NSMakeRect(0, 0, width, height)))
+                notify(APP, "The full view couldn't open. Details are in app.log.")
+                return
+            window.setContentView_(self.canvas)
             window.center()
             window.setFrameAutosaveName_("AccountSwitcherFullView.v2")  # remembers the user's size from here on
             window.setDelegate_(self)

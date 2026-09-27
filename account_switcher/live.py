@@ -21,7 +21,6 @@ How it works
   here. Other saved accounts are refreshed here when needed (for usage checks, and by the
   Codex router just before their access token expires).
 """
-from dataclasses import asdict
 import json
 import os
 from pathlib import Path
@@ -738,7 +737,7 @@ class LiveRouter(Router):
 
 
 class LiveGateway:
-    """Controller backend for real accounts. The Recovery lab is demo-only."""
+    """Controller backend for real accounts."""
     live = True
 
     def __init__(self, notify, vault=None, providers=None, background=True):
@@ -802,16 +801,6 @@ class LiveGateway:
     def apply_preferences(self):
         if self.router.auto_swap:
             self.manager.auto_swap()
-
-    # The Recovery lab drives a synthetic proxy; it has no meaning with real accounts.
-    def start(self):
-        raise RuntimeError("The Recovery lab runs in demo mode only (--demo)")
-
-    def arm(self, mode):
-        raise RuntimeError("The Recovery lab runs in demo mode only (--demo)")
-
-    def prepare_continue(self):
-        return False
 
     def close(self):
         self.stopped = True

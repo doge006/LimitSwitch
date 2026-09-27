@@ -1,5 +1,5 @@
-"""On-demand loopback Web UI. Python standard library; no npm or hosted assets."""
-import argparse
+"""The app's controller and its loopback API (Claude Code's status line and AFK hook, the macOS
+panel, a second launch asking the running copy to show its window). Standard library only."""
 from collections import deque
 from dataclasses import asdict
 import json
@@ -8,10 +8,7 @@ import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
-import webbrowser
 
-from .client import ClaudeSession
-from .core import CONTINUE
 from .demo import DemoGateway
 from .local_http import LocalServer
 
@@ -19,14 +16,12 @@ ASSETS = Path(__file__).with_name("static")
 
 
 class Controller:
-    def __init__(self, simulator=False, live=False, gateway=None):
+    def __init__(self, live=False, gateway=None):
         self.condition = threading.Condition(threading.RLock())
         self.operations = threading.Lock()
         self.revision = 0
         self.log = deque(maxlen=150)
         self.log_total = 0
-        self.output = ""
-        self.status = "Ready"
         self.pending = False
         self.afk = False
         self.compact = False  # the tray / menu bar panel shows only the accounts in use
@@ -37,24 +32,16 @@ class Controller:
         self.name_mode = False   # show names instead of emails (screen sharing)
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
-        self.session = None
-        self.simulator = simulator
         if gateway is not None:
             self.gateway = gateway(self.notify)
         elif live:
             from .live import LiveGateway
             self.gateway = LiveGateway(self.notify)
-        elif simulator:
-            self.gateway = DemoGateway(self.notify)
         else:
-            from .proxy_demo import ProxyDemoGateway
-            self.gateway = ProxyDemoGateway(self.notify)
+            self.gateway = DemoGateway(self.notify)
         self.live = getattr(self.gateway, "live", False)
-        # Listing accounts and keeping a tray icon available should not start
-        # the Go proxy or an official client. Start inference only on Run.
-        self.url = None
-        # Account ids the user picked by hand (dashboard, tray menu or reset), so the
-        # tray can tell those apart from automatic failovers worth a notification.
+        # Account ids the user picked by hand (panel, full view or reset), so the tray can tell
+        # those apart from automatic failovers worth a notification.
         self.manual_swaps = set()
 
     def notify(self, kind, value):
@@ -62,16 +49,6 @@ class Controller:
             if kind == "log":
                 self.log_total += 1
                 self.log.append({"id": self.log_total, "at": time.time(), "text": str(value)})
-            elif kind == "text":
-                self.output = (self.output + str(value))[-24000:]
-            elif kind == "state":
-                self.status = value
-            elif kind == "result":
-                self.log_total += 1
-                self.log.append({"id": self.log_total, "at": time.time(),
-                                 "text": f"Turn {'failed' if value['failed'] else 'completed'} · session {str(value['session_id'])[:8]}"})
-                if value["failed"]:
-                    self.output = (self.output + "\n\n[Response interrupted. Waiting for recovery.]\n\n")[-24000:]
             self.revision += 1
             self.condition.notify_all()
 
@@ -133,21 +110,30 @@ class Controller:
                 "taskbarDisplays": list(self.taskbar_displays),
                 "taskbarAvailable": self.taskbar_available,
                 "nameMode": name_mode,
-                "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
-                "status": self.status, "output": self.output, "log": list(self.log),
-                "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
+                "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
+                "busy": self.pending,
+                "log": list(self.log),
                 "signingIn": sorted(getattr(getattr(self.gateway, "manager", None), "logins", {})),
-                "sessionId": self.session.session_id if self.session else None,
-                "clientPid": self.session.process.pid if self.session and self.session.process else None,
             }
 
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
+            self.notify("changed", None)
+            return
+        if action == "startup":  # start at sign-in (Windows Run entry / macOS login item); instant
+            if not self.live:
+                raise ValueError("Starting at sign-in needs real-account mode")
+            on = bool(body.get("on"))
+            with self.gateway.manager.lock:
+                self.gateway.manager.meta["startWithWindows"] = on
+                self.gateway.manager.save()
+            from .integrations import set_start_with_windows
+            set_start_with_windows(on)
             self.notify("changed", None)
             return
         if action in {"compact", "taskbar"}:  # the panel's size / the taskbar view and its display; instant
@@ -182,10 +168,6 @@ class Controller:
             raise ValueError("Adding and removing accounts needs real-account mode")
         if action == "add" and body.get("provider") not in {"claude", "codex"}:
             raise ValueError("Choose Claude or Codex")
-        if action in {"run", "continue"} and self.live:
-            raise ValueError("The Recovery lab runs in demo mode only (--demo)")
-        if action == "run" and body.get("scenario") not in {"normal", "quota", "partial"}:
-            raise ValueError("Choose a supported test scenario")
         if action in {"swap", "remove"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
         if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
@@ -197,61 +179,30 @@ class Controller:
 
         def work():
             try:
-                if self.session and (self.session.busy or self.session.recovering) and action not in {"stop"}:
-                    raise RuntimeError("Wait for the current turn to settle or stop it")
                 if action == "preferences":
                     self.gateway.router.auto_swap = body["autoSwap"]
                     if self.live:
                         self.gateway.set_afk(body["afk"])  # also updates the Claude hook and status line
                     self.afk = body["afk"]
-                    if self.session:
-                        self.session.recovery.enable(self.afk)
                     if hasattr(self.gateway, "apply_preferences"):
                         self.gateway.apply_preferences()
                 elif action == "swap":
                     self.manual_swaps.add(body["id"])
-                    account = self.gateway.swap(body["id"]) if hasattr(self.gateway, "swap") else self.gateway.router.swap(body["id"])
-                    if not self.live:
-                        self.notify("log", f"Next {account.provider} request selected: {account.alias}")
+                    if hasattr(self.gateway, "swap"):
+                        self.gateway.swap(body["id"])
+                    else:
+                        self.gateway.router.swap(body["id"])
                 elif action == "add":
                     expect = body.get("id") if isinstance(body.get("id"), str) else None
                     self.gateway.manager.add(body["provider"], expect=expect)  # expect: the account to sign back in
                 elif action == "remove":
                     self.gateway.manager.remove(body["id"])
-                elif action == "reset" and self.live:
-                    self.gateway.reset()  # the refresh button: fetch usage now
-                elif action in {"stop", "reset"}:
-                    self.stop_session()
-                    if action == "reset":
-                        self.gateway.reset()
+                elif action == "reset":
+                    self.gateway.reset()  # the refresh button: fetch usage now (demo: fresh sample accounts)
+                    if not self.live:
                         self.manual_swaps.update(self.gateway.router.active.values())
-                        self.output = ""
-                        self.notify("log", "Synthetic accounts reset; AFK is off.")
-                elif action == "run":
-                    if self.url is None:
-                        try:
-                            self.url = self.gateway.start()
-                        except Exception:
-                            self.gateway.close()
-                            raise
-                    if not self.session or not self.session.process or self.session.process.poll() is not None:
-                        if self.session:
-                            self.session.close()
-                        self.session = ClaudeSession(self.gateway, self.notify)
-                        self.session.start(self.url)
-                    self.gateway.arm(body["scenario"])
-                    self.session.recovery.enable(self.afk)
-                    self.output = ""
-                    self.session.send("Say hello briefly.")
-                elif action == "continue":
-                    if not self.session:
-                        raise RuntimeError("Start a test session first")
-                    if not self.gateway.prepare_continue():
-                        raise RuntimeError("Select an available account or enable Auto swap")
-                    self.session.send(CONTINUE)
             except Exception as error:
                 self.notify("log", str(error))
-                self.notify("state", "Needs attention")
             finally:
                 self.pending = False
                 self.operations.release()
@@ -276,23 +227,11 @@ class Controller:
         self.notify("changed", None)
         return answer
 
-    def stop_session(self):
-        if self.session:
-            self.session.close()
-            self.session = None
-        self.afk = False
-        # Release the expensive inference process as soon as the user stops.
-        if self.url:
-            self.gateway.close()
-            self.url = None
-        self.notify("state", "Stopped")
-
     def close(self):
         with self.condition:
             self.closed = True
             self.condition.notify_all()
         with self.operations:
-            self.stop_session()
             self.gateway.close()
 
 
@@ -306,7 +245,7 @@ def account_view(account, active):
     return view
 
 
-def make_server(controller, port=0, idle_seconds=90):
+def make_server(controller, port=0):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -339,7 +278,6 @@ def make_server(controller, port=0, idle_seconds=90):
             if not secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
                 self.respond(401, {"error": "Open the private launch URL to connect"})
                 return False
-            self.server.last_seen = time.monotonic()
             return True
 
         def do_GET(self):
@@ -350,9 +288,8 @@ def make_server(controller, port=0, idle_seconds=90):
             if path in ("/assets/codex.png", "/assets/claude.png", "/assets/switcher.png"):
                 self.respond(200, (ASSETS / path.lstrip("/")).read_bytes(), "image/png")
                 return
-            assets = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"),
-                      "/menu": ("menu.html", "text/html; charset=utf-8"), "/menu.js": ("menu.js", "text/javascript; charset=utf-8"),
-                      "/menu.css": ("menu.css", "text/css; charset=utf-8")}
+            assets = {"/menu": ("menu.html", "text/html; charset=utf-8"), "/menu.js": ("menu.js", "text/javascript; charset=utf-8"),
+                      "/menu.css": ("menu.css", "text/css; charset=utf-8")}  # the macOS panel
             if path in assets:
                 name, mime = assets[path]
                 self.respond(200, (ASSETS / name).read_bytes(), mime)
@@ -428,21 +365,10 @@ def make_server(controller, port=0, idle_seconds=90):
     server = LocalServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     server.expected_host = f"127.0.0.1:{server.server_port}"
-    server.last_seen = time.monotonic()
     server.launch_url = f"http://{server.expected_host}/#token={token}"
     server.hook_token = secrets.token_urlsafe(32)
     server.hook_url = f"http://{server.expected_host}/api/afk"
 
-    def idle_watch():
-        while not controller.closed:
-            time.sleep(5)
-            if time.monotonic() - server.last_seen > idle_seconds:
-                server.shutdown()
-                return
-    # Only the standalone dev server exits when unused; the tray host passes 0 and
-    # so gets no watcher thread (no periodic wake-ups at all).
-    if idle_seconds:
-        threading.Thread(target=idle_watch, daemon=True).start()
     return server
 
 
@@ -463,32 +389,3 @@ def clear_url_file(path, url):
             target.unlink()
     except OSError:
         pass
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--demo", action="store_true", help="Synthetic accounts and the Recovery lab instead of your real logins")
-    parser.add_argument("--simulator", action="store_true", help="Demo mode using a lightweight routing simulation instead of the compiled proxy")
-    parser.add_argument("--idle-seconds", type=int, default=90)
-    parser.add_argument("--url-file", help="Write the private launch URL here (used by the update script)")
-    args = parser.parse_args()
-    controller = Controller(args.simulator, live=not (args.demo or args.simulator))
-    server = make_server(controller, args.port, args.idle_seconds)
-    write_url_file(args.url_file, server.launch_url)
-    print(server.launch_url, flush=True)
-    if not args.no_browser:
-        webbrowser.open(server.launch_url)
-    try:
-        server.serve_forever(poll_interval=.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        controller.close()
-        server.server_close()
-        clear_url_file(args.url_file, server.launch_url)
-
-
-if __name__ == "__main__":
-    main()

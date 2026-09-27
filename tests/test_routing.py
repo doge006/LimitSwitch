@@ -423,7 +423,7 @@ class AfkTests(unittest.TestCase):
     def test_endpoint_needs_the_hook_token(self):
         self.gateway.set_afk(True)
         controller = Controller(gateway=lambda notify: self.gateway)
-        server = make_server(controller, idle_seconds=0)
+        server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             status, _ = post(server.hook_url, {"provider": "claude", "session": "s"})
@@ -438,7 +438,7 @@ class AfkTests(unittest.TestCase):
     def test_status_line_script_reports_live_usage(self):
         from account_switcher import statusline
         controller = Controller(gateway=lambda notify: self.gateway)
-        server = make_server(controller, idle_seconds=0)
+        server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.manager.live_since["claude"] = 0
         state = Path(self.tmp.name) / "state.json"
