@@ -12,7 +12,7 @@ A Windows tray and macOS menu bar app that manages several Claude Code and Codex
 It is Python stdlib plus pystray and Pillow on Windows, and PyObjC on macOS. A loopback web dashboard ("full view") opens in an Edge `--app` window on Windows and a WKWebView on macOS.
 
 ## How the user works
-- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**. The user updates locally with `Update.cmd` / `Update.command`.
+- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**. The user updates locally with `Update.cmd` / `Update.command`, which always follows `main` (their folder had been left on an old `claude/…` branch, so updates silently kept old code; `--branch X` overrides). Every run is saved to `%LOCALAPPDATA%\AccountSwitcher\update.log`, and `app.log` records `started, version <sha>`: check both before debugging a "still broken" report.
 - **Testing:** keep it targeted. Run the unit tests (`python -m unittest discover -s tests`), plus one focused check. Don't test at length.
 - **GitHub Actions** are **manual only** (`workflow_dispatch`) to save minutes; the account hit 90% of its allowance.
   - Run `windows.yml` by hand only for Windows-only behaviour (via `mcp__github__actions_run_trigger`).
