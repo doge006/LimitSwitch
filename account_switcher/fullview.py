@@ -12,7 +12,6 @@ from PIL import Image
 
 from . import fullview_render as vr
 
-LOCK_KINDS = ("swap:", "remove:")
 FAIL = re.compile(r"fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without", re.I)
 SWAP = re.compile(r"→|swap|selected|routed|failover|continue|now uses", re.I)
 OK = re.compile(r"added|completed|started|restored|opened", re.I)

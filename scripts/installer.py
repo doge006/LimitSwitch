@@ -18,7 +18,6 @@ which make sure Python and git exist first. Each run:
 """
 import argparse
 import hashlib
-import json
 import os
 from pathlib import Path
 import plistlib

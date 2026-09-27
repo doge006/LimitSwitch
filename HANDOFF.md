@@ -1,87 +1,49 @@
 # Handoff — Account Switcher
 
-Where the project stands and how we work on it, so a fresh session can pick up. Last updated 2026-09-27 (native full view on all platforms; taskbar blocks hide for full-screen apps).
+Where the project stands and how we work on it, so a fresh session can pick up. Last updated 2026-09-27 (after the cleanup: Recovery lab, web full view and Edge code removed).
 
 ## What it is
 A Windows tray and macOS menu bar app that manages several Claude Code and Codex accounts:
 - live usage;
 - two-click swapping;
-- Auto swap;
-- AFK continuation.
+- Auto swap (move to the account with the most room when a limit hits);
+- Auto resume (internally `afk`: a Claude Code session that stops on a limit continues by itself).
 
-It is Python stdlib plus pystray and Pillow on Windows, and PyObjC on macOS. A loopback web dashboard ("full view") opens in an Edge `--app` window on Windows and a WKWebView on macOS.
+Python stdlib plus pystray and Pillow; PyObjC on macOS. Every window is native and drawn with Pillow, except the macOS menu bar panel (still a WKWebView over `static/menu.*`). A loopback API (`web.py`) serves Claude Code's status line and AFK hook, the macOS panel, and a second launch asking the running copy to show its window.
 
 ## How the user works
-- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**. The user updates locally with `Update.cmd` / `Update.command`, which always follows `main` (their folder had been left on an old `claude/…` branch, so updates silently kept old code; `--branch X` overrides). Every run is saved to `%LOCALAPPDATA%\AccountSwitcher\update.log`, and `app.log` records `started, version <sha>`: check both before debugging a "still broken" report.
-- **Testing:** keep it targeted. Run the unit tests (`python -m unittest discover -s tests`), plus one focused check. Don't test at length.
-- **GitHub Actions** are **manual only** (`workflow_dispatch`) to save minutes; the account hit 90% of its allowance.
-  - Run `windows.yml` by hand only for Windows-only behaviour (via `mcp__github__actions_run_trigger`).
-  - Avoid `macos.yml` (Mac minutes cost 10×). When a Mac check is needed, run it with the `os` input (e.g. `macos-15`) for one runner instead of three.
-  - Screenshots from CI go to the `ci-shots/<os>` branches.
-- **Design:** restrained, premium dark UI; resources near zero (event-driven, no polling). Nothing may spend tokens, including extra Codex tokens.
-- **Scope:** fix the bug that was asked about. Don't add toggles or features that weren't requested.
-- **Security:** never read or print secrets or tokens, and don't use strace.
+- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**.
+- **Updating:** the user runs `Update.cmd` / `Update.command`, which always follows `main` (`--branch X` overrides) and ends any leftover running copy. Every run is saved to `%LOCALAPPDATA%\AccountSwitcher\update.log`; `app.log` records `started, version <sha>`. **Check both before debugging a "still broken" report**: twice the user was running old code (an old branch; an update that couldn't close the running copy).
+- **Testing:** targeted. Unit tests (`python -m unittest discover -s tests`) plus one focused check. Look at CI screenshots yourself before merging UI work.
+- **GitHub Actions** are **manual only** (`workflow_dispatch`); the account is near its allowance.
+  - `windows.yml` (via `mcp__github__actions_run_trigger`) for Windows behaviour. Its smoke test fails on any error in `app.log`.
+  - Avoid `macos.yml` (10× minutes); if needed, run it with the `os` input (e.g. `macos-15`) for one runner.
+  - Screenshots go to the `ci-shots/<os>` branches.
+- **Design:** restrained, premium dark UI matching the old web page's look and motion; resources near zero (event-driven, no polling; animation frames only while something moves). Nothing may spend tokens.
+- **Scope:** fix what was asked. No unrequested toggles or features.
+- **Security:** never read or print secrets or tokens; no strace.
 
 ## Map
-- **`account_switcher/tray.py`:** the Windows host.
-  - `full_view_size()` / `fullview.window_size()`: 920 tall (95% of shorter screens), half the width; the window then shrinks to its content so there's no empty space at the bottom.
-  - `open_full_view()` opens the native full view (`full_view.post_show()`, any thread); `open_dashboard()` (Edge) is only the fallback.
-- **Native full view (no browser, since the "full view blink" rounds):**
-  - `fullview_render.py`: Pillow drawing, the web look (cards, settings menu, add menu, renewal-date calendar, toasts). Tiles (top bar, group heads, cards) are drawn once and cached; anti-aliased shapes come from cached masks, not a 2x canvas.
-  - `fullview.py`: platform-independent behaviour (hover, clicks, name editing, menus, toasts, scroll, timers). Host interface: invalidate, set_timer/kill_timer/has_timer, set_cursor, clipboard.
-  - Hosts: `fullview_win.py` (Win32 window on the tray thread, SetDIBitsToDevice, our AUMID via `win_window.set_identity`), `fullview_mac.py` (NSView in the existing NSWindow; **not yet run on a Mac**), `fullview_tk.py` (Linux; Tk on its own thread, all Tk objects freed on that thread).
-  - Measured on Windows CI: whole app 62 MB working set with the full view open; the window adds ~8 MB; cached frame ~5 ms, hover ~12 ms. Edge is gone.
-  - Not in the native view: the Recovery lab (demo-only dev tool), still in the web page (`python -m account_switcher.web`).
-- **`win_window.py`:** taskbar identity helpers (`set_identity`, `get_identity`), plus the old Edge-window code used by the fallback.
-- **`flyout.py` / `flyout_render.py`:** the Win32 layered popups (tray panel, menu, compact mode) and their Pillow drawing.
-  - The `Popup` base has `modal`, `ex_style` and `owner`.
-  - The panel has `only=<provider>` when opened from a taskbar block.
-  - The footer has Auto swap, AFK and Taskbar switches.
-- **`taskbar.py`:** the taskbar view. There is one block per provider, drawn in the taskbar's free space (Claude from the left, Codex from the right).
-  - **Gaps:** found from the taskbar's buttons through UI Automation, using raw COM vtable calls.
-  - **Placement:** `placement.free_gaps` and `place_blocks`.
-  - **Z-order:** blocks are **owned by the taskbar**, which is the flicker fix.
-  - **Full screen:** blocks hide while an app is full screen on their display (`follow_taskbar` + `full_screen_app`): the taskbar losing `WS_EX_TOPMOST`, the foreground app window covering the display (borderless games, video, F11), or D3D full screen / presentation mode. Tool windows (screenshot overlays) never count.
-  - **Displays:** chosen with `taskbarDisplay` (main, left, right). Settings live in the meta.
-- **`web.py`:** the Controller and the HTTP API.
-  - **Actions:** `compact`, `taskbar {on, display}`, `names {on}`, `rename {id, name}`, and others.
-  - **Snapshot keys:** `nameMode`, `label`, `taskbar*`, `compact`.
-  - **Name mode:** replaces `name` server-side, so every surface follows. Unnamed accounts show as "Claude 1".
-- **`live.py`:** real accounts, usage polling (gentle on Claude's API, which rate-limits) and the meta store.
-  - **Meta:** all saved keys now survive a restart (fixed in #44).
-  - **Live Claude usage:** comes from Claude Code's statusLine JSON (`statusline.py` → `/api/statusline`).
-- **Static front ends:**
-  - `static/index.html`, `app.js` and `style.css` are the full view. The Settings dropdown has Auto swap, AFK, Name mode, and Taskbar view with its display. In name mode the card shows name, then email (`d**********@gmail.com`, click to reveal), then plan. Credits and resets share one row.
-  - `static/menu.*` is the macOS panel (still a WKWebView, created at launch: the next resource win on macOS is drawing it natively too).
-- **`macos_app.py`:** the macOS menu bar app.
-- **`.github/win_smoke.py`:** the Windows CI smoke test. It covers the full view identity and size, the taskbar blocks (placement, ownership, swap animation, full screen, click to open a per-provider panel) and the on/off switch.
+- **`tray.py`:** the app entry (`main`), tray icon, notifications. `open_full_view()` (any thread) opens or focuses the native full view; there is no browser fallback. `app_version()` for the log.
+- **`flyout.py` / `flyout_render.py`:** Windows panel, compact panel and right-click menu (layered windows + Pillow).
+  - Compact panel is always popped out (`Flyout.pinned` property); Hide turns compact off; Expand keeps the full panel popped out.
+  - Power needs a second click (`armed == "quit"`), like swapping.
+  - Footer switches: Auto swap, Auto resume, Taskbar (short names when they don't fit).
+- **`taskbar.py` / `placement.py`:** the taskbar view: a block per provider in the taskbar's free space, owned by the taskbar (no flicker), any display. Hides while an app is full screen on that display (`full_screen_app`: taskbar not topmost, foreground app window covering the display, D3D full screen / presentation mode; tool-window overlays never count).
+- **Full view:**
+  - `fullview_render.py`: drawing. Tiles (top bar, group heads, cards) are cached; bars and percentages are drawn live over them (`Tile.live`) so they animate cheaply. Anti-aliased shapes from cached masks.
+  - `fullview.py`: behaviour, independent of the platform: hover, clicks, menus, name editing, the renewal-date calendar, toasts, scroll, and `Motion` (the web page's transitions; frames only while something moves).
+  - Hosts: `fullview_win.py` (Win32, on the tray thread; timer ids in `TIMERS`, unit-tested), `fullview_mac.py` (NSView; **not yet run on a real Mac**), `fullview_tk.py` (Linux; Tk on its own thread, all Tk objects freed there).
+- **`win_window.py`:** our taskbar identity (AUMID) for the full view window.
+- **`web.py`:** the `Controller` (state snapshot, actions) and the loopback API. Snapshot keys: `accounts`, `autoSwap`, `afk`, `compact`, `taskbar*`, `nameMode`, `busy`, `log`, `signingIn`.
+- **`live.py`:** real accounts, usage polling and the meta store. Claude usage comes mostly from Claude Code's status line (`statusline.py`); within a window usage never goes down (stale repeats ignored) and only changing reports count as live. A Claude limit hit marks the account used up when the API can't answer.
+- **`demo.py` / `core.py`:** sample accounts for `--demo` (CI, screenshots); the account model and router.
+- **`macos_app.py`:** the menu bar app.
+- **`scripts/installer.py`:** install/update for Windows and macOS.
+- **`.github/win_smoke.py`:** Windows CI: full view (identity, one window, reopen at the same size, second launch, no browser, memory), taskbar blocks, demo full view with hover/menu/scroll screenshots.
 
-## Recently done (PRs #41–#48)
-- **Taskbar view:**
-  - Flicker fix: blocks owned by the taskbar.
-  - Any display.
-  - Per-provider panel on click.
-  - Full email, with resets shown after the plan.
-  - Darker backing plate.
-  - No re-animation from screenshots.
-- **Settings menu:** it replaces "Automation" in the full view.
-- **Settings persistence:** all settings are now remembered.
-- **Actions:** set to manual only.
-- **Repo cleanup:** removed the vendored sources, 1,810 files down to 84.
-- **Name mode** for screen sharing.
-- **Full view window:**
-  - Opens at 920 tall.
-  - Has no bottom gap.
-  - Fixed the open/close/open blink.
-
-- **Full view blink, root cause (traced on CI with `experiments/win_trace.py`):** Edge creates the app window hidden, titled `127.0.0.1_/` (not host:port), and shows it ~0.3 s later. We only matched it after the page loaded, then hid, moved and re-showed it: seen as "one closes, another opens". `brand_full_view` now catches the new window (not in `before`) while still hidden and never hides it. Edge ignores moves while hidden, so it is fitted again within ~1 frame of showing.
-- **One full view:** opening it again (tray, flyout, Start menu) brings the open window to the front (`win_window.focus_full_view`) instead of a second Edge window. A second launch hands off to the running copy (`server.show` → `Tray.open_full_view`, with `AllowSetForegroundWindow`), so the DPI-aware process sizes it the same as the tray does.
-
-## Open / to verify with the user
-- **Native full view:** verify on the user's PC (scaling, fonts, feel). macOS host (`fullview_mac.py`) has not run on a Mac yet: one `macos.yml` run with `os: macos-15` would check it. Linux host was run under Xvfb only.
-- **Taskbar blocks:**
-  - Check the "moved to left monitor" report; it should be gone now that there is no fallback to another display.
-  - Check the right-monitor option on a real two-monitor setup (CI has one screen).
-- **Name mode email:** the user asked for the first *and* last character to stay visible, but gave the example `d**********@gmail.com`. The example is what's implemented; it's a one-line change in `app.js` `redact()`.
-- **Mac rate limit:** the root cause is still unknown. We were waiting on the user's `grep "rate limited" … app.log | tail -3`.
-- **Old CI screenshot branches:** the `ci-shots/*` branches could be deleted, but the user hasn't confirmed.
+## Open
+- **macOS:** the native full view hasn't run on a Mac. Next Mac work (asked for): a full view without a title bar, and a menu bar usage view like the taskbar blocks (task in progress list).
+- **Next (asked for):** easy (portable) install, "Check for updates" in Settings plus a check at launch, and a "Launch with Windows / macOS" setting.
+- **Taskbar:** the right-monitor option is untested on real two-monitor hardware.
+- **Mac rate limit:** root cause still unknown; waiting on the user's `grep "rate limited" … app.log | tail -3`.

@@ -2,9 +2,6 @@ import json
 import threading
 import time
 import unittest
-import subprocess
-import sys
-import shutil
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler
@@ -14,8 +11,8 @@ from account_switcher.web import Controller, make_server
 
 class WebTests(unittest.TestCase):
     def setUp(self):
-        self.controller = Controller(simulator=True)
-        self.server = make_server(self.controller, idle_seconds=0)
+        self.controller = Controller()
+        self.server = make_server(self.controller)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         parsed = urlsplit(self.server.launch_url)
@@ -42,9 +39,12 @@ class WebTests(unittest.TestCase):
             with self.request('/assets/' + provider + '.png', auth=False) as response:
                 self.assertEqual(response.headers['Content-Type'], 'image/png')
                 self.assertTrue(response.read().startswith(b'\x89PNG\r\n\x1a\n'))
-        with self.request("/", auth=False) as response:
-            self.assertIn(b"Account Switcher", response.read())
+        with self.request("/menu", auth=False) as response:  # the macOS panel's page
+            self.assertIn(b"Auto resume", response.read())
             self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+        with self.assertRaises(HTTPError) as gone:  # no web full view any more
+            self.request("/", auth=False)
+        self.assertEqual(gone.exception.code, 404)
         with self.assertRaises(HTTPError) as unauth:
             self.request("/api/state", auth=False)
         self.assertEqual(unauth.exception.code, 401)
@@ -97,47 +97,17 @@ class WebTests(unittest.TestCase):
             time.sleep(.05)
         self.fail("Web operation did not settle")
 
-    @unittest.skipUnless(shutil.which('claude'), 'Claude CLI required for session recovery')
-    def test_web_afk_flow_and_reset_stops_client(self):
-        with self.request("/api/preferences", {"afk": True, "autoSwap": True}):
-            pass
-        self.wait_idle()
-        with self.request("/api/run", {"scenario": "partial"}):
-            pass
-        self.wait_idle()
-        snapshot = self.controller.snapshot()
-        self.assertEqual(snapshot["status"], "Completed")
-        self.assertEqual(self.controller.gateway.router.active["claude"], "claude-b")
-        process = self.controller.session.process
-        with self.request("/api/reset", {}):
-            pass
-        self.wait_idle()
-        self.assertIsNotNone(process.poll())
-        self.assertFalse(self.controller.afk)
 
-
-class LifecycleTests(unittest.TestCase):
-    def test_idle_controller_and_manual_selection_start_no_proxy(self):
+class DemoTests(unittest.TestCase):
+    def test_demo_mode_needs_no_network(self):
         controller = Controller()
         try:
-            self.assertIsNone(controller.url)
-            self.assertIsNone(controller.gateway.fixture.process)
             controller.action("swap", {"id": "claude-b"})
             deadline = time.monotonic() + 3
             while controller.pending and time.monotonic() < deadline:
                 time.sleep(.02)
             self.assertEqual(controller.gateway.router.active["claude"], "claude-b")
-            self.assertIsNone(controller.gateway.fixture.process)
+            with self.assertRaises(ValueError):
+                controller.action("run", {})  # the old Recovery lab is gone
         finally:
             controller.close()
-
-    def test_unopened_dashboard_exits_after_grace_period(self):
-        process = subprocess.Popen([sys.executable, "-m", "account_switcher.web", "--simulator", "--no-browser", "--idle-seconds", "1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            stdout, stderr = process.communicate(timeout=12)
-            self.assertEqual(process.returncode, 0, stderr)
-            self.assertIn("http://127.0.0.1:", stdout)
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()

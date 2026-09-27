@@ -9,7 +9,7 @@ from account_switcher.web import Controller
 
 class FlyoutRenderTests(unittest.TestCase):
     def setUp(self):
-        self.controller = Controller(simulator=True)
+        self.controller = Controller()
         self.state = self.controller.snapshot()
 
     def tearDown(self):

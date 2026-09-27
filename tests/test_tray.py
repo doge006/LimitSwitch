@@ -54,8 +54,8 @@ def wait_for(predicate, timeout=5):
 
 class TrayTests(unittest.TestCase):
     def setUp(self):
-        self.controller = Controller(simulator=True)
-        self.server = make_server(self.controller, idle_seconds=0)
+        self.controller = Controller()
+        self.server = make_server(self.controller)
         self.tray = tray.Tray(self.controller, self.server, icon_factory=FakeIcon)
         self.icon = self.tray.icon
 
@@ -116,8 +116,9 @@ class TrayTests(unittest.TestCase):
     def test_failover_is_announced(self):
         self.tray.refresh()
         router = self.controller.gateway.router
-        router.exhaust(router.current("claude"))
-        router.fallback("claude")
+        spent = router.current("claude")
+        spent.exhausted, spent.five_hour = True, 100
+        router.active["claude"] = "claude-b"  # what Auto swap does when a limit hits
         self.tray.refresh()
         self.assertEqual(len(self.icon.notes), 1)
         title, message = self.icon.notes[0]
@@ -166,7 +167,7 @@ class TrayTests(unittest.TestCase):
 
     def test_no_idle_threads_without_timeout(self):
         before = {t.name for t in threading.enumerate()}
-        server = make_server(self.controller, idle_seconds=0)
+        server = make_server(self.controller)
         try:
             self.assertEqual({t.name for t in threading.enumerate()} - before, set())
         finally:

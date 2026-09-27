@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import plistlib
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest import mock

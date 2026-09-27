@@ -11,7 +11,7 @@ on a dark tile. Written as
 import math
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 ASSETS = Path(__file__).resolve().parent.parent / "account_switcher" / "static" / "assets"
 SS = 4  # supersampling
