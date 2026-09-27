@@ -342,6 +342,8 @@ class Tray:
             threading.Thread(target=self.watch, daemon=True).start()
             if open_now:
                 self.open_full_view()
+        from .memory import trim_soon
+        trim_soon(30)  # after start-up (imports, first usage fetch) has settled
         self.icon.run(setup=setup)
 
 

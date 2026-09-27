@@ -134,7 +134,44 @@ class _COM:
     FIND_ALL, FIND_ALL_BUILD_CACHE = 6, 8
     CURRENT_CONTROL_TYPE, CURRENT_RECT, CACHED_CONTROL_TYPE, CACHED_RECT = 21, 43, 53, 75
     ADD_PROPERTY, PUT_TREE_FILTER, PUT_ELEMENT_MODE = 3, 9, 11
+    CREATE_PROPERTY_CONDITION, CREATE_OR_CONDITION = 23, 28
     CONTROL_TYPE_ID, RECT_ID = 30003, 30001
+    kinds_condition = None
+
+    class VARIANT(ctypes.Structure):
+        _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+                    ("value", ctypes.c_int32), ("pad", ctypes.c_int32), ("pad2", ctypes.c_void_p)]  # 24 bytes
+
+    @classmethod
+    def kinds(cls, automation):
+        """A condition matching only KINDS (made once): Explorer then sends back only those, a few
+        dozen elements instead of every element of the taskbar. None if it can't be made."""
+        if cls.kinds_condition is None:
+            out = (ctypes.POINTER(ctypes.c_void_p),)
+            combined = None
+            try:
+                for kind in sorted(cls.KINDS):
+                    one = ctypes.c_void_p()
+                    if cls.call(automation, cls.CREATE_PROPERTY_CONDITION, (ctypes.c_int, cls.VARIANT) + out,
+                                cls.CONTROL_TYPE_ID, cls.VARIANT(3, 0, 0, 0, kind, 0, None), ctypes.byref(one)) < 0 or not one:
+                        raise OSError("property condition")
+                    if combined is None:
+                        combined = one
+                        continue
+                    both = ctypes.c_void_p()
+                    ok = cls.call(automation, cls.CREATE_OR_CONDITION, (ctypes.c_void_p, ctypes.c_void_p) + out,
+                                  combined, one, ctypes.byref(both)) >= 0 and both
+                    cls.release(one)
+                    cls.release(combined)
+                    combined = both if ok else None
+                    if combined is None:
+                        raise OSError("or condition")
+                cls.kinds_condition = combined
+            except OSError:
+                if combined:
+                    cls.release(combined)
+                cls.kinds_condition = False
+        return cls.kinds_condition or None
 
     @classmethod
     def buttons(cls, hwnd):
@@ -153,16 +190,17 @@ class _COM:
                 return None
             if cls.call(automation, cls.CREATE_TRUE_CONDITION, out, ctypes.byref(condition)) < 0:
                 return None
+            wanted = cls.kinds(automation) or condition  # only the buttons, when that condition could be made
             cached = (cls.call(automation, cls.CREATE_CACHE_REQUEST, out, ctypes.byref(cache)) >= 0 and cache
                       and cls.call(cache, cls.ADD_PROPERTY, (ctypes.c_int,), cls.CONTROL_TYPE_ID) >= 0
                       and cls.call(cache, cls.ADD_PROPERTY, (ctypes.c_int,), cls.RECT_ID) >= 0
                       and cls.call(cache, cls.PUT_TREE_FILTER, (ctypes.c_void_p,), condition) >= 0
                       and cls.call(cache, cls.PUT_ELEMENT_MODE, (ctypes.c_int,), 0) >= 0  # cached values only
                       and cls.call(element, cls.FIND_ALL_BUILD_CACHE, (ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p) + out,
-                                   4, condition, cache, ctypes.byref(found)) >= 0 and found)
+                                   4, wanted, cache, ctypes.byref(found)) >= 0 and found)
             if not cached:  # one element at a time, the slow way
                 found = ctypes.c_void_p()
-                if cls.call(element, cls.FIND_ALL, (ctypes.c_int, ctypes.c_void_p) + out, 4, condition,
+                if cls.call(element, cls.FIND_ALL, (ctypes.c_int, ctypes.c_void_p) + out, 4, wanted,
                             ctypes.byref(found)) < 0 or not found:
                     return None  # FindAll(TreeScope_Descendants)
             kind_slot, rect_slot = (cls.CACHED_CONTROL_TYPE, cls.CACHED_RECT) if cached else \
@@ -442,9 +480,9 @@ class TaskbarView:
         """Add our messages to pystray's window procedure (before the icon runs)."""
         self.icon = icon
         handlers = icon._message_handlers
-        handlers[WM_APP_TASKBAR] = lambda w, l: (event("taskbar: app state changed"), self.sync())
+        handlers[WM_APP_TASKBAR] = lambda w, l: event("taskbar: app state changed") or self.sync()
         handlers[WM_TIMER] = self.on_timer
-        handlers[WM_SETTINGCHANGE] = lambda w, l: (event("taskbar: setting changed"), self.later())
+        handlers[WM_SETTINGCHANGE] = lambda w, l: event("taskbar: setting changed") or self.later()
         for message in (WM_DISPLAYCHANGE, fl_taskbar_created()):
             previous = handlers.get(message)
             handlers[message] = self._chain(previous)

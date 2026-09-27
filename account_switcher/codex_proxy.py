@@ -20,6 +20,7 @@ from collections import OrderedDict
 from hashlib import blake2b
 from http.server import BaseHTTPRequestHandler
 import json
+import socket
 import secrets
 import threading
 import time
@@ -284,15 +285,24 @@ class CodexProxy:
             raise RuntimeError("No free local port for the Codex router")
         self.server.daemon_threads = True
         self.port = self.server.server_port
-        threading.Thread(target=self.server.serve_forever, daemon=True, name="codex-router").start()
+        # Sleeps until a request comes (the default checks for shutdown twice a second, forever);
+        # close() wakes it with a connection of its own.
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 3600}, daemon=True,
+                         name="codex-router").start()
         return self.base_url
 
     def close(self):
         self.router.state.flush()
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-            self.server = None
+        server, self.server = self.server, None
+        if server:
+            stopper = threading.Thread(target=server.shutdown, daemon=True)
+            stopper.start()
+            try:
+                socket.create_connection(("127.0.0.1", server.server_port), timeout=1).close()  # wake it
+            except OSError:
+                pass
+            stopper.join(5)
+            server.server_close()
 
     # ---------- one request ----------
     def handle(self, h):

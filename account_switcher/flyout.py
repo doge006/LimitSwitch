@@ -602,6 +602,8 @@ class Popup:
                 OutsideClicks.stop()
                 if self.modal:
                     self.tray.popup_visible(False)
+                    from .memory import trim_soon
+                    trim_soon()  # the drawing is done: hand its memory back
         self.anim, self.tracking, self.closing = None, False, False
         self.fx_anims = {}
 
