@@ -21,6 +21,7 @@ import winreg
 from . import flyout as fl
 from . import flyout_render as fr
 from .placement import free_gaps, place_blocks
+from .profiler import event
 
 user32, kernel32 = fl.user32, fl.kernel32
 log = logging.getLogger("account_switcher.taskbar")
@@ -301,9 +302,17 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
     try:
         signature = layout_signature(hwnd, rect, notify)
     except Exception:
+        log.warning("taskbar layout signature", exc_info=True)
         signature = None
     if previous is not None and signature is not None and previous.signature == signature and previous.key == key:
+        event("taskbar: layout unchanged, not measured")
         return previous
+    if previous is not None and previous.signature and signature:
+        for index, (a, b) in enumerate(zip(previous.signature, signature)):
+            if a != b:
+                event(f"taskbar: measured, signature part {index} changed")
+    else:
+        event("taskbar: measured, no earlier signature" if signature else "taskbar: measured, no signature")
     _, _, scale = fl.monitor_at((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
     if notify and notify[0] > rect[0] + width // 2:
         right = notify[0]
@@ -311,7 +320,9 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
         right = rect[2] - round((260 if key == "main" else 8) * scale)
     occupied, measured = None, False
     try:
+        started = time.perf_counter()
         spans = _COM.buttons(hwnd)
+        event("taskbar: UI Automation walk", time.perf_counter() - started)
         if spans:
             occupied = [(a, b) for a, b, top, bottom in spans
                         if b - a < width * .4 and bottom - top >= height * .4 and a < right and b > rect[0]
@@ -431,9 +442,9 @@ class TaskbarView:
         """Add our messages to pystray's window procedure (before the icon runs)."""
         self.icon = icon
         handlers = icon._message_handlers
-        handlers[WM_APP_TASKBAR] = lambda w, l: self.sync()
+        handlers[WM_APP_TASKBAR] = lambda w, l: (event("taskbar: app state changed"), self.sync())
         handlers[WM_TIMER] = self.on_timer
-        handlers[WM_SETTINGCHANGE] = lambda w, l: self.later()
+        handlers[WM_SETTINGCHANGE] = lambda w, l: (event("taskbar: setting changed"), self.later())
         for message in (WM_DISPLAYCHANGE, fl_taskbar_created()):
             previous = handlers.get(message)
             handlers[message] = self._chain(previous)
@@ -455,6 +466,7 @@ class TaskbarView:
 
     def later(self, ms=400):
         """Re-read the taskbar a moment from now (after its own buttons have finished moving)."""
+        event("taskbar: later()")
         self.stale = True
         if self.hwnd:
             user32.SetTimer(self.hwnd, TIMER_LAYOUT, ms, None)
@@ -478,6 +490,8 @@ class TaskbarView:
 
     # ---------- events ----------
     def on_timer(self, wparam, lparam):
+        event({TIMER_LAYOUT: "taskbar: timer layout", TIMER_MINUTE: "taskbar: timer minute",
+               TIMER_COVER: "taskbar: timer cover"}.get(wparam, f"taskbar: timer {wparam}"))
         if wparam == TIMER_LAYOUT:
             user32.KillTimer(self.hwnd, TIMER_LAYOUT)
             self.sync()
@@ -491,6 +505,7 @@ class TaskbarView:
 
     def on_shell(self, wparam, lparam):
         code = wparam & 0x7FFF
+        event(f"taskbar: shell event {code}")
         if code in (HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED):
             self.later()  # a taskbar button came or went: the free space moved
         elif code == HSHELL_WINDOWACTIVATED:  # includes full-screen ("rude") apps

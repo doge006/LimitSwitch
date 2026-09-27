@@ -48,6 +48,19 @@ class _ThreadClock:
         return ((kernel.dwHighDateTime << 32 | kernel.dwLowDateTime) + (user.dwHighDateTime << 32 | user.dwLowDateTime)) / 1e7
 
 
+EVENTS = collections.Counter()   # name -> count (only kept while profiling)
+TIMES = collections.Counter()    # name -> seconds
+ACTIVE = False
+
+
+def event(name, seconds=None):
+    """Count something that happened (and how long it took); free when not profiling."""
+    if ACTIVE:
+        EVENTS[name] += 1
+        if seconds is not None:
+            TIMES[name] += seconds
+
+
 class Profiler:
     def __init__(self, path):
         self.path = path
@@ -62,6 +75,8 @@ class Profiler:
         if os.environ.get("LIMITSWITCH_TRACEMALLOC"):
             import tracemalloc
             tracemalloc.start(8)
+        global ACTIVE
+        ACTIVE = True
         self.thread = threading.Thread(target=self.run, daemon=True, name="profiler")
         self.thread.start()
 
@@ -110,6 +125,12 @@ class Profiler:
             for cpu, name in sorted(rows, reverse=True):
                 lines.append(f"  {cpu * 1000:9.0f} ms  {name}")
             lines.append("  (threads that already ended are not listed)")
+            lines.append("")
+        if EVENTS:
+            lines.append("Events (count, total time):")
+            for name, count in sorted(EVENTS.items()):
+                spent = f"{TIMES[name] * 1000:8.0f} ms" if name in TIMES else ""
+                lines.append(f"  {count:7d}  {spent:>11}  {name}")
             lines.append("")
         lines.append("Samples per thread while working:")
         for name, count in self.by_thread.most_common():
