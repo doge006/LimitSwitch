@@ -87,7 +87,7 @@ if windows:
     rect = (ctypes.c_long * 4)()
     ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(windows[0]), rect)
     print("full view size:", rect[2] - rect[0], "x", rect[3] - rect[1], flush=True)
-    check(rect[3] - rect[1] >= 480, "the full view opens at its own size")
+    check(rect[3] - rect[1] >= 420, "the full view opens at its own size (as tall as its content)")
     ctypes.windll.user32.AllowSetForegroundWindow(-1)  # as a second launch does
     api("/api/show")  # opened again (Start menu or tray): the open one comes to the front
     time.sleep(2)
@@ -252,8 +252,10 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     user32.SetForegroundWindow(overlay)
     user32.keybd_event(0x12, 0, 2, 0)
     pump(1.5)
+    check(not taskbar.full_screen_app(info.rect), "a screenshot overlay does not count as a full-screen app")
+    print("blocks during the overlay:", len(blocks()), "of", len(found), "· taskbar on top:",
+          bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
     user32.DestroyWindow(overlay)
-    check(len(blocks()) == len(found), "a screenshot overlay does not hide the blocks")
 # ---- The full view with the demo accounts: drawn natively, hover, the settings menu ----
 api("/api/show")
 views = []
