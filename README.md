@@ -6,12 +6,23 @@ A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage
 
 <p align="center"><img src="docs/media/panel.png" alt="The tray panel" width="420"></p>
 
-**Website:** https://doge006.github.io/Account-Switcher/
+**On the taskbar** (Windows): the accounts in use sit right on the taskbar, and step aside for full-screen apps.
 
+![The taskbar view](docs/media/taskbar.png)
+
+## Why not something else?
+
+I made this mainly for myself and decided to publish it on GitHub. Nothing else (at the time) did what I wanted:
+
+- **Usage trackers** show your limits, but don't switch accounts for you.
+- **Account switchers** swap logins, but you have to notice the limit yourself, and sessions that are already open often need a restart.
+- **Few cover both** Claude Code and Codex, and fewer run on Windows.
+
+LimitSwitch does all of it in one small tray app: every limit at a glance, one-click switching that open sessions pick up, and Auto swap / Auto resume, so a long task keeps going when an account runs out.
 
 ## Install (Windows)
 
-Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
+Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
@@ -37,7 +48,7 @@ Each run:
 
 Options: `--branch NAME` (follow another branch), `--force`, `--no-launch`. A copy from source also offers updates in Settings; there, **Update** runs this installer.
 
-A first install from nothing: `git clone https://github.com/doge006/Account-Switcher.git`, then run the installer in that folder.
+A first install from nothing: `git clone https://github.com/doge006/LimitSwitch.git`, then run the installer in that folder.
 
 ## Publishing a release
 
@@ -164,9 +175,12 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 - `account_switcher/version.py` + `updates.py`: the version, and update checks / installs from GitHub Releases.
 - `scripts/installer.py` (+ `Install.cmd` / `Install.command`): install and update from source.
 - `scripts/build_windows.ps1` + `LimitSwitch.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitch.exe`).
-- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` (the **Media** workflow runs it on Windows): the screenshots and GIF in `docs/media`.
-- `docs/`: the website (GitHub Pages).
+- `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
+- `docs/media/`: the README's screenshots and GIF.
 
 ## Credits
+
+Built with [Claude Code](https://claude.com/claude-code).
+
 
 `account_switcher/providers.py` follows the usage clients of Codex Vitals (https://github.com/Joowonoil/Codex-Vitals, MIT; see `THIRD-PARTY-NOTICES.txt`).

@@ -1,4 +1,4 @@
-"""Screenshots and a GIF for the README and the website, drawn by the app's own renderers with the
+"""Screenshots and a GIF for the README, drawn by the app's own renderers with the
 demo accounts (no real logins, no network). Run it on Windows so the text is Segoe UI, as users see
 it (the Media workflow does):
 
@@ -7,8 +7,7 @@ it (the Media workflow does):
   fullview.png   the full view
   panel.png      the tray panel
   taskbar.png    the taskbar view (both providers)
-  demo.gif       the full view opening, a hover, and switching accounts
-  icon.png       the app icon (the site's logo and favicon)
+  demo.gif       the full view at work: usage going down, scrolling, switching accounts
 """
 from pathlib import Path
 import sys
@@ -23,7 +22,7 @@ from account_switcher.web import Controller  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "docs" / "media"
 SCALE = 2.0            # crisp on high-density screens; the site shows them at half size
 GIF_SCALE = 1.0
-FPS = 25
+FPS = 20
 
 
 class Clock:
@@ -82,33 +81,58 @@ def wallpaper(size, scale):
 
 
 def full_view_frames(controller, width, height, scale, clock):
-    """Frames of the full view: it opens (tiles rise in, bars fill), a card is hovered, and an
-    account is switched to."""
+    """Frames of the full view at work: usage creeps down on the accounts in use (bars glide,
+    percentages count), it scrolls down to Codex and back, then a card is hovered and switched to."""
     state = settled(controller)
     view = fullview.FullView(controller, Host(), state)
     view.resize(width, height, scale)
+    view.frame()
+    view.motion.settle()  # starts at rest: the GIF's first frame is the whole window
+    router = controller.gateway.router
     frames = []
 
     def run(seconds):
         for _ in range(max(1, round(seconds * FPS))):
             clock.now += 1 / FPS
             view.set_state(controller.snapshot())
-            image = view.frame()
-            frames.append(image.convert("RGB"))
+            frames.append(view.frame().convert("RGB"))
 
-    run(1.3)
-    # Hover the second Claude account, then click it.
+    def use(provider, five_hour, weekly):
+        """The account in use spends a little more of its limits."""
+        account = router.current(provider)
+        account.five_hour = min(100, account.five_hour + five_hour)
+        account.weekly = min(100, account.weekly + weekly)
+
+    def scroll_to(target, seconds):
+        start, steps = view.scroll, max(1, round(seconds * FPS))
+        for n in range(1, steps + 1):
+            view.wheel(start + (target - start) * fullview.ease(n / steps) - view.scroll)
+            run(1 / FPS)
+
+    run(1.0)
+    for _ in range(2):
+        use("claude", 4, 1)
+        run(1.1)
+    scroll_to(view.max_scroll(), 1.2)
+    run(0.5)
+    for _ in range(2):
+        use("codex", 5, 2)
+        run(1.1)
+    scroll_to(0, 1.0)
+    run(0.5)
+    # Hover the other Claude account, then switch to it.
     target = next(a for a in state["accounts"] if a["provider"] == "claude" and not a["active"])
     card = next(item for item in view.items if item[0] == "card" and item[6]["id"] == target["id"])
     _, _, x, y, w, h, _ = card
-    view.mouse_move(x + w / 2, y + h / 2 - view.scroll)
+    view.mouse_move(x + w * 0.8, y + h - 40 - view.scroll)  # over its "Swap to this" button
     run(0.9)
     controller.action("swap", {"id": target["id"]})
     run(0.3)
     settled(controller)
-    run(1.6)
+    run(1.4)
     view.mouse_leave()
-    run(1.2)
+    use("claude", 3, 1)
+    run(2.0)
     return frames, view
 
 
@@ -157,9 +181,6 @@ def main():
                     optimize=True, disposal=1)
     finally:
         controller.close()
-    icon = Path(fr.__file__).with_name("static") / "assets" / "switcher.png"
-    with Image.open(icon) as source:
-        source.resize((128, 128), Image.Resampling.LANCZOS).save(OUT / "icon.png", optimize=True)
     for path in sorted(OUT.iterdir()):
         print(f"{path.name}: {path.stat().st_size // 1024} KB")
 

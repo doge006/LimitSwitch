@@ -1,6 +1,6 @@
 name: Media
 
-# Draws the README's and the website's screenshots and GIF on Windows (Segoe UI, as users see
+# Draws the README's screenshots and GIF on Windows (Segoe UI, as users see
 # it) with scripts/make_media.py and the demo accounts, then commits docs/media to the branch it
 # ran on.
 on:
