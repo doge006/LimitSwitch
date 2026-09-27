@@ -88,7 +88,10 @@ names = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=Tru
 print("process:", names)
 check(names.endswith("LimitSwitcher"), "the process is LimitSwitcher, not Python")
 opened_by_install = [w for w in found if w["layer"] == 0 and w["onscreen"]]
-check(bool(opened_by_install), "opening the app shows its window")
+if os.environ.get("SMOKE_WINDOW_CLOSED"):  # an earlier step closed it on purpose (memory test)
+    print("launch window: closed by an earlier step; /api/show is checked below")
+else:
+    check(bool(opened_by_install), "opening the app shows its window")
 
 if not status and size:  # macOS 26: take the place from the app's own report (AppKit y is from the bottom)
     screen_h = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.height

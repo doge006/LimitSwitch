@@ -175,11 +175,22 @@ jobs:
           print("PASS panel: docked", docked, "moved", moved, "docked again", again)
           PY
           launchctl unsetenv LIMITSWITCH_PANEL_TEST
+      - name: Memory (footprint, as Activity Monitor counts it)
+        run: |
+          pid=$(pgrep -f 'MacOS/LimitSwitcher' | head -1)
+          echo "== with the full view open (launch) and after the panel test =="
+          footprint -p $pid | head -22
+          url="$HOME/Library/Application Support/AccountSwitcher/running.url"
+          osascript -e 'tell application "Finder" to activate' || true  # switching apps closes the full view
+          sleep 12  # the cleanup runs 5 s after closing
+          echo "== idle: full view and panel closed =="
+          footprint -p $pid | head -22
+          vmmap --summary $pid | grep -E "^(Malloc|CG Image|IOSurface|WebKit|TOTAL)" || true
       - name: Smoke test (menu bar icon, window, quit)
         run: |
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
-          LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
+          SMOKE_WINDOW_CLOSED=1 LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
       - name: The bundle is unchanged after running (its signature still holds)
         run: |
           codesign --verify --deep --strict /Applications/LimitSwitcher.app
