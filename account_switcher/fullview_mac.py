@@ -4,14 +4,12 @@ No WebKit: the window's content is this one view, drawn at the display's backing
 on the main thread with the rest of the menu bar app; timers are one-shot callLater()s, only
 while something is due. The view (and its cached tiles) goes away when the window closes.
 """
-import io
 import logging
 
 import objc
-from AppKit import (NSBitmapImageRep, NSCompositingOperationCopy, NSCursor, NSEventModifierFlagCommand, NSImage,
-                    NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
+from AppKit import (NSCursor, NSEventModifierFlagCommand, NSGraphicsContext, NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
                     NSTrackingMouseEnteredAndExited, NSTrackingMouseMoved, NSView)
-from Foundation import NSData, NSMakeSize, NSZeroRect
+from Foundation import NSData
 from PyObjCTools import AppHelper
 
 from . import fullview_render as vr
@@ -28,7 +26,7 @@ class FullViewCanvas(NSView):
         if self is None:
             return None
         self.view = FullView(controller, self, state)
-        self.picture = None      # NSImage of the last frame
+        self.picture = None      # CGImage of the last frame
         self.dirty = True
         self.cursor_kind = "arrow"
         self.timers = {}         # name -> generation (a later set/kill makes an earlier callLater a no-op)
@@ -77,19 +75,26 @@ class FullViewCanvas(NSView):
     def drawRect_(self, _rect):
         if self.view is None or not self.view.width:
             return
+        import Quartz
         if self.dirty or self.picture is None:
+            # The frame's pixels straight to Core Graphics: one copy, no encoding, nothing kept
+            # but this one image (TIFF round trips cost ~4 copies of the frame per animation step).
             image = self.view.frame()
-            data = io.BytesIO()
-            image.save(data, "TIFF")  # uncompressed: a straight copy AppKit reads as is
-            raw = data.getvalue()
-            rep = NSBitmapImageRep.imageRepWithData_(NSData.dataWithBytes_length_(raw, len(raw)))
-            size = NSMakeSize(self.view.width, self.view.height)
-            rep.setSize_(size)  # logical size: drawn at the backing scale
-            picture = NSImage.alloc().initWithSize_(size)
-            picture.addRepresentation_(rep)
-            self.picture, self.dirty = picture, False
-        self.picture.drawInRect_fromRect_operation_fraction_respectFlipped_hints_(
-            self.bounds(), NSZeroRect, NSCompositingOperationCopy, 1.0, True, None)
+            width, height = image.size
+            data = NSData.dataWithBytes_length_(image.tobytes("raw", "RGBX"), width * height * 4)
+            provider = Quartz.CGDataProviderCreateWithCFData(data)
+            self.picture = Quartz.CGImageCreate(
+                width, height, 8, 32, width * 4, Quartz.CGColorSpaceCreateDeviceRGB(),
+                Quartz.kCGImageAlphaNoneSkipLast, provider, None, False, Quartz.kCGRenderingIntentDefault)
+            self.dirty = False
+        context = NSGraphicsContext.currentContext().CGContext()
+        bounds = self.bounds()
+        Quartz.CGContextSaveGState(context)
+        Quartz.CGContextTranslateCTM(context, 0, bounds.size.height)  # this view is flipped; CG draws bottom-up
+        Quartz.CGContextScaleCTM(context, 1, -1)
+        Quartz.CGContextSetInterpolationQuality(context, Quartz.kCGInterpolationNone)
+        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, bounds.size.height), self.picture)
+        Quartz.CGContextRestoreGState(context)
 
     # ---------- input ----------
     @objc.python_method
