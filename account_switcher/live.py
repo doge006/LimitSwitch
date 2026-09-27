@@ -100,10 +100,15 @@ class LiveAccounts:
             rows = []
             now = time.time()
             for account_id, m in self.meta["accounts"].items():
+                status = m.get("status", "")
+                if status.startswith("Rate limited") and m.get("backoffUntil", 0.0) > now:
+                    # The retry time in the current clock setting (it may have changed since)
+                    status = f"Rate limited by {m['provider'].title()} · retrying at " + \
+                        clock_text(m["backoffUntil"], self.meta.get("clock24"))
                 rows.append(Account(account_id, m["provider"], m.get("email") or m["identity"], 0, 0, 0, 0,
                                     plan=m.get("plan", ""), email=m.get("email", ""),
                                     usage=project(m.get("usage") or [], now),
-                                    status=m.get("status", ""), updated_at=m.get("updatedAt", 0.0),
+                                    status=status, updated_at=m.get("updatedAt", 0.0),
                                     subscription=subscription_view(m), credits=m.get("credits")))
             order = {"claude": 0, "codex": 1}
             return sorted(rows, key=lambda a: (order.get(a.provider, 9), a.email or a.alias))
@@ -572,12 +577,25 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        parts = ["⇄ LimitSwitcher", entry.get("email") or entry.get("identity") or "Claude"]
+        parts = ["⇄ LimitSwitcher", self.shown_name(account_id)]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"
                 parts.append(f"{label} {max(0, 100 - window['used']):.0f}% left")
         return " · ".join(parts)
+
+    def shown_name(self, account_id):
+        """The account as the app shows it: its email, or in name mode its name ("Claude 2" when
+        it has none), like every other surface."""
+        entry = self.meta["accounts"].get(account_id) or {}
+        if not self.meta.get("nameMode"):
+            return entry.get("email") or entry.get("identity") or entry.get("provider", "").title()
+        if entry.get("label"):
+            return entry["label"]
+        same = sorted((m.get("email") or m.get("identity") or "", i) for i, m in self.meta["accounts"].items()
+                      if m.get("provider") == entry.get("provider"))
+        number = next((n for n, (_, i) in enumerate(same, 1) if i == account_id), 1)
+        return f"{entry.get('provider', '').title()} {number}"
 
     def claude_limits(self):
         """The freshest 5-hour and weekly numbers the app has for the account in Claude Code,

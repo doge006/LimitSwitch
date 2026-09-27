@@ -266,6 +266,27 @@ class LiveTests(unittest.TestCase):
             self.assertFalse(controller.snapshot()["statusline"])
             self.assertIsNone(controller.statusline({"rate_limits": limits}))
             self.assertFalse(controller.gateway.manager.meta["statuslineShown"])  # remembered
+            controller.action("statusline", {"on": True})
+            m = controller.gateway.manager
+            claude_id = next(a["id"] for a in controller.snapshot()["accounts"] if a["provider"] == "claude")
+            # Name mode: the status line shows the account's name ("Claude 1" without one), not its email.
+            self.assertIn("a@example.com", controller.statusline({"rate_limits": limits}))
+            controller.action("names", {"on": True})
+            self.assertIn("Claude 1", controller.statusline({"rate_limits": limits}))
+            self.assertNotIn("@", controller.statusline({"rate_limits": limits}))
+            controller.action("rename", {"id": claude_id, "name": "Work"})
+            self.assertIn("Work", controller.statusline({"rate_limits": limits}))
+            controller.action("names", {"on": False})
+            # A rate limit's retry time follows the clock setting, also after it changes.
+            with m.lock:
+                m.meta["accounts"][claude_id].update(status="Rate limited by Claude · retrying at 18:37",
+                                                     backoffUntil=time.mktime((2030, 1, 1, 18, 37, 0, 0, 0, -1)))
+            controller.action("clock", {"on": False})
+            status = next(a for a in m.accounts() if a.id == claude_id).status
+            self.assertTrue(status.endswith("retrying at 6:37 PM"), status)
+            controller.action("clock", {"on": True})
+            status = next(a for a in m.accounts() if a.id == claude_id).status
+            self.assertTrue(status.endswith("retrying at 18:37"), status)
         finally:
             controller.close()
 

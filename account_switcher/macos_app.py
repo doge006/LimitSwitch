@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 
 import objc
-from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+from AppKit import (NSApp, NSView, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
                     NSBackingStoreBuffered, NSColor, NSEventModifierFlagCommand, NSEventModifierFlagOption,
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSOffState, NSOnState,
@@ -36,6 +36,7 @@ from .tray import APP, PROVIDERS, active_accounts, short_name, tooltip, tray_lev
 log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 392
 PANEL_RADIUS = 12
+ARROW_HEIGHT, ARROW_WIDTH = 10, 22  # the docked panel's arrow up to the menu bar icon
 POPUP_LEVEL = 101  # NSPopUpMenuWindowLevel: over other windows, like a popover
 ICON = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"  # the Dock icon, macOS shape
 TERMINATE_NOW = 1  # NSTerminateNow
@@ -72,18 +73,56 @@ class PanelWindow(NSPanel):
         return True
 
 
-def rounded_mask(radius):
-    """A stretchable rounded-rectangle mask for the panel's material (its corners)."""
-    from AppKit import NSBezierPath, NSEdgeInsets
+class PanelEdge(NSView):
+    """The panel's thin light edge (as a popover has), drawn along its outline, arrow included.
+    Clicks go through to the page below."""
+    outline = None
 
-    def draw(rect):
+    def drawRect_(self, _rect):
+        if self.outline is not None:
+            NSColor.colorWithWhite_alpha_(1.0, 0.14).setStroke()
+            self.outline.setLineWidth_(1.0)
+            self.outline.stroke()
+
+    def hitTest_(self, _point):
+        return None
+
+
+def panel_outline(width, height, arrow_x=None):
+    """The panel's shape: a rounded rectangle, with the arrow pointing up at the menu bar icon
+    while docked (arrow_x: its tip, from the left edge). Inset half a point for a crisp edge."""
+    from AppKit import NSBezierPath
+    r, i = PANEL_RADIUS, 0.5
+    top = height - (ARROW_HEIGHT if arrow_x is not None else 0)
+    x0, y0, x1, y1 = i, i, width - i, top - i
+    path = NSBezierPath.bezierPath()
+    path.moveToPoint_((x0 + r, y0))
+    path.lineToPoint_((x1 - r, y0))
+    path.appendBezierPathWithArcFromPoint_toPoint_radius_((x1, y0), (x1, y0 + r), r)
+    path.lineToPoint_((x1, y1 - r))
+    path.appendBezierPathWithArcFromPoint_toPoint_radius_((x1, y1), (x1 - r, y1), r)
+    if arrow_x is not None:
+        half = ARROW_WIDTH / 2
+        ax = max(x0 + r + half, min(arrow_x, x1 - r - half))
+        tip = height - i
+        path.lineToPoint_((ax + half, y1))  # soft sides and tip, like a popover's arrow
+        path.curveToPoint_controlPoint1_controlPoint2_((ax, tip), (ax + half * 0.45, y1), (ax + 2.5, tip))
+        path.curveToPoint_controlPoint1_controlPoint2_((ax - half, y1), (ax - 2.5, tip), (ax - half * 0.45, y1))
+    path.lineToPoint_((x0 + r, y1))
+    path.appendBezierPathWithArcFromPoint_toPoint_radius_((x0, y1), (x0, y1 - r), r)
+    path.lineToPoint_((x0, y0 + r))
+    path.appendBezierPathWithArcFromPoint_toPoint_radius_((x0, y0), (x0 + r, y0), r)
+    path.closePath()
+    return path
+
+
+def outline_mask(width, height, outline):
+    """The panel's material, cut to its outline."""
+    def draw(_rect):
         NSColor.blackColor().set()
-        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, radius, radius).fill()
+        outline.fill()
         return True
-    image = NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(radius * 2 + 1, radius * 2 + 1), False, draw)
-    image.setCapInsets_(NSEdgeInsets(radius, radius, radius, radius))
-    image.setResizingMode_(1)  # NSImageResizingModeStretch
-    return image
+    return NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(width, height), False, draw)
 
 
 def web_view(url, frame, transparent=False, handler=None):
@@ -311,13 +350,32 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         material.setMaterial_(6)  # NSVisualEffectMaterialPopover
         material.setBlendingMode_(0)  # behind the window
         material.setState_(1)  # always active
-        material.setMaskImage_(rounded_mask(PANEL_RADIUS))
         material.setAutoresizingMask_(2 | 16)  # width and height follow the window
         self.panel_view.setFrame_(NSMakeRect(0, 0, width, height))
-        self.panel_view.setAutoresizingMask_(2 | 16)
+        self.panel_view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
         material.addSubview_(self.panel_view)
+        self.panel_edge = PanelEdge.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+        self.panel_edge.setAutoresizingMask_(2 | 16)
+        material.addSubview_(self.panel_edge)
         panel.setContentView_(material)
+        self.panel_material = material
+        self.arrow_x = None
         return panel
+
+    @objc.python_method
+    def shape_panel(self, frame):
+        """Lay the panel out for `frame` (its new size): the page below the arrow while docked,
+        the material cut to the outline, the edge along it."""
+        width, height = frame.size.width, frame.size.height
+        arrow = None if self.detached else self.arrow_x
+        page = height - (ARROW_HEIGHT if arrow is not None else 0)
+        self.panel_material.setFrame_(NSMakeRect(0, 0, width, height))
+        self.panel_view.setFrame_(NSMakeRect(0, 0, width, page))
+        self.panel_edge.setFrame_(NSMakeRect(0, 0, width, height))
+        outline = panel_outline(width, height, arrow)
+        self.panel_material.setMaskImage_(outline_mask(width, height, outline))
+        self.panel_edge.outline = outline
+        self.panel_edge.setNeedsDisplay_(True)
 
     @objc.python_method
     def docked_frame(self):
@@ -332,15 +390,20 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                               screen.origin.y + screen.size.height - height - 6, width, height)
         icon = window.convertRectToScreen_(button.convertRect_toView_(button.bounds(), None))
         screen = (window.screen() or NSScreen.mainScreen()).visibleFrame()
-        x = icon.origin.x + icon.size.width / 2 - width / 2
+        center = icon.origin.x + icon.size.width / 2
+        x = center - width / 2
         x = max(screen.origin.x + 8, min(x, screen.origin.x + screen.size.width - width - 8))
-        top = icon.origin.y - 6
+        self.arrow_x = center - x  # the arrow points at the icon even when the panel is pushed aside
+        height += ARROW_HEIGHT
+        top = icon.origin.y - 2
         return NSMakeRect(x, top - height, width, height)
 
     @objc.python_method
     def show_panel(self):
         self.set_detached(False)
-        self.panel.setFrame_display_(self.docked_frame(), True)
+        frame = self.docked_frame()
+        self.shape_panel(frame)
+        self.panel.setFrame_display_(frame, True)
         NSApp.activateIgnoringOtherApps_(True)
         self.panel.setAlphaValue_(0.0)
         self.panel.makeKeyAndOrderFront_(None)
@@ -395,8 +458,15 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
 
     @objc.python_method
     def set_detached(self, detached):
-        """Detached (dragged away): stays open, floats above other windows, shows its dock button."""
+        """Detached (dragged away): stays open, floats above other windows, shows its dock button,
+        and loses the arrow (the window gets shorter by it; the page stays where it is)."""
+        was = self.detached
         self.detached = detached
+        if detached and not was and self.panel.isVisible():
+            f = self.panel.frame()
+            frame = NSMakeRect(f.origin.x, f.origin.y, f.size.width, f.size.height - ARROW_HEIGHT)
+            self.shape_panel(frame)
+            self.panel.setFrame_display_(frame, True)
         from AppKit import NSFloatingWindowLevel
         self.panel.setLevel_(NSFloatingWindowLevel if detached else POPUP_LEVEL)
         self.panel_view.evaluateJavaScript_completionHandler_(
@@ -432,17 +502,23 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             room = screen.visibleFrame().size.height - 40 if screen is not None else 760
             self.panel_size[1] = min(value, room)  # taller than the screen: the page scrolls
         if self.detached:
-            frame = self.panel.frame()
-            top = frame.origin.y + frame.size.height
-            self.panel.setFrame_display_(NSMakeRect(frame.origin.x, top - self.panel_size[1], *self.panel_size), True)
+            f = self.panel.frame()
+            top = f.origin.y + f.size.height
+            frame = NSMakeRect(f.origin.x, top - self.panel_size[1], *self.panel_size)
         elif self.panel.isVisible():
-            self.panel.setFrame_display_(self.docked_frame(), True)
+            frame = self.docked_frame()
+        else:
+            return
+        self.shape_panel(frame)
+        self.panel.setFrame_display_(frame, True)
 
     @objc.python_method
     def dock(self):
-        """The dock button: the panel slides back under the menu bar icon."""
-        self.panel.setFrame_display_animate_(self.docked_frame(), True, True)
+        """The dock button: the panel slides back under the menu bar icon (arrow and all)."""
         self.set_detached(False)
+        frame = self.docked_frame()
+        self.shape_panel(frame)
+        self.panel.setFrame_display_animate_(frame, True, True)
 
     # Dragging: the page covers the whole window, so it reports a press on its header or
     # background (dragStart), each move (dragMove) and the release (dragEnd), and the window
@@ -540,7 +616,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                 return
             window.setContentView_(self.canvas)
             window.center()
-            window.setFrameAutosaveName_("AccountSwitcherFullView.v2")  # remembers the user's size from here on
+            # Remembers the user's size from here on. A new name when the default size changes: the
+            # old saved size would otherwise win over the new default.
+            window.setFrameAutosaveName_("AccountSwitcherFullView.v3")
             window.setDelegate_(self)
             self.full_window = window
         # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.

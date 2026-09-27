@@ -346,6 +346,10 @@ class Integrations:
         except OSError as error:
             log.warning("could not restore the Claude status line: %s", error)
         try:
+            claude_hooks.restore_auto_continue(self.state_file, self.claude_root)
+        except OSError as error:
+            log.warning("could not restore Claude Code's automatic continue: %s", error)
+        try:
             self.state_file.unlink()
         except OSError:
             pass
@@ -375,6 +379,15 @@ class Integrations:
         except (OSError, ValueError) as error:
             log.warning("could not update Claude Code's hook: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's settings for AFK: {error}")
+        try:
+            # Auto resume continues the session itself: Claude Code's own wait would linger
+            # ("continuing automatically at 9pm") and continue it a second time at the reset.
+            if self.manager.meta.get("afk"):
+                claude_hooks.pause_auto_continue(self.state_file, self.claude_root)
+            else:
+                claude_hooks.restore_auto_continue(self.state_file, self.claude_root)
+        except (OSError, ValueError) as error:
+            log.warning("could not update Claude Code's automatic continue: %s", error)
 
 
 def launcher():
