@@ -661,10 +661,17 @@ def draw_empty(state, w, scale, ui):
     return Tile(image, hits)
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=1)  # only the window's current size (about 5 MB at 150%)
 def backdrop(width, height, scale):
     """The window background: plain."""
     return Image.new("RGB", (round(width * scale), round(height * scale)), BG)
+
+
+def release():
+    """The full view closed: let go of everything drawn for it (shapes, shadows, the backdrop).
+    It is all drawn again, the same, the next time it opens."""
+    for cached in (rr_mask, ring_mask, rr_alpha, ring_alpha, glyph, shadow, backdrop):
+        cached.cache_clear()
 
 
 # ---------- overlays: menus, the date editor, toasts ----------

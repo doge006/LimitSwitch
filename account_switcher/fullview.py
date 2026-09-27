@@ -720,3 +720,5 @@ class FullView:
         if self.ui.editing:
             self.commit_name()
         self.tiles.clear()
+        self.last_page = None
+        vr.release()

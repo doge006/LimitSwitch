@@ -400,6 +400,7 @@ class FullViewWindow:
             self.view = self.frame = None
             from .memory import trim_soon
             trim_soon()  # its tiles and frame are gone: hand the memory back
+            log.warning("full view: closed")
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
