@@ -126,6 +126,7 @@ def uninstall(root=None):
 
 # ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
 STATUS_MARK = "account_switcher_statusline"
+STATUS_REFRESH = 30  # seconds
 
 
 def statusline_command(state_file):
@@ -157,6 +158,9 @@ def install_statusline(state_file, root=None):
         previous = current if isinstance(current, dict) else None
         atomic_write(backup, json.dumps({"previous": previous}).encode("utf-8"))
     entry = dict(previous or {"padding": 0}, type="command", command=statusline_command(state_file))
+    # Claude Code otherwise re-runs a status line only when that session changes, so an idle
+    # session would keep showing old numbers. The user's own interval, if any, is kept.
+    entry.setdefault("refreshInterval", STATUS_REFRESH)
     if data.get("statusLine") != entry:
         updated = dict(data, statusLine=entry)
         path.parent.mkdir(parents=True, exist_ok=True)

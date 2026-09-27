@@ -82,7 +82,7 @@ Try it idle in the menu bar, with the panel open, and with the full view open. A
 
 - **Menu bar:** the tray becomes a menu bar icon.
   - Click it for the panel, a native popover that follows light and dark mode.
-  - Drag the panel away from the menu bar and it stays open where you leave it; drag it by its header or background to move it again. Its dock button (an arrow up to a bar) puts it back under the menu bar icon.
+  - Drag the panel by its header or background: away from the menu bar it stays open where you leave it, and you can move it again any time. Its dock button (an arrow up to a bar) slides it back under the menu bar icon. Docked, clicking elsewhere or Esc closes it.
   - Right-click (or Control-click) for the menu; **Full View…** opens the full view in its own native window.
   - There's no Dock icon.
 - **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
@@ -162,6 +162,7 @@ While LimitSwitcher runs, it adds itself to Claude Code's status line (the line 
 - **With your own status line:** yours stays exactly as it was, with a dim `⇄ LimitSwitcher` after it, so you can see the app is on.
 - **Without one:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live without asking Claude's usage API, which allows only a few requests an hour.
+- **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.
 - **Turn it off** in Settings → **Claude Code status line**. It then shows nothing of LimitSwitcher (your own status line is untouched), and the usage still comes in the same way.
 - **On quit** your original status line setting is put back.
 

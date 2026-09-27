@@ -2,8 +2,7 @@
 // Menu bar popover (macOS). Same local API as the full view; the native host listens for
 // {type: 'height' | 'width' | 'full' | 'dock' | 'quit'} messages and resizes / opens windows accordingly.
 // Dragged off the menu bar, the popover detaches and stays open; the host then calls
-// setDetached(true): the page shows a button that docks it again, and a press on its header
-// or background moves it (the host drags the window).
+// setDetached(true): the page shows a button that docks it again.
 const hash = new URLSearchParams(location.hash.slice(1));
 const token = hash.get('token');
 let detached = false;
@@ -28,6 +27,7 @@ function el(tag, cls, text) {
   return n;
 }
 function post(message) { if (native) native.postMessage(message); }
+if (native) document.documentElement.classList.add('native');
 
 async function api(path, body) {
   const response = await fetch(path, {
@@ -237,7 +237,7 @@ function render() {
   $('auto').disabled = $('afk').disabled = !!state.busy;
 }
 
-// The popover follows the page's height whenever it changes (after rendering, once images and
+// The panel follows the page's height whenever it changes (after rendering, once images and
 // fonts have loaded, when a row animates in), so it never opens cut short.
 let postedHeight = 0;
 new ResizeObserver(() => {
@@ -245,11 +245,28 @@ new ResizeObserver(() => {
   if (height && height !== postedHeight) { postedHeight = height; post({ type: 'height', value: height }); }
 }).observe(document.body);
 window.setDetached = on => { detached = !!on; if (state) render(); };
+// Dragging the panel by its header or background: the host moves the window with the mouse.
+// Dragged away from the menu bar it stays open (detached); the dock button slides it back.
 document.addEventListener('mousedown', event => {
-  if (!detached || event.button !== 0) return;
+  if (!native || event.button !== 0) return;
   if (event.target.closest('button, input, label, a, select, .row:not(.mini)')) return;  // controls and accounts stay clickable
-  post({ type: 'drag' });
+  event.preventDefault();  // no text selection while dragging
+  post({ type: 'dragStart' });
+  let queued = false;
+  const move = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; post({ type: 'dragMove' }); });
+  };
+  const end = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', end);
+    post({ type: 'dragEnd' });
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', end);
 });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') post({ type: 'escape' }); });
 
 async function follow() {
   let revision = -1;

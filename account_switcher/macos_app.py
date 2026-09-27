@@ -1,10 +1,11 @@
 """macOS menu bar app: the Mac counterpart of the Windows tray (tray.py + flyout.py).
 
 - Menu bar icon (an SF Symbol, drawn as a template image so it matches the menu bar).
-- Click: a native popover with the compact panel (static/menu.html in a transparent
-  WKWebView over the popover's own material). Drag it away from the menu bar and it detaches
-  and stays open where you leave it (the Mac version of "pop out"); its dock button, or the
-  menu bar icon, puts it back. That works every time: each opening gets a fresh popover.
+- Click: the panel (static/menu.html in a transparent WKWebView over the system's popover
+  material), in a borderless window of the app's own just under the icon. Drag it by its header
+  or background and it stays open where you leave it (the Mac version of "pop out"), as often
+  as you like; its dock button slides it back under the icon. Docked, a click elsewhere or Esc
+  closes it. (Not an NSPopover: a popover dragged off becomes a window the app can't move.)
 - Right-click (or Control-click): a native menu.
 - Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit).
 - Notifications when Auto swap moves an account.
@@ -22,8 +23,8 @@ import objc
 from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
                     NSBackingStoreBuffered, NSColor, NSEventModifierFlagCommand, NSEventModifierFlagOption,
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
-                    NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSMinYEdge, NSOffState, NSOnState,
-                    NSPopover, NSPopoverBehaviorTransient, NSStatusBar, NSVariableStatusItemLength, NSViewController,
+                    NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSOffState, NSOnState,
+                    NSPanel, NSStatusBar, NSVariableStatusItemLength,
                     NSWindow, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
@@ -34,6 +35,8 @@ from .tray import APP, PROVIDERS, active_accounts, short_name, tooltip, tray_lev
 
 log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 392
+PANEL_RADIUS = 12
+POPUP_LEVEL = 101  # NSPopUpMenuWindowLevel: over other windows, like a popover
 ICON = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"  # the Dock icon, macOS shape
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
@@ -62,22 +65,32 @@ def protocols(*names):
     return found
 
 
-class PanelWebView(WKWebView):
-    """The panel's web view. It keeps the last mouse-down, so a drag the page starts (its header
-    and background, once the panel is detached) can be handed to the window: the page covers the
-    whole window, so the window can't be moved by its background otherwise."""
-    last_down = None
+class PanelWindow(NSPanel):
+    """The panel's borderless window. It can become key (the page takes clicks and Esc)."""
 
-    def mouseDown_(self, event):
-        PanelWebView.last_down = event
-        objc.super(PanelWebView, self).mouseDown_(event)
+    def canBecomeKeyWindow(self):
+        return True
 
 
-def web_view(url, frame, transparent=False, handler=None, kind=WKWebView):
+def rounded_mask(radius):
+    """A stretchable rounded-rectangle mask for the panel's material (its corners)."""
+    from AppKit import NSBezierPath, NSEdgeInsets
+
+    def draw(rect):
+        NSColor.blackColor().set()
+        NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, radius, radius).fill()
+        return True
+    image = NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(radius * 2 + 1, radius * 2 + 1), False, draw)
+    image.setCapInsets_(NSEdgeInsets(radius, radius, radius, radius))
+    image.setResizingMode_(1)  # NSImageResizingModeStretch
+    return image
+
+
+def web_view(url, frame, transparent=False, handler=None):
     config = WKWebViewConfiguration.alloc().init()
     if handler is not None:
         config.userContentController().addScriptMessageHandler_name_(handler, "app")
-    view = kind.alloc().initWithFrame_configuration_(frame, config)
+    view = WKWebView.alloc().initWithFrame_configuration_(frame, config)
     if transparent:
         view.setValue_forKey_(False, "drawsBackground")  # let the popover material show through
         if view.respondsToSelector_("setUnderPageBackgroundColor:"):
@@ -101,16 +114,23 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
             self.app.resize_panel(kind, float(body.get("value") or 0))
         elif kind == "dock":
             self.app.dock()
-        elif kind == "drag":
-            self.app.drag_panel()
+        elif kind == "dragStart":
+            self.app.drag_start()
+        elif kind == "dragMove":
+            self.app.drag_move()
+        elif kind == "dragEnd":
+            self.app.drag_end()
+        elif kind == "escape":
+            if not self.app.detached:
+                self.app.hide_panel()
         elif kind == "full":
-            self.app.popover.performClose_(None)
+            self.app.hide_panel()
             self.app.showFullView_(None)
         elif kind == "quit":
             self.app.quit_(None)
 
 
-class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
+class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     def initWithController_server_openNow_cleanup_(self, controller, server, open_now, cleanup):
         self = objc.super(MenuBarApp, self).init()
         self.controller, self.server, self.open_now, self.cleanup = controller, server, open_now, cleanup
@@ -121,7 +141,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.canvas = None
         self.panel_size = [PANEL_WIDTH, 420]
         self.detached = False
-        self.dock_after_close = False
+        self.drag = None
+        self.click_monitor = None
         self.quitting = False
         return self
 
@@ -141,9 +162,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.bridge = Bridge.alloc().initWithApp_(self)
         base, token = self.url.split("/#token=")
         view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, PANEL_WIDTH, 420), transparent=True,
-                        handler=self.bridge, kind=PanelWebView)
+                        handler=self.bridge)
         self.panel_view = view
-        self.popover = self.make_popover()
+        self.panel = self.make_panel()
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
         self.controller.quit_app = lambda: AppHelper.callAfter(self.quit_, None)
         self.controller.on_update_available = lambda version: notify(
@@ -154,6 +175,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         if self.open_now:
             self.showFullView_(None)
         AppHelper.callLater(4, self.check_status_item)
+        if os.environ.get("LIMITSWITCH_PANEL_TEST"):  # CI: it can't click the menu bar
+            AppHelper.callLater(3, self.panel_test)
 
     @objc.python_method
     def check_status_item(self):
@@ -249,6 +272,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         if self.full_window is not None and self.full_window.isVisible():
             self.full_window.orderOut_(None)
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        if not self.detached:
+            self.hide_panel()  # docked: goes away like a popover
 
     def windowWillClose_(self, note):
         # Back to a menu bar app: no Dock icon once the full view is closed.
@@ -264,49 +289,116 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.full_window = None  # the next Full view makes a fresh one
 
     @objc.python_method
-    def make_popover(self):
-        """A popover holding the panel page. A popover that was dragged off (detached) once
-        doesn't detach again after it closes, so every opening gets a new one."""
-        from AppKit import NSAppearance
-        controller = NSViewController.alloc().init()
-        controller.setView_(self.panel_view)
-        popover = NSPopover.alloc().init()
-        popover.setContentViewController_(controller)
-        popover.setContentSize_(NSMakeSize(*self.panel_size))
-        popover.setBehavior_(NSPopoverBehaviorTransient)
+    def make_panel(self):
+        """The panel's window: borderless, the popover material with rounded corners and a
+        shadow, the page on top. Made once; shown and hidden."""
+        from AppKit import NSAppearance, NSVisualEffectView
+        width, height = self.panel_size
+        style = 1 << 7  # borderless, non-activating panel
+        panel = PanelWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
+        panel.setOpaque_(False)
+        panel.setBackgroundColor_(NSColor.clearColor())
+        panel.setHasShadow_(True)
+        panel.setHidesOnDeactivate_(False)
+        panel.setReleasedWhenClosed_(False)
+        panel.setLevel_(POPUP_LEVEL)
+        panel.setCollectionBehavior_((1 << 0) | (1 << 8))  # every Space, and over full-screen apps
         dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
         if dark is not None:
-            popover.setAppearance_(dark)  # the dark panel design, like the Windows tray
-        popover.setAnimates_(True)
-        popover.setDelegate_(self)
-        return popover
-
-    def popoverShouldDetach_(self, _popover):
-        return True  # drag it off the menu bar to keep it open where you leave it
-
-    def popoverDidDetach_(self, _popover):
-        self.set_detached(True)
-
-    def popoverDidClose_(self, note):
-        if note.object() != self.popover:
-            return
-        self.set_detached(False)
-        AppHelper.callAfter(self.renew_popover)
+            panel.setAppearance_(dark)  # the dark panel design, like the Windows tray
+        material = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
+        material.setMaterial_(6)  # NSVisualEffectMaterialPopover
+        material.setBlendingMode_(0)  # behind the window
+        material.setState_(1)  # always active
+        material.setMaskImage_(rounded_mask(PANEL_RADIUS))
+        material.setAutoresizingMask_(2 | 16)  # width and height follow the window
+        self.panel_view.setFrame_(NSMakeRect(0, 0, width, height))
+        self.panel_view.setAutoresizingMask_(2 | 16)
+        material.addSubview_(self.panel_view)
+        panel.setContentView_(material)
+        return panel
 
     @objc.python_method
-    def renew_popover(self):
-        if self.popover.isShown():
-            return
-        self.popover.setContentViewController_(None)  # frees the page for the new popover
-        self.popover = self.make_popover()
-        if self.dock_after_close:  # the dock button: open it again, attached to the menu bar icon
-            self.dock_after_close = False
-            self.togglePanel_(None)
+    def docked_frame(self):
+        """Just under the menu bar icon, centered on it, kept on its screen."""
+        from AppKit import NSScreen
+        width, height = self.panel_size
+        button = self.item.button()
+        window = button.window() if button is not None else None
+        if window is None:
+            screen = NSScreen.mainScreen().visibleFrame()
+            return NSMakeRect(screen.origin.x + screen.size.width - width - 12,
+                              screen.origin.y + screen.size.height - height - 6, width, height)
+        icon = window.convertRectToScreen_(button.convertRect_toView_(button.bounds(), None))
+        screen = (window.screen() or NSScreen.mainScreen()).visibleFrame()
+        x = icon.origin.x + icon.size.width / 2 - width / 2
+        x = max(screen.origin.x + 8, min(x, screen.origin.x + screen.size.width - width - 8))
+        top = icon.origin.y - 6
+        return NSMakeRect(x, top - height, width, height)
+
+    @objc.python_method
+    def show_panel(self):
+        self.set_detached(False)
+        self.panel.setFrame_display_(self.docked_frame(), True)
+        NSApp.activateIgnoringOtherApps_(True)
+        self.panel.setAlphaValue_(0.0)
+        self.panel.makeKeyAndOrderFront_(None)
+        self.panel.animator().setAlphaValue_(1.0)
+        if self.click_monitor is None:  # docked: a click in another app closes it
+            from AppKit import NSEvent, NSEventMaskLeftMouseDown, NSEventMaskRightMouseDown
+            self.click_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown, self.clicked_elsewhere)
+        try:
+            self.controller.action("refresh", {"ifOlderThan": 45})  # like opening the Windows panel
+        except (RuntimeError, ValueError):
+            pass
+
+    @objc.python_method
+    def panel_test(self, step=0):
+        """CI only (LIMITSWITCH_PANEL_TEST): open the panel, move it away as a drag would, dock
+        it again; each frame goes to app.log for the smoke test."""
+        def frame():
+            f = self.panel.frame()
+            return f"({f.origin.x:.0f}, {f.origin.y:.0f}, {f.size.width:.0f}, {f.size.height:.0f})"
+        if step == 0:
+            self.show_panel()
+            AppHelper.callLater(2, self.panel_test, 1)
+        elif step == 1:
+            log.warning("panel test: docked %s visible=%s", frame(), self.panel.isVisible())
+            f = self.panel.frame()
+            self.panel.setFrameOrigin_((f.origin.x - 300, f.origin.y - 200))  # as drag_move does
+            self.set_detached(True)
+            AppHelper.callLater(1, self.panel_test, 2)
+        elif step == 2:
+            log.warning("panel test: moved %s detached=%s", frame(), self.detached)
+            self.dock()
+            AppHelper.callLater(1, self.panel_test, 3)
+        else:
+            log.warning("panel test: docked again %s detached=%s visible=%s", frame(), self.detached,
+                        self.panel.isVisible())
+
+    @objc.python_method
+    def clicked_elsewhere(self, _event):
+        if not self.detached:
+            self.hide_panel()
+
+    @objc.python_method
+    def hide_panel(self):
+        if self.panel is not None and self.panel.isVisible():
+            self.panel.orderOut_(None)
+        if self.click_monitor is not None:
+            from AppKit import NSEvent
+            NSEvent.removeMonitor_(self.click_monitor)
+            self.click_monitor = None
+        self.drag = None
 
     @objc.python_method
     def set_detached(self, detached):
-        """The page shows its dock button only while it's detached."""
+        """Detached (dragged away): stays open, floats above other windows, shows its dock button."""
         self.detached = detached
+        from AppKit import NSFloatingWindowLevel
+        self.panel.setLevel_(NSFloatingWindowLevel if detached else POPUP_LEVEL)
         self.panel_view.evaluateJavaScript_completionHandler_(
             f"window.setDetached && window.setDetached({'true' if detached else 'false'})", None)
 
@@ -322,20 +414,14 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         self.togglePanel_(sender)
 
     def togglePanel_(self, _sender):
-        if self.popover.isShown():
-            self.popover.performClose_(None)
-            return
-        button = self.item.button()
-        NSApp.activateIgnoringOtherApps_(True)
-        self.popover.showRelativeToRect_ofView_preferredEdge_(button.bounds(), button, NSMinYEdge)
-        try:
-            self.controller.action("refresh", {"ifOlderThan": 45})  # like opening the Windows panel
-        except (RuntimeError, ValueError):
-            pass
+        if self.panel.isVisible():
+            self.hide_panel()
+        else:
+            self.show_panel()
 
     @objc.python_method
     def resize_panel(self, kind, value):
-        """The page's size (compact is narrower and shorter)."""
+        """The page's size (compact is narrower and shorter). The top edge stays put."""
         if value <= 0:
             return
         if kind == "width":
@@ -345,22 +431,44 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
             screen = NSScreen.mainScreen()
             room = screen.visibleFrame().size.height - 40 if screen is not None else 760
             self.panel_size[1] = min(value, room)  # taller than the screen: the page scrolls
-        self.popover.setContentSize_(NSMakeSize(*self.panel_size))
+        if self.detached:
+            frame = self.panel.frame()
+            top = frame.origin.y + frame.size.height
+            self.panel.setFrame_display_(NSMakeRect(frame.origin.x, top - self.panel_size[1], *self.panel_size), True)
+        elif self.panel.isVisible():
+            self.panel.setFrame_display_(self.docked_frame(), True)
 
     @objc.python_method
     def dock(self):
-        """Back under the menu bar icon (the detached panel's dock button): it closes, and
-        renew_popover opens the new popover attached."""
-        self.dock_after_close = True
-        self.popover.performClose_(None)
+        """The dock button: the panel slides back under the menu bar icon."""
+        self.panel.setFrame_display_animate_(self.docked_frame(), True, True)
+        self.set_detached(False)
+
+    # Dragging: the page covers the whole window, so it reports a press on its header or
+    # background (dragStart), each move (dragMove) and the release (dragEnd), and the window
+    # follows the mouse from where it was pressed. Works docked or not, as often as you like.
+    @objc.python_method
+    def drag_start(self):
+        from AppKit import NSEvent
+        mouse, frame = NSEvent.mouseLocation(), self.panel.frame()
+        self.drag = (mouse.x, mouse.y, frame.origin.x, frame.origin.y)
 
     @objc.python_method
-    def drag_panel(self):
-        """The page asked to move the detached panel (a press on its header or background)."""
-        window = self.panel_view.window()
-        event = PanelWebView.last_down or NSApp.currentEvent()
-        if self.detached and window is not None and event is not None:
-            window.performWindowDragWithEvent_(event)
+    def drag_move(self):
+        if self.drag is None:
+            return
+        from AppKit import NSEvent
+        mouse = NSEvent.mouseLocation()
+        x0, y0, fx, fy = self.drag
+        dx, dy = mouse.x - x0, mouse.y - y0
+        self.panel.setFrameOrigin_((fx + dx, fy + dy))
+        if not self.detached and abs(dx) + abs(dy) > 6:  # moved away from the menu bar: it stays open
+            self.set_detached(True)
+
+    @objc.python_method
+    def drag_end(self):
+        self.drag_move()
+        self.drag = None
 
     @objc.python_method
     def build_menu(self):
@@ -492,7 +600,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
     def quit_(self, _sender):
         if not self.quitting:
             self.quitting = True
-            self.popover.performClose_(None)
+            self.hide_panel()
             NSApp.terminate_(None)  # -> applicationShouldTerminate_, which cleans up
 
 
