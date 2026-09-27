@@ -326,3 +326,14 @@ main { padding-bottom: 32px; }
 .menu-section { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
 .menu-select { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 8px 52px; font-size: 13px; color: var(--muted); }
 .menu-select select { min-width: 150px; color: var(--text); }
+/* Name mode: an editable name, and the email under it, redacted until clicked. */
+.alias-input { min-width: 0; width: 100%; max-width: 260px; padding: 2px 6px; margin-left: -6px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; transition: border-color .15s, background-color .15s; }
+.alias-input::placeholder { color: var(--muted); font-weight: 500; }
+.alias-input:hover { border-color: var(--line-strong); }
+.alias-input:focus { outline: none; border-color: var(--focus); background: var(--surface-2); }
+.email-reveal { display: block; margin-top: 3px; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer;
+  letter-spacing: .5px; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-reveal.shown { letter-spacing: 0; }
+.email-reveal:hover { color: var(--text); }
+

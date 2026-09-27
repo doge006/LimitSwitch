@@ -76,6 +76,19 @@ class WebTests(unittest.TestCase):
             self.request("/api/taskbar", {"display": 3})
         self.assertEqual(invalid.exception.code, 400)
 
+    def test_name_mode_shows_names_instead_of_emails(self):
+        with self.request("/api/rename", {"id": "claude-a", "name": "  Work  "}):
+            pass
+        self.assertEqual(self.controller.snapshot()["accounts"][0]["name"], "personal@example.com")  # off: emails
+        with self.request("/api/names", {"on": True}):
+            pass
+        accounts = {a["id"]: a for a in self.controller.snapshot()["accounts"]}
+        self.assertEqual(accounts["claude-a"]["name"], "Work")
+        self.assertEqual(accounts["claude-b"]["name"], "Claude 2")  # no name yet: never the email
+        self.assertEqual(accounts["claude-a"]["email"], "personal@example.com")  # the full view can reveal it
+        with self.assertRaises(HTTPError):
+            self.request("/api/rename", {"id": "claude-a", "name": "x" * 41})
+
     def wait_idle(self):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:

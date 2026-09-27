@@ -34,6 +34,8 @@ class Controller:
         self.taskbar_display = "main"  # which display's taskbar
         self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
         self.taskbar_available = False  # set by the Windows tray
+        self.name_mode = False   # show names instead of emails (screen sharing)
+        self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
         self.session = None
         self.simulator = simulator
@@ -73,12 +75,51 @@ class Controller:
             self.revision += 1
             self.condition.notify_all()
 
+    def names(self, accounts):
+        """Add each account's name ("label") and, in name mode, show it instead of the email, so
+        every surface (tray, taskbar, notifications) follows. An account without a name shows as
+        "Claude 1" and so on: in name mode an email never appears outside the full view."""
+        meta = self.gateway.manager.meta if self.live else None
+        name_mode = bool(meta.get("nameMode")) if meta is not None else self.name_mode
+        counts = {}
+        for view in accounts:
+            saved = (meta["accounts"].get(view["id"]) or {}) if meta is not None else {}
+            view["label"] = (saved.get("label") if meta is not None else self.labels.get(view["id"])) or ""
+            counts[view["provider"]] = counts.get(view["provider"], 0) + 1
+            if name_mode:
+                view["name"] = view["label"] or f"{view['provider'].title()} {counts[view['provider']]}"
+        return name_mode
+
+    def set_names(self, action, body):
+        if action == "names":
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["nameMode"] = on
+                    self.gateway.manager.save()
+            self.name_mode = on
+            return
+        name, account_id = body.get("name"), body.get("id")
+        if not isinstance(name, str) or len(name) > 40:
+            raise ValueError("Names are up to 40 characters")
+        if account_id not in {a.id for a in self.gateway.router.accounts}:
+            raise ValueError("Unknown account")
+        name = " ".join(name.split())
+        if self.live:
+            with self.gateway.manager.lock:
+                entry = self.gateway.manager.meta["accounts"].setdefault(account_id, {})
+                entry["label"] = name
+                self.gateway.manager.save()
+        else:
+            self.labels[account_id] = name
+
     def snapshot(self):
         # Read accounts before taking the controller lock: the live account manager has its
         # own lock and posts log lines (which need this lock) while holding it.
         router = self.gateway.router
         active = dict(router.active)
         accounts = [account_view(a, active.get(a.provider) == a.id) for a in router.accounts]
+        name_mode = self.names(accounts)
         auto_swap = router.auto_swap
         with self.condition:
             return {
@@ -91,6 +132,7 @@ class Controller:
                 "taskbarDisplay": (self.gateway.manager.meta.get("taskbarDisplay") or "main") if self.live else self.taskbar_display,
                 "taskbarDisplays": list(self.taskbar_displays),
                 "taskbarAvailable": self.taskbar_available,
+                "nameMode": name_mode,
                 "busy": self.pending or bool(self.session and (self.session.busy or self.session.recovering)),
                 "status": self.status, "output": self.output, "log": list(self.log),
                 "backend": "Real accounts" if self.live else "Routing simulator" if self.simulator else "Compiled proxy fork" if self.url else "Proxy starts on demand",
@@ -102,8 +144,12 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription", "compact", "taskbar"}:
+        if action not in {"preferences", "swap", "reset", "run", "continue", "stop", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename"}:
             raise ValueError("Unknown action")
+        if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
+            self.set_names(action, body)
+            self.notify("changed", None)
+            return
         if action in {"compact", "taskbar"}:  # the panel's size / the taskbar view and its display; instant
             changes = {}
             if "on" in body:
