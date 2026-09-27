@@ -1,12 +1,42 @@
 # Installs (or updates) Account Switcher for this Windows user, from the latest GitHub release:
 #   irm https://raw.githubusercontent.com/doge006/Account-Switcher/main/install.ps1 | iex
-# It downloads the portable zip into %LOCALAPPDATA%\Programs\Account Switcher, replaces an older
-# copy there (your accounts and settings are kept elsewhere) and starts it. The app adds itself to
-# the Start menu. -Zip installs a local zip instead; -Dir installs elsewhere; -NoStart doesn't start it.
+# It asks where to install (suggesting %LOCALAPPDATA%\Programs\Account Switcher, or where you
+# installed it last time), downloads the portable zip there, replaces an older copy (your accounts
+# and settings are kept elsewhere) and starts it. The app adds itself to the Start menu.
+# -Dir installs there without asking; -Zip installs a local zip; -NoStart doesn't start it.
 param([string]$Zip = '', [string]$Dir = '', [switch]$NoStart)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest is far faster without its progress bar
-if (-not $Dir) { $Dir = Join-Path $env:LOCALAPPDATA 'Programs\Account Switcher' }
+$data = Join-Path $env:LOCALAPPDATA 'AccountSwitcher'
+$remembered = Join-Path $data 'install-folder.txt'
+
+function Test-Writable($folder) {
+    try {
+        New-Item -ItemType Directory -Force -Path $folder | Out-Null
+        $probe = Join-Path $folder ('.write-test-' + [guid]::NewGuid())
+        Set-Content -LiteralPath $probe -Value 'ok'
+        Remove-Item -LiteralPath $probe
+        return $true
+    } catch { return $false }
+}
+
+if (-not $Dir) {
+    $suggested = Join-Path $env:LOCALAPPDATA 'Programs\Account Switcher'
+    if (Test-Path -LiteralPath $remembered) {
+        $last = (Get-Content -LiteralPath $remembered -Raw).Trim()
+        if ($last) { $suggested = $last }
+    }
+    while ($true) {
+        Write-Host ''
+        Write-Host 'Where should Account Switcher be installed?'
+        $answer = Read-Host "Folder (press Enter for $suggested)"
+        $answer = [Environment]::ExpandEnvironmentVariables($answer.Trim().Trim('"').Trim("'"))
+        $Dir = if ($answer) { $answer } else { $suggested }
+        $Dir = [IO.Path]::GetFullPath($Dir)
+        if (Test-Writable $Dir) { break }
+        Write-Host "Can't write to $Dir (a folder like Program Files needs admin rights). Pick another folder." -ForegroundColor Yellow
+    }
+}
 $temp = Join-Path $env:TEMP ('AccountSwitcher-install-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
@@ -35,6 +65,8 @@ try {
     robocopy $source $Dir /E /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Copying the files failed (robocopy $LASTEXITCODE)." }
     Write-Host "Installed in $Dir"
+    New-Item -ItemType Directory -Force -Path $data | Out-Null
+    Set-Content -LiteralPath $remembered -Value $Dir  # suggested next time (updates)
     if (-not $NoStart) {
         Start-Process -FilePath (Join-Path $Dir 'Account Switcher.exe')
         Write-Host 'Started. Account Switcher is in the tray (and in the Start menu from now on).'

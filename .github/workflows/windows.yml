@@ -80,3 +80,11 @@ jobs:
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           Start-Sleep 4
           python .github/release_check.py $dir
+      - name: install.ps1 asks where to install, and remembers it
+        run: |
+          $chosen = Join-Path $env:RUNNER_TEMP 'chosen folder'
+          $chosen | powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Zip build/AccountSwitcher-windows.zip -NoStart
+          if (-not (Test-Path "$chosen\Account Switcher.exe")) { throw 'it did not install where it was told' }
+          $remembered = (Get-Content "$env:LOCALAPPDATA\AccountSwitcher\install-folder.txt" -Raw).Trim()
+          if ($remembered -ne $chosen) { throw "it remembered '$remembered'" }
+          Write-Host "PASS installed in the folder given at the prompt, and remembered it"

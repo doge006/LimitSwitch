@@ -10,7 +10,7 @@ Either way installs the same portable copy: `Account Switcher.exe`, the app and 
   ```powershell
   irm https://raw.githubusercontent.com/doge006/Account-Switcher/main/install.ps1 | iex
   ```
-  It downloads the latest release into `%LOCALAPPDATA%\Programs\Account Switcher` and starts it.
+  It asks where to install (press Enter for `%LOCALAPPDATA%\Programs\Account Switcher`, or where you installed it last time), downloads the latest release there and starts it. Run it again to update.
 - **Download:** get `AccountSwitcher-windows.zip` from the [latest release](https://github.com/doge006/Account-Switcher/releases/latest), unzip it anywhere, and double-click `Account Switcher.exe`.
 
 On its first run it adds itself to the Start menu and starts with Windows (switch that off in the full view's Settings). Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder.
