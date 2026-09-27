@@ -331,5 +331,7 @@ check(not gone, "turning the taskbar view off removes the blocks")
 api("/api/shutdown")
 time.sleep(2)
 log = Path.home() / "AppData" / "Local" / "AccountSwitcher" / "app.log"
-print("---- app.log ----\n" + (log.read_text() if log.exists() else "(none)"))
+text = log.read_text() if log.exists() else ""
+print("---- app.log ----\n" + (text or "(none)"))
+check("Traceback" not in text and " ERROR " not in text, "no errors in app.log")
 sys.exit(1 if failures else 0)

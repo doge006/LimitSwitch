@@ -202,3 +202,18 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostTimerTests(unittest.TestCase):
+    def test_windows_host_knows_every_timer_the_view_uses(self):
+        """The Win32 host maps timer names to ids; a missing one broke every paint once (a white window)."""
+        import ast
+        import re
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent / "account_switcher"
+        used = set(re.findall(r'(?:set_timer|kill_timer|has_timer)\("(\w+)"', (root / "fullview.py").read_text()))
+        tree = ast.parse((root / "fullview_win.py").read_text())
+        timers = next(ast.literal_eval(node.value) for node in tree.body
+                      if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "TIMERS")
+        self.assertTrue(used)
+        self.assertEqual(used - set(timers), set())

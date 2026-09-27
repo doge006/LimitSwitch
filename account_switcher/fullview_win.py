@@ -33,7 +33,7 @@ HTCLIENT, TME_LEAVE, SW_SHOW, SW_RESTORE = 1, 2, 5, 9
 CURSORS = {"arrow": 32512, "hand": 32649, "text": 32513}
 KEYS = {0x1B: "escape", 0x0D: "enter", 0x08: "backspace", 0x2E: "delete", 0x25: "left", 0x27: "right",
         0x24: "home", 0x23: "end", 0x41: "a", 0x56: "v"}
-TIMERS = {"minute": 11, "toast": 12, "pending": 13}
+TIMERS = {"minute": 11, "toast": 12, "pending": 13, "anim": 14}
 
 
 class WNDCLASSEXW(ctypes.Structure):
