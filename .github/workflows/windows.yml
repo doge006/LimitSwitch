@@ -71,7 +71,6 @@ jobs:
       - name: Measure (demo accounts, taskbar view on), then profile
         run: |
           $pythonw = Join-Path (Split-Path (Get-Command python).Source) 'pythonw.exe'
-          Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);'
           function Sample([int]$seconds, [scriptblock]$during) {
             $ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
             $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum
@@ -103,8 +102,10 @@ jobs:
             Write-Host ("A window every 2 s, 60 s:       " + (Sample 60 { Churn 2 }))
             Invoke-RestMethod -Method Post -Uri "$base/api/show" -Headers $auth -ContentType 'application/json' -Body '{}' | Out-Null
             Write-Host ("Full view open, 30 s:           " + (Sample 30 { Start-Sleep 1 }))
-            [W.U]::PostMessage([W.U]::FindWindow('AccountSwitcherFullView', $null), 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+            $closed = @(Select-String -Path "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Pattern 'full view: closed').Count
+            python -c "import ctypes; u = ctypes.windll.user32; h = u.FindWindowW('AccountSwitcherFullView', None); print('full view window', h); print('close posted', bool(h and u.PostMessageW(h, 0x10, 0, 0)))"
             Start-Sleep 8
+            if (@(Select-String -Path "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Pattern 'full view: closed').Count -le $closed) { throw 'the full view did not close' }
             Write-Host ("Idle again after closing, 30 s: " + (Sample 30 { Start-Sleep 1 }))
             Invoke-RestMethod -Method Post -Uri "$base/api/shutdown" -Headers $auth -ContentType 'application/json' -Body '{}' | Out-Null
             foreach ($i in 1..40) { if (-not (Test-Path .runtime\tray.url)) { break }; Start-Sleep -Milliseconds 250 }
