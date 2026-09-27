@@ -1,6 +1,6 @@
 # Handoff — Account Switcher
 
-Where the project stands and how we work on it, so a fresh session can pick up. Last updated 2026-09-27 (after PR #48).
+Where the project stands and how we work on it, so a fresh session can pick up. Last updated 2026-09-27 (after the one-window full view fix).
 
 ## What it is
 A Windows tray and macOS menu bar app that manages several Claude Code and Codex accounts:
@@ -12,7 +12,7 @@ A Windows tray and macOS menu bar app that manages several Claude Code and Codex
 It is Python stdlib plus pystray and Pillow on Windows, and PyObjC on macOS. A loopback web dashboard ("full view") opens in an Edge `--app` window on Windows and a WKWebView on macOS.
 
 ## How the user works
-- **Git:** Claude develops on `claude/pensive-brahmagupta-cufhuf`, reset to `origin/main` after each merge, then **creates and merges the PR itself**. The user updates locally with `Update.cmd` / `Update.command`.
+- **Git:** Claude develops on the session's assigned `claude/…` branch, reset to `origin/main` after each merge, then **creates and merges the PR itself**. The user updates locally with `Update.cmd` / `Update.command`.
 - **Testing:** keep it targeted. Run the unit tests (`python -m unittest discover -s tests`), plus one focused check. Don't test at length.
 - **GitHub Actions** are **manual only** (`workflow_dispatch`) to save minutes; the account hit 90% of its allowance.
   - Run `windows.yml` by hand only for Windows-only behaviour (via `mcp__github__actions_run_trigger`).
@@ -68,8 +68,10 @@ It is Python stdlib plus pystray and Pillow on Windows, and PyObjC on macOS. A l
   - Has no bottom gap.
   - Fixed the open/close/open blink.
 
+- **One full view:** opening it again (tray, flyout, Start menu) brings the open window to the front (`win_window.focus_full_view`) instead of a second Edge window. A second launch hands off to the running copy (`server.show` → `Tray.open_full_view`, with `AllowSetForegroundWindow`), so the DPI-aware process sizes it the same as the tray does.
+
 ## Open / to verify with the user
-- **Full view:** check that it opens once, with no blink, and that 920 fits without scrolling (only CI-checked).
+- **Full view:** check that it opens once, with no blink, is brought to the front when already open, and is the same height from Start menu and tray (CI-checked only).
 - **Taskbar blocks:**
   - Check the "moved to left monitor" report; it should be gone now that there is no fallback to another display.
   - Check the right-monitor option on a real two-monitor setup (CI has one screen).
