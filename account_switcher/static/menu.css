@@ -117,6 +117,7 @@ body.compact #list { padding: 4px 4px 4px; }
 .icon-btn.tiny { width: 22px; height: 22px; margin: -3px 0; border-radius: 5px; }
 .icon-btn.tiny svg { width: 13px; height: 13px; }
 [hidden] { display: none !important; }  /* .icon-btn's display must not show a hidden button */
+#dock { margin: -3px 0; }  /* as tall as the header row: showing it doesn't resize the panel */
 header .title { flex: 1 1 auto; }  /* the dock button and Full view sit together on the right */
 /* Compact motion: a swap slides the old account out to the left, then the new one in from the right. */
 .slot { position: relative; overflow: hidden; }

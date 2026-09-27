@@ -167,7 +167,9 @@ jobs:
           docked, moved, again = frame("docked"), frame("moved"), frame("docked again")
           assert docked[3] > 150, "the panel is too short: %s" % (docked,)
           assert "visible=True" in text.split("panel test: docked")[1].split("\n")[0], "not visible"
-          assert moved[:2] == (docked[0] - 300, docked[1] - 200) and "detached=True" in text, "it didn't move"
+          top = lambda f: f[1] + f[3]  # the top edge stays put when the page changes height
+          assert moved[0] == docked[0] - 300 and top(moved) == top(docked) - 200 and "detached=True" in text, "it didn't move"
+          assert moved[3] == docked[3], "showing the dock button changed the panel's height"
           assert again[:2] == docked[:2] and "detached=False visible=True" in text, "it didn't dock back"
           assert "Traceback" not in text, "errors in app.log"
           print("PASS panel: docked", docked, "moved", moved, "docked again", again)
