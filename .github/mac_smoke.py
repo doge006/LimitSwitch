@@ -22,7 +22,7 @@ def check(ok, text):
 
 
 def app_pid():
-    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw|MacOS/Account Switcher"], capture_output=True, text=True)
+    done = subprocess.run(["pgrep", "-f", "LimitSwitch.pyw|MacOS/LimitSwitch"], capture_output=True, text=True)
     pids = [int(p) for p in done.stdout.split()]
     return pids[0] if pids else None
 
@@ -83,7 +83,7 @@ check(bool(status) or bool(size and float(size.group(3)) > 0 and float(size.grou
       "the menu bar icon has a place in the menu bar")
 names = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
 print("process:", names)
-check(names.endswith("Account Switcher"), "the process is Account Switcher, not Python")
+check(names.endswith("LimitSwitch"), "the process is LimitSwitch, not Python")
 opened_by_install = [w for w in found if w["layer"] == 0 and w["onscreen"]]
 check(bool(opened_by_install), "opening the app shows its window")
 

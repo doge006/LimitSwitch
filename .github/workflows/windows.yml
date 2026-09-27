@@ -2,11 +2,6 @@ name: Windows app
 
 on:
   workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
-    inputs:
-      portable:
-        description: "Also build and test the portable copy (as the release does)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -26,17 +21,17 @@ jobs:
           New-Item -ItemType Directory -Force "$HOME\.codex" | Out-Null
           python scripts/installer.py --skip-code --no-launch
       - name: Start the app with its full view
-        run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "AccountSwitcher.pyw","--show" -WorkingDirectory $PWD
+        run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitch.pyw","--show" -WorkingDirectory $PWD
       - name: Smoke test
         run: .venv\Scripts\python.exe .github\win_smoke.py
       - name: Updating replaces a copy it can't reach (its URL file is gone)
         run: |
-          Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "AccountSwitcher.pyw" -WorkingDirectory $PWD
+          Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitch.pyw" -WorkingDirectory $PWD
           Start-Sleep 8
           Remove-Item .runtime\tray.url -ErrorAction SilentlyContinue
           python scripts/installer.py --skip-code
           Start-Sleep 3
-          $all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'AccountSwitcher[.]pyw' })
+          $all = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
           $all | ForEach-Object { "$($_.ProcessId) <- $($_.ParentProcessId): $($_.CommandLine)" }
           # A venv's pythonw.exe starts the real Python as its child: one app, two processes.
           $ids = $all | ForEach-Object { $_.ProcessId }
@@ -54,35 +49,3 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  portable:
-    if: inputs.portable
-    runs-on: windows-2025
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          architecture: x64
-      - uses: ilammy/msvc-dev-cmd@v1
-      - name: Build the portable copy
-        run: ./scripts/build_portable.ps1
-      - name: Install it with install.ps1 and run it (demo accounts)
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'installed'
-          ./install.ps1 -Zip build/AccountSwitcher-windows.zip -Dir $dir -NoStart
-          if (-not (Test-Path "$dir\Account Switcher.exe")) { throw 'install.ps1 did not install the exe' }
-          Start-Process -FilePath "$dir\Account Switcher.exe" -ArgumentList '--demo', '--show'
-          $url = "$dir\.runtime\tray.url"
-          foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
-          if (-not (Test-Path $url)) { throw 'the app did not start' }
-          Start-Sleep 4
-          python .github/release_check.py $dir
-      - name: install.ps1 asks where to install, and remembers it
-        run: |
-          $chosen = Join-Path $env:RUNNER_TEMP 'chosen folder'
-          $chosen | powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Zip build/AccountSwitcher-windows.zip -NoStart
-          if (-not (Test-Path "$chosen\Account Switcher.exe")) { throw 'it did not install where it was told' }
-          $remembered = (Get-Content "$env:LOCALAPPDATA\AccountSwitcher\install-folder.txt" -Raw).Trim()
-          if ($remembered -ne $chosen) { throw "it remembered '$remembered'" }
-          Write-Host "PASS installed in the folder given at the prompt, and remembered it"

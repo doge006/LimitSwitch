@@ -1,4 +1,4 @@
-"""Account Switcher installer and updater, for Windows and macOS (one script, detects the OS).
+"""LimitSwitch installer and updater, for Windows and macOS (one script, detects the OS).
 
     python scripts/installer.py            install, or update an existing install
     python scripts/installer.py --branch X switch to (and update) another branch
@@ -11,10 +11,10 @@ which make sure Python and git exist first. Each run:
    never lost: they are stashed or saved to a backup branch, and only with --force).
 2. Creates or refreshes a private Python environment in .venv with the requirements for
    this OS (only reinstalled when they change).
-3. Adds the app where you expect it: a Start menu shortcut on Windows; "Account Switcher"
+3. Adds the app where you expect it: a Start menu shortcut on Windows; "LimitSwitch"
    in Applications on macOS (menu bar only, no Dock icon). The app itself registers to
    start at sign-in.
-4. Restarts Account Switcher on the new version (or starts it, on first install).
+4. Restarts LimitSwitch on the new version (or starts it, on first install).
 """
 import argparse
 import hashlib
@@ -32,9 +32,10 @@ REPO = "https://github.com/doge006/Account-Switcher.git"
 REQUIREMENTS = ROOT / "requirements-native.txt"
 VENV = ROOT / ".venv"
 RUNTIME = ROOT / ".runtime"
-APP_NAME = "Account Switcher"
+APP_NAME = "LimitSwitch"
 MAC_APPS = (Path("/Applications") / f"{APP_NAME}.app", Path.home() / "Applications" / f"{APP_NAME}.app")
 MAC_APP = MAC_APPS[1]
+LEGACY_MAC_APPS = tuple(p.with_name("Account Switcher.app") for p in MAC_APPS)  # before the rename
 WINDOWS, MAC = sys.platform == "win32", sys.platform == "darwin"
 PREBUILT_ONLY = False  # --prebuilt-launcher (CI: test the launcher copy kept in the repo)
 
@@ -150,13 +151,13 @@ def mac_app_location():
 
 
 def mac_app():
-    """Account Switcher.app: a small bundle that starts the app from .venv (LSUIElement: menu
+    """LimitSwitch.app: a small bundle that starts the app from .venv (LSUIElement: menu
     bar only, no Dock icon). Its output goes to app.log, so a failed start is never silent."""
     global MAC_APP
     MAC_APP = mac_app_location()
-    for other in MAC_APPS:
+    for other in MAC_APPS + LEGACY_MAC_APPS:
         if other != MAC_APP and (other / "Contents" / "MacOS" / "AccountSwitcher").exists():
-            shutil.rmtree(other, ignore_errors=True)  # one copy only (older installs used ~/Applications)
+            shutil.rmtree(other, ignore_errors=True)  # one copy only (older installs: ~/Applications, the old name)
     build_mac_app(MAC_APP)
 
 
@@ -223,7 +224,7 @@ def launcher_config(resources):
     if not library:
         return False
     (resources / "launcher.conf").write_text(
-        "\n".join(str(p) for p in (library, venv_python(), ROOT / "AccountSwitcher.pyw", log_path())) + "\n")
+        "\n".join(str(p) for p in (library, venv_python(), ROOT / "LimitSwitch.pyw", log_path())) + "\n")
     return True
 
 
@@ -236,7 +237,7 @@ def build_mac_app(app):
     # macOS 26 gives menu bar space only when the running program is the bundle's own
     # executable: a script that replaces itself with Python gets an icon of height 0. So the
     # executable is a small native launcher running Python in-process (as py2app apps do).
-    native = macos / "Account Switcher"
+    native = macos / "LimitSwitch"
     built = launcher_config(contents / "Resources") and build_launcher(native, PREBUILT_ONLY)
     if not built and native.exists():
         native.unlink()
@@ -253,22 +254,22 @@ def build_mac_app(app):
     launcher = macos / "AccountSwitcher"
     log = log_path()
     launcher.write_text(f"""#!/bin/sh
-# Starts Account Switcher. Anything it prints goes to app.log.
+# Starts LimitSwitch. Anything it prints goes to app.log.
 # Opened by the user it shows its window; --at-login (the login item) starts it quietly.
 HERE="$(cd "$(dirname "$0")" && pwd)"
-if [ -x "$HERE/Account Switcher" ]; then exec "$HERE/Account Switcher" "$@"; fi
+if [ -x "$HERE/LimitSwitch" ]; then exec "$HERE/LimitSwitch" "$@"; fi
 PY="{venv_python()}"
 LOG="{log}"
 SHOW=--show
 if [ "$1" = "--at-login" ]; then SHOW=""; shift; fi
 if [ ! -x "$PY" ]; then
-  /usr/bin/osascript -e 'display alert "Account Switcher did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
+  /usr/bin/osascript -e 'display alert "LimitSwitch did not start" message "Its Python environment is missing. Run Update.command in {ROOT} again." as critical'
   exit 1
 fi
 export ACCOUNT_SWITCHER_APP="$(cd "$HERE/../.." && pwd)"
 ARCH=""
 if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then ARCH="/usr/bin/arch -arm64"; fi
-$ARCH "$PY" "{ROOT / "AccountSwitcher.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
+$ARCH "$PY" "{ROOT / "LimitSwitch.pyw"}" $SHOW "$@" >>"$LOG" 2>&1
 """)
     launcher.chmod(0o755)
     icon = contents / "Resources" / "AppIcon.icns"
@@ -302,7 +303,7 @@ def stop_running():
         except OSError:
             pass
         return False
-    say("Closing the running Account Switcher...", "info")
+    say("Closing the running LimitSwitch...", "info")
     for _ in range(80):
         if not url_file.exists():
             break
@@ -319,13 +320,13 @@ def stop_leftovers():
     folder = str(ROOT).replace("'", "''")
     script = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine "
               f"-and $_.CommandLine.Contains('{folder}') "
-              "-and $_.CommandLine -match 'AccountSwitcher[.]pyw|account_switcher[.]tray' } | "
+              "-and $_.CommandLine -match '(LimitSwitch|AccountSwitcher)[.]pyw|account_switcher[.]tray' } | "
               "ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }")
     done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                           capture_output=True, text=True, check=False)
     ended = done.stdout.split()
     if ended:
-        say(f"Closed {len(ended)} older Account Switcher process(es) that were still running.", "info")
+        say(f"Closed {len(ended)} older LimitSwitch process(es) that were still running.", "info")
         try:
             (RUNTIME / "tray.url").unlink()
         except OSError:
@@ -352,7 +353,7 @@ def dump_stuck():
     """A copy that is running but never got ready: have it write where it is stuck to app.log."""
     if WINDOWS:
         return
-    done = subprocess.run(["pgrep", "-f", "AccountSwitcher.pyw|MacOS/Account Switcher"], capture_output=True, text=True)
+    done = subprocess.run(["pgrep", "-f", "(LimitSwitch|AccountSwitcher)[.]pyw|MacOS/(LimitSwitch|Account Switcher)"], capture_output=True, text=True)
     for pid in done.stdout.split():
         subprocess.run(["kill", "-USR1", pid], check=False)
         say(f"(still running as process {pid}; its stack follows)", "warn")
@@ -364,7 +365,7 @@ def start():
         subprocess.run(["open", str(MAC_APP)], check=False)
         return
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen([str(venv_python(windowless=True)), str(ROOT / "AccountSwitcher.pyw")], cwd=str(ROOT),
+    subprocess.Popen([str(venv_python(windowless=True)), str(ROOT / "LimitSwitch.pyw")], cwd=str(ROOT),
                      creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=not WINDOWS)
 
@@ -398,7 +399,7 @@ class Tee:
 
 def main(argv=None):
     sys.stdout = Tee(sys.stdout, log_path().with_name("update.log"))
-    parser = argparse.ArgumentParser(description="Install or update Account Switcher.")
+    parser = argparse.ArgumentParser(description="Install or update LimitSwitch.")
     parser.add_argument("--branch", default="")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-launch", action="store_true")
@@ -408,12 +409,12 @@ def main(argv=None):
     global PREBUILT_ONLY
     PREBUILT_ONLY = args.prebuilt_launcher
     if not (WINDOWS or MAC):
-        say("Account Switcher runs on Windows and macOS.", "error")
+        say("LimitSwitch runs on Windows and macOS.", "error")
         return 1
     if sys.version_info < (3, 10):
         say(f"Python 3.10 or newer is needed (this is {sys.version.split()[0]}).", "error")
         return 1
-    say(f"Account Switcher installer - {'Windows' if WINDOWS else 'macOS'}", "info")
+    say(f"LimitSwitch installer - {'Windows' if WINDOWS else 'macOS'}", "info")
     try:
         status, before = ("current", None) if args.skip_code else update_code(args.branch, args.force)
         if status == "blocked":
@@ -431,15 +432,15 @@ def main(argv=None):
         if not args.no_launch:
             start()
             if not started(45 if MAC else 20):
-                say("Account Switcher didn't start. The error:", "error")
+                say("LimitSwitch didn't start. The error:", "error")
                 dump_stuck()
                 try:
                     print("\n".join(log_path().read_text(encoding="utf-8").splitlines()[-25:]))
                 except OSError:
                     python = venv_python()
-                    say(f"(no log yet) To see it, run:  \"{python}\" \"{ROOT / 'AccountSwitcher.pyw'}\"", "warn")
+                    say(f"(no log yet) To see it, run:  \"{python}\" \"{ROOT / 'LimitSwitch.pyw'}\"", "warn")
                 return 1
-            say("Restarted Account Switcher." if was_running else "Started Account Switcher.", "ok")
+            say("Restarted LimitSwitch." if was_running else "Started LimitSwitch.", "ok")
         say("Done." + (" It's in the Start menu." if WINDOWS else f" It's in your menu bar and in {MAC_APP.parent}."), "ok")
         return 0
     except (RuntimeError, OSError, subprocess.CalledProcessError) as error:

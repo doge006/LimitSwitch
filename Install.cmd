@@ -1,5 +1,5 @@
 @echo off
-rem Install or update Account Switcher (Windows). Options: --branch NAME, --force, --no-launch
+rem Install or update LimitSwitch (Windows). Options: --branch NAME, --force, --no-launch
 cd /d "%~dp0"
 set "PY="
 for %%P in (python.exe py.exe) do if not defined PY (for /f "delims=" %%F in ('where %%P 2^>nul ^| findstr /v /i WindowsApps') do if not defined PY set "PY=%%F")

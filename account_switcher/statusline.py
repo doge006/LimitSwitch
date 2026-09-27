@@ -1,4 +1,4 @@
-"""Claude Code status line (installed by Account Switcher while it runs).
+"""Claude Code status line (installed by LimitSwitch while it runs).
 
 Claude Code runs the status line command after each reply and passes it the session's data,
 including the live 5-hour and weekly usage of the signed-in account (rate_limits). That is how

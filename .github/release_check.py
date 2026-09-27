@@ -1,5 +1,5 @@
-"""Release workflow: the installed portable copy is running. Its full view window opened, the
-Start menu shortcut was made, app.log has no errors, and it quits through its API."""
+"""Release workflow: the copy LimitSwitch-Setup.exe installed is running. Its full view window
+opened, the Start menu shortcut is there, app.log has no errors, and it quits through its API."""
 import ctypes
 import json
 import os
@@ -20,12 +20,12 @@ def check(ok, text):
 
 user32 = ctypes.windll.user32
 check(bool(user32.FindWindowW("AccountSwitcherFullView", None)), "the full view window opened (native, bundled Python)")
-link = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Account Switcher.lnk"
+link = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "LimitSwitch.lnk"
 for _ in range(20):
     if link.exists():
         break
     time.sleep(0.5)
-check(link.exists(), "the Start menu shortcut was added")
+check(link.exists(), "the Start menu shortcut is there")
 log = Path(os.environ["LOCALAPPDATA"]) / "AccountSwitcher" / "app.log"
 text = log.read_text(encoding="utf-8") if log.exists() else ""
 print("---- app.log ----\n" + text)

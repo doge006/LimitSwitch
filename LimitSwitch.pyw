@@ -1,4 +1,4 @@
-"""Start Account Switcher in the tray / menu bar without a console window (used by the Start
+"""Start LimitSwitch in the tray / menu bar without a console window (used by the Start
 menu shortcut, start at sign-in and the macOS app). A startup error is written to app.log and,
 on macOS, shown in an alert, since there is no console to print it to."""
 import os
@@ -29,7 +29,7 @@ def report(text):
         import subprocess
         last = (text.strip().splitlines() or ["unknown error"])[-1].replace('"', "'")[:300]
         subprocess.run(["/usr/bin/osascript", "-e",
-                        f'display alert "Account Switcher couldn\'t start" message "{last}\n\nDetails: {log}" as critical'],
+                        f'display alert "LimitSwitch couldn\'t start" message "{last}\n\nDetails: {log}" as critical'],
                        check=False)
 
 

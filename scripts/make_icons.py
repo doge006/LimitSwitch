@@ -2,7 +2,7 @@
 
     python scripts/make_icons.py
 
-The mark: two arrows chasing each other around a circle, Claude's orange and Codex's violet,
+The mark: a gauge (Codex's violet into Claude's orange) with its needle heading for the limit,
 on a dark tile. Written as
   switcher.png      256 px, the tile filling the image (in-app header, tray, web favicon)
   switcher.ico      Windows sizes, 16-256 px
@@ -43,28 +43,39 @@ def gradient(size, top, bottom):
     return column.resize((size, size))
 
 
-def arrow(size, start, end, colors, radius, width):
-    """One arc from start to end degrees (clockwise on screen) with an arrowhead at the end,
-    filled with a diagonal gradient. Returns an RGBA layer."""
+def gauge(size, colors_left, colors_right, radius, width):
+    """The gauge's dial: a 240-degree arc open at the bottom, Codex's violet on the left half and
+    Claude's orange on the right (the two limits it watches), with round ends. Returns RGBA."""
+    c = size / 2
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    for (start, end), colors in (((150, 270), colors_left), ((270, 390), colors_right)):
+        shape = Image.new("L", (size, size), 0)
+        d = ImageDraw.Draw(shape)
+        d.arc((c - radius, c - radius, c + radius, c + radius), start, end, fill=255, width=round(width))
+        for angle in (start, end):  # round caps
+            a, mid = math.radians(angle), radius - width / 2
+            x, y = c + mid * math.cos(a), c + mid * math.sin(a)
+            d.ellipse((x - width / 2, y - width / 2, x + width / 2, y + width / 2), fill=255)
+        fill = gradient(size, *colors).rotate(-35, resample=Image.Resampling.BICUBIC, expand=False).convert("RGBA")
+        fill.putalpha(shape)
+        layer.alpha_composite(fill)
+    return layer
+
+
+def needle(size, angle, length, width):
+    """A white needle from the centre towards `angle` degrees (clockwise from 3 o'clock), tapering
+    to a point, with a round hub. Returns RGBA."""
     c = size / 2
     shape = Image.new("L", (size, size), 0)
     d = ImageDraw.Draw(shape)
-    box = (c - radius, c - radius, c + radius, c + radius)
-    d.arc(box, start, end, fill=255, width=round(width))
-    a = math.radians(start)  # round cap at the tail
-    tail = (c + (radius - width / 2) * math.cos(a), c + (radius - width / 2) * math.sin(a))
-    d.ellipse((tail[0] - width / 2, tail[1] - width / 2, tail[0] + width / 2, tail[1] + width / 2), fill=255)
-    a = math.radians(end)
-    mid = radius - width / 2
-    p = (c + mid * math.cos(a), c + mid * math.sin(a))
-    n = (math.cos(a), math.sin(a))          # outward
-    t = (-math.sin(a), math.cos(a))         # clockwise tangent
-    head, spread = width * 1.05, width * 0.98
-    d.polygon([(p[0] + t[0] * head, p[1] + t[1] * head),
-               (p[0] + n[0] * spread, p[1] + n[1] * spread),
-               (p[0] - n[0] * spread, p[1] - n[1] * spread)], fill=255)
-    fill = gradient(size, *colors).rotate(-35, resample=Image.Resampling.BICUBIC, expand=False)
-    layer = fill.convert("RGBA")
+    a = math.radians(angle)
+    n = (-math.sin(a), math.cos(a))
+    tip = (c + length * math.cos(a), c + length * math.sin(a))
+    d.polygon([tip, (c + n[0] * width / 2, c + n[1] * width / 2), (c - n[0] * width / 2, c - n[1] * width / 2)],
+              fill=255)
+    hub = width * .8
+    d.ellipse((c - hub, c - hub, c + hub, c + hub), fill=255)
+    layer = Image.new("RGBA", (size, size), (246, 247, 250, 0))
     layer.putalpha(shape)
     return layer
 
@@ -73,9 +84,10 @@ def tile(size):
     """The dark tile with the mark, filling size x size (supersampled internally)."""
     big = size * SS
     base = gradient(big, TOP, BOTTOM).convert("RGBA")
-    radius, width = big * .30, big * .125
-    base.alpha_composite(arrow(big, 208, 334, ORANGE, radius, width))   # over the top, head pointing down
-    base.alpha_composite(arrow(big, 28, 154, VIOLET, radius, width))    # under the bottom, head pointing up
+    mark = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    mark.alpha_composite(gauge(big, VIOLET, ORANGE, big * .33, big * .12))
+    mark.alpha_composite(needle(big, -40, big * .27, big * .11))
+    base.alpha_composite(mark, (0, round(big * .04)))  # the dial's weight is above its centre
     mask = squircle(big)
     base.putalpha(mask)
     return base.resize((size, size), Image.Resampling.LANCZOS)

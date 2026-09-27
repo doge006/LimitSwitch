@@ -1,7 +1,8 @@
 name: Release
 
-# Builds the portable Windows copy, tests it (the exe starts, the full view opens, install.ps1
-# installs it) and publishes it as release v<version> (account_switcher/version.py).
+# Builds LimitSwitch-Setup.exe, tests it (installs silently, the app starts and its full view
+# opens, installing again over the running copy works, the uninstaller removes it) and publishes
+# it as release v<version> (account_switcher/version.py).
 on:
   workflow_dispatch:  # manual only
     inputs:
@@ -16,7 +17,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,34 +25,66 @@ jobs:
           python-version: "3.13"
           architecture: x64
       - uses: ilammy/msvc-dev-cmd@v1
+      - name: Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
       - name: Version
         id: version
         run: |
           $v = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v"
-      - name: Build the portable copy
-        run: ./scripts/build_portable.ps1
-      - name: Install it with install.ps1 and run it (demo accounts)
+      - name: Build the installer
+        run: ./scripts/build_windows.ps1
+      - name: Install silently and run it (demo accounts)
         run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'installed'
-          ./install.ps1 -Zip build/AccountSwitcher-windows.zip -Dir $dir -NoStart
-          if (-not (Test-Path "$dir\Account Switcher.exe")) { throw 'install.ps1 did not install the exe' }
-          if (-not (Test-Path "$dir\runtime\pythonw.exe")) { throw 'no bundled Python' }
-          Start-Process -FilePath "$dir\Account Switcher.exe" -ArgumentList '--demo', '--show'
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
+          Start-Process -Wait -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startup'
+          if (-not (Test-Path "$dir\LimitSwitch.exe")) { throw 'the exe was not installed' }
+          if (-not (Test-Path "$dir\unins000.exe")) { throw 'no uninstaller' }
+          # A silent install starts the app in the tray; close it and start it in demo mode instead.
           $url = "$dir\.runtime\tray.url"
+          foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
+          & "$dir\runtime\python.exe" "$dir\LimitSwitch.pyw" --quit
+          Start-Process -FilePath "$dir\LimitSwitch.exe" -ArgumentList '--demo', '--show'
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           Start-Sleep 4
           python .github/release_check.py $dir
-      - name: install.ps1 asks where to install, and remembers it
+      - name: Install again over a running copy (what an update does)
         run: |
-          $chosen = Join-Path $env:RUNNER_TEMP 'chosen folder'
-          $chosen | powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Zip build/AccountSwitcher-windows.zip -NoStart
-          if (-not (Test-Path "$chosen\Account Switcher.exe")) { throw 'it did not install where it was told' }
-          $remembered = (Get-Content "$env:LOCALAPPDATA\AccountSwitcher\install-folder.txt" -Raw).Trim()
-          if ($remembered -ne $chosen) { throw "it remembered '$remembered'" }
-          Write-Host "PASS installed in the folder given at the prompt, and remembered it"
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
+          Start-Process -FilePath "$dir\LimitSwitch.exe"
+          $url = "$dir\.runtime\tray.url"
+          foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
+          if (-not (Test-Path $url)) { throw 'the app did not start' }
+          $before = (Get-Content $url -Raw).Trim()
+          Start-Process -Wait -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`""
+          foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
+          if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          Write-Host "PASS updated in place and started again ($($running.Count) process(es))"
+          $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue).LimitSwitch
+          if (-not $run) { throw 'start at sign-in was not set' }
+          Write-Host "PASS start at sign-in: $run"
+      - name: Uninstall
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
+          Start-Process -Wait -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          Start-Sleep 2
+          if (Test-Path "$dir\LimitSwitch.exe") { throw 'the exe is still there' }
+          $left = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -match 'LimitSwitch[.]pyw' })
+          if ($left.Count) { throw 'the app is still running' }
+          if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name LimitSwitch -ErrorAction SilentlyContinue) { throw 'start at sign-in was left behind' }
+          $link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\LimitSwitch.lnk'
+          if (Test-Path $link) { throw 'the Start menu shortcut was left behind' }
+          Write-Host 'PASS uninstalled cleanly'
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.publish }}
+        with:
+          name: LimitSwitch-Setup
+          path: build/LimitSwitch-Setup.exe
+          retention-days: 7
       - name: Publish
         if: inputs.publish
         env:
@@ -60,4 +93,4 @@ jobs:
           $v = "${{ steps.version.outputs.version }}"
           gh release view "v$v" 2>$null
           if ($LASTEXITCODE -eq 0) { throw "v$v is already released: bump VERSION in account_switcher/version.py" }
-          gh release create "v$v" build/AccountSwitcher-windows.zip --title "Account Switcher $v" --generate-notes --target "${{ github.sha }}"
+          gh release create "v$v" build/LimitSwitch-Setup.exe --title "LimitSwitch $v" --generate-notes --target "${{ github.sha }}"

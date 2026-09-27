@@ -1,4 +1,4 @@
-"""Windows: give the full view's window Account Switcher's own taskbar identity.
+"""Windows: give the full view's window LimitSwitch's own taskbar identity.
 
 The app runs as pythonw.exe, so the taskbar would group its window under Python (its icon and
 name). Setting an AppUserModelID of our own on the window (the documented per-window property
@@ -9,7 +9,7 @@ import ctypes
 from ctypes import wintypes
 
 APP_ID = "AccountSwitcher.App"
-TITLE = "Account Switcher"
+TITLE = "LimitSwitch"
 
 VT_LPWSTR = 31
 

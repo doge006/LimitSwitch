@@ -170,8 +170,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         if defaults.boolForKey_("HiddenIconAlertSuppressed"):
             return
         alert = NSAlert.alloc().init()
-        alert.setMessageText_("macOS is hiding Account Switcher's menu bar icon")
-        alert.setInformativeText_("Turn on Account Switcher under System Settings › Menu Bar › Allow in the Menu Bar. "
+        alert.setMessageText_("macOS is hiding LimitSwitch's menu bar icon")
+        alert.setInformativeText_("Turn on LimitSwitch under System Settings › Menu Bar › Allow in the Menu Bar. "
                                   "If it's already on, the menu bar may be full: quit another menu bar app, or hold ⌘ "
                                   "and drag icons out to make room. Everything also works from this window.")
         alert.addButtonWithTitle_("Open Menu Bar Settings")
@@ -225,7 +225,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSPopoverDelegate")):
         submenu("Edit", [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"), None, ("Cut", "cut:", "x"),
                          ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")])
         window = submenu("Window", [("Minimize", "performMiniaturize:", "m"), ("Close", "performClose:", "w"), None,
-                                    ("Show Account Switcher", "showFullView:", "0", "self")])
+                                    ("Show LimitSwitch", "showFullView:", "0", "self")])
         NSApp.setWindowsMenu_(window)
         return bar
 
