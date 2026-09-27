@@ -40,7 +40,7 @@ jobs:
       - name: Install silently and run it (demo accounts)
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'Installed LimitSwitch'
-          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startup').WaitForExit()
+          (Start-Process -PassThru -FilePath build\LimitSwitch-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", '/TASKS=startmenu,startup').WaitForExit()
           if (-not (Test-Path "$dir\LimitSwitch.exe")) { throw 'the exe was not installed' }
           if (-not (Test-Path "$dir\unins000.exe")) { throw 'no uninstaller' }
           # A silent install starts the app in the tray; close it and start it in demo mode instead.

@@ -373,6 +373,8 @@ def main(argv=None):
         logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
+    from .profiler import start as start_profiler
+    profiler = start_profiler()  # only with LIMITSWITCH_PROFILE set (a development tool)
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
     write_url_file(args.url_file, server.launch_url)
@@ -402,6 +404,8 @@ def main(argv=None):
         finally:
             controller.close()  # stops any proxy / Claude processes this app owns
             clear_url_file(args.url_file, server.launch_url)
+            if profiler:
+                profiler.report()
 
     try:
         if sys.platform == "darwin":

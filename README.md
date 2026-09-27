@@ -23,11 +23,11 @@ LimitSwitch does all of it in one small tray app: every limit at a glance, one-c
 
 ## Install (Windows)
 
-Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and adds LimitSwitch to the Start menu. Tick the boxes for a desktop shortcut and for starting when you sign in. It brings its own Python, so nothing else is needed.
+Download **`LimitSwitch-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitch` by default), and has boxes for a Start menu entry and starting when you sign in (both on) and a desktop shortcut (off). It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
-Your accounts and settings live in `%LOCALAPPDATA%\AccountSwitcher`, not in the app's folder, so updating or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
+Your accounts and settings are kept in `%LOCALAPPDATA%\AccountSwitcher` (the app's name before it was renamed), so updating, reinstalling or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
 
 **Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads the new installer, which closes the app, replaces its files and starts it again. **Check for updates** checks now.
 

@@ -1,7 +1,7 @@
 ; LimitSwitch's Windows installer (Inno Setup 6), built by scripts\build_windows.ps1:
 ;   iscc /DAppVersion=1.0.0 /DSourceDir=<build\LimitSwitch> scripts\LimitSwitch.iss
-; Per user, no admin rights. It asks where to install, adds a Start menu entry (and, if ticked, a
-; desktop one and start at sign-in). The app's in-app updater runs it with
+; Per user, no admin rights. It asks where to install, has boxes for a Start menu entry,
+; start at sign-in (both on) and a desktop shortcut (off). The app's in-app updater runs it with
 ; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<this folder>: it closes the app, replaces the
 ; files and starts the app again. Saved accounts and settings live in %LOCALAPPDATA%\AccountSwitcher
 ; and are kept, also by the uninstaller.
@@ -48,6 +48,7 @@ CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
+Name: "startmenu"; Description: "Add to the Start menu"
 Name: "startup"; Description: "Start {#AppName} when I sign in"
 Name: "desktopicon"; Description: "Add a desktop shortcut"; Flags: unchecked
 
@@ -60,7 +61,8 @@ Type: filesandordirs; Name: "{app}\runtime"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Claude Code and Codex usage limits and account switching"
+Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Claude Code and Codex usage limits and account switching"; \
+    AppUserModelID: "LimitSwitch.App"; Tasks: startmenu
 Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]

@@ -2,12 +2,19 @@ name: Windows app
 
 on:
   workflow_dispatch:  # manual only (Actions tab -> Run workflow), so it uses no minutes by itself
+    inputs:
+      job:
+        description: "smoke: the smoke test on Windows 10 and 11. profile: where CPU and memory go (account_switcher/profiler.py)"
+        type: choice
+        options: [smoke, profile]
+        default: smoke
 
 permissions:
   contents: read
 
 jobs:
   smoke:
+    if: inputs.job != 'profile'
     strategy:
       fail-fast: false
       matrix:
@@ -49,3 +56,42 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+
+  profile:
+    if: inputs.job == 'profile'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Requirements
+        run: python -m pip install --quiet --disable-pip-version-check -r requirements-native.txt
+      - name: Run it (demo accounts, taskbar view on), idle and then with windows coming and going
+        run: |
+          $pythonw = Join-Path (Split-Path (Get-Command python).Source) 'pythonw.exe'
+          $env:LIMITSWITCH_PROFILE = "$PWD\profile.txt"
+          $env:LIMITSWITCH_TRACEMALLOC = '1'
+          Start-Process -FilePath $pythonw -ArgumentList 'LimitSwitch.pyw', '--demo' -WorkingDirectory $PWD
+          foreach ($i in 1..80) { if (Test-Path .runtime\tray.url) { break }; Start-Sleep -Milliseconds 250 }
+          Start-Sleep 5
+          function Sample([int]$seconds, [scriptblock]$during) {
+            $ids = (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'LimitSwitch[.]pyw' }).ProcessId
+            $before = (Get-Process -Id $ids | Measure-Object CPU -Sum).Sum
+            $end = (Get-Date).AddSeconds($seconds)
+            while ((Get-Date) -lt $end) { & $during }
+            $p = Get-Process -Id $ids
+            '{0:N1} MB memory ({1:N1} MB private), {2:N2}% of one CPU core' -f (($p | Measure-Object WorkingSet64 -Sum).Sum / 1MB),
+                (($p | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB), ((($p | Measure-Object CPU -Sum).Sum - $before) / $seconds * 100)
+          }
+          Write-Host ("Idle, 60 s:            " + (Sample 60 { Start-Sleep 1 }))
+          Write-Host ("Windows opening, 60 s: " + (Sample 60 {
+            $n = Start-Process notepad -PassThru; Start-Sleep -Milliseconds 1500
+            Stop-Process -Id $n.Id -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500 }))
+          $base, $token = (Get-Content .runtime\tray.url -Raw).Trim() -split '/#token='
+          Invoke-RestMethod -Method Post -Uri "$base/api/shutdown" -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json' -Body '{}' | Out-Null
+          foreach ($i in 1..40) { if (Test-Path profile.txt) { break }; Start-Sleep -Milliseconds 250 }
+          Start-Sleep 1
+          Get-Content profile.txt
+          Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -ErrorAction SilentlyContinue
