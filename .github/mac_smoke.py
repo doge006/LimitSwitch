@@ -1,6 +1,7 @@
 """macOS smoke test on a real Mac (GitHub Actions): the installed app shows its menu bar icon,
 opens its window, and quits cleanly (Codex config restored). Screenshots go to ./shots."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SHOTS = ROOT / "shots"
 SHOTS.mkdir(exist_ok=True)
 failures = []
+# The running copy's URL: next to a source copy's code, or (the DMG's app) in the user's folder.
+URL_FILE = Path(os.environ.get("LIMITSWITCH_URL_FILE") or ROOT / ".runtime" / "tray.url")
 
 
 def check(ok, text):
@@ -45,7 +48,7 @@ def shot(name, region=None):
 
 
 def api(path):
-    url = (ROOT / ".runtime" / "tray.url").read_text().strip()
+    url = URL_FILE.read_text().strip()
     base, token = url.split("/#token=")
     request = Request(base + path, data=b"{}", method="POST",
                       headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
@@ -117,7 +120,7 @@ for _ in range(40):
     time.sleep(.25)
 check(app_pid() is None, "quit ends the process")
 check(not config.exists() or "account-switcher" not in config.read_text(), "quit restores the Codex config")
-check(not (ROOT / ".runtime" / "tray.url").exists(), "quit removes the runtime URL")
+check(not URL_FILE.exists(), "quit removes the runtime URL")
 log = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
 print("---- app.log ----")
 print(log.read_text() if log.exists() else "(none)")

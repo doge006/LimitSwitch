@@ -5,6 +5,8 @@
 - Install, installed copy (Windows): download the release's LimitSwitch-Setup.exe and run it
   silently into this folder; it closes the app, replaces the files and starts it again. Saved
   accounts and settings live elsewhere (%LOCALAPPDATA%\\AccountSwitcher), so they are untouched.
+- Install, macOS app (the DMG's): run scripts/install-mac.sh from GitHub, as the README's install
+  command does; it closes the app, replaces it with the new release's and starts it again.
 - Install, git copy (the installer's): run the installer, which pulls main, restarts the app and
   saves its output to update.log.
 """
@@ -23,6 +25,7 @@ from .version import REPO, ROOT, VERSION, install_kind, newer
 log = logging.getLogger("account_switcher.updates")
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 ASSET = "LimitSwitch-Setup.exe"
+MAC_INSTALL = f"https://raw.githubusercontent.com/{REPO}/main/scripts/install-mac.sh"
 
 
 def latest_release(timeout=10):
@@ -62,6 +65,8 @@ def install(release):
     kind = install_kind()
     if kind == "git":
         return _run_installer()
+    if kind == "mac-app":
+        return _run_mac_install()
     if kind != "installer" or sys.platform != "win32":
         return "Update from the Releases page"
     if not release.get("setup"):
@@ -80,6 +85,19 @@ def install(release):
         return "The download failed"
     subprocess.Popen([str(target), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", f"/DIR={ROOT}"],
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0), close_fds=True)
+    return None
+
+
+def _run_mac_install():
+    """The DMG's app: the install script downloads the release's DMG, closes this app (its
+    --quit), replaces it and starts the new one. Its output goes to update.log."""
+    from .vault import data_dir
+    try:
+        out = open(data_dir() / "update.log", "ab")
+    except OSError:
+        out = subprocess.DEVNULL
+    subprocess.Popen(["/bin/bash", "-c", f"curl -fsSL {MAC_INSTALL} | bash -s -- --from-app"],
+                     stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True)
     return None
 
 

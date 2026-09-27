@@ -11,7 +11,12 @@ if sys.platform == "win32" and os.path.basename(sys.executable).lower() == "limi
     # Started by LimitSwitch.exe, which runs Python in its own process (so Task Manager shows
     # LimitSwitch). Helpers the app starts (Claude Code's hook and status line) need Python itself.
     sys.executable = sys._base_executable = os.path.join(root, "runtime", "pythonw.exe")
-if sys.prefix == sys.base_prefix:  # started by the macOS app's launcher: use the .venv's packages
+# The DMG's app has its code and Python inside LimitSwitch.app, which must stay unchanged (its
+# signature covers every file): no .pyc files (they are built in) and no runtime folder there.
+BUNDLED = sys.platform == "darwin" and ".app/Contents/Resources/" in root + "/"
+if BUNDLED:
+    sys.dont_write_bytecode = True
+if sys.prefix == sys.base_prefix and not BUNDLED:  # started by the macOS app's launcher: use the .venv's packages
     import glob
     import site
     for folder in glob.glob(os.path.join(root, ".venv", "lib", "python%d.%d" % sys.version_info[:2], "site-packages")):
@@ -44,7 +49,12 @@ if sys.platform != "win32" and sys.stderr is not None:
 
 try:
     from account_switcher.tray import main
-    main(["--quiet", "--url-file", os.path.join(root, ".runtime", "tray.url"), *sys.argv[1:]])
+    if BUNDLED:
+        from account_switcher.tray import user_url_file
+        url_file = str(user_url_file())
+    else:
+        url_file = os.path.join(root, ".runtime", "tray.url")
+    main(["--quiet", "--url-file", url_file, *sys.argv[1:]])
 except SystemExit:
     raise
 except BaseException:

@@ -37,13 +37,18 @@ def _short(path):
     return f'"{text}"' if " " in text else text  # no short name: quote (Git Bash, cmd)
 
 
+# The DMG's app runs with sys.dont_write_bytecode: its bundle must stay unchanged, so its helpers
+# get -B (don't write .pyc files) too.
+_NO_PYC = " -B" if sys.dont_write_bytecode else ""
+
+
 def hook_command(state_file):
     python = Path(sys.executable)
     console = python.with_name("python.exe")
     if python.name.lower() == "pythonw.exe" and console.exists():
         python = console  # hooks need stdout/stderr
     script = Path(__file__).with_name("afk_hook.py")
-    return f"{_short(python)} {_short(script)} {_short(state_file)} {MARK}"
+    return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {MARK}"
 
 
 def _ours(hook):
@@ -129,7 +134,7 @@ def statusline_command(state_file):
     if python.name.lower() == "pythonw.exe" and console.exists():
         python = console  # the status line is read from stdout
     script = Path(__file__).with_name("statusline.py")
-    return f"{_short(python)} {_short(script)} {_short(state_file)} {STATUS_MARK}"
+    return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"
 
 
 def _backup(state_file):
