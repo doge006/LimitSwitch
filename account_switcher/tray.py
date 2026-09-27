@@ -144,6 +144,13 @@ def open_dashboard(url):
         # --app gives a window without tabs or address bar; it joins the browser's
         # existing process if one is running, and all of it goes away when closed.
         width, height = full_view_size()
+        before = ()
+        if sys.platform == "win32":
+            try:
+                from .win_window import edge_windows
+                before = set(edge_windows())  # the new window is the one not here yet
+            except Exception:
+                logging.getLogger("account_switcher").exception("full view windows")
         subprocess.Popen([browser, f"--app={url}", f"--window-size={width},{height}"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
@@ -152,7 +159,7 @@ def open_dashboard(url):
                 from .integrations import launcher
                 from .win_window import brand_full_view
                 brand_full_view(launcher(), Path(__file__).with_name("static") / "assets" / "switcher.ico",
-                                size=(width, height), address=address)
+                                size=(width, height), address=address, before=before)
             except Exception:
                 logging.getLogger("account_switcher").exception("full view taskbar identity")
     else:
