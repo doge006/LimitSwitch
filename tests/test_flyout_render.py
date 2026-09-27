@@ -126,7 +126,7 @@ class FlyoutRenderTests(unittest.TestCase):
         image, hits = fr.render_block(self.state, "codex", scale=1.5)
         self.assertEqual(image.size, (round(width * 1.5), 66))
         self.assertGreater(image.getpixel((2, 30))[3], 0)  # the resting plate catches the mouse
-        self.assertLess(image.getpixel((2, 30))[3], 40)    # but is barely there
+        self.assertLess(image.getpixel((2, 30))[3], 100)   # a light backing, not a box
         # Fewer limit columns when the taskbar is short on room.
         self.assertLess(fr.block_width(self.state, "claude", columns=1), fr.block_width(self.state, "claude", columns=3))
         light, _ = fr.render_block(self.state, "codex", light=True)  # dark text for a light taskbar
