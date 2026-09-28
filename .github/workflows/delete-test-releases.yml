@@ -1,0 +1,31 @@
+name: Delete test releases
+
+# Deletes the test pre-releases (tags v<version>-test.<n>) and their tags. Full releases are never
+# touched. Manual only; with "dry run" on, it only lists what it would delete.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete test pre-releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tags=$(gh release list --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease and (.tagName | test("^v[0-9.]+-test\\.[0-9]+$"))) | .tagName')
+          echo "Test releases: $(echo "$tags" | grep -c . || true)"
+          for tag in $tags; do
+            if [ "${{ inputs.dry_run }}" = true ]; then echo "would delete $tag"; continue; fi
+            gh release delete "$tag" --cleanup-tag --yes && echo "deleted $tag"
+          done
