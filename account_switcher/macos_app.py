@@ -7,7 +7,8 @@
   as you like; its dock button slides it back under the icon. Docked, a click elsewhere or Esc
   closes it. (Not an NSPopover: a popover dragged off becomes a window the app can't move.)
 - Right-click (or Control-click): a native menu.
-- Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit).
+- Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit), in a process
+  of its own that ends when it closes (fullview_mac_app.py): its memory never stays with this one.
 - Notifications when Auto swap moves an account.
 No Dock icon (accessory app). Built on PyObjC (pyobjc-framework-Cocoa and -WebKit).
 """
@@ -17,16 +18,13 @@ import threading
 import time
 
 import logging
-from pathlib import Path
 
 import objc
-from AppKit import (NSApp, NSView, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+from AppKit import (NSApp, NSView, NSApplication, NSApplicationActivationPolicyAccessory,
                     NSBackingStoreBuffered, NSColor, NSEventModifierFlagCommand, NSEventModifierFlagOption,
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSOffState, NSOnState,
-                    NSPanel, NSStatusBar, NSVariableStatusItemLength,
-                    NSWindow, NSWindowStyleMaskClosable,
-                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
+                    NSPanel, NSStatusBar, NSVariableStatusItemLength)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
 from WebKit import WKWebView, WKWebViewConfiguration
@@ -37,8 +35,8 @@ log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 392
 PANEL_RADIUS = 12
 ARROW_HEIGHT, ARROW_WIDTH = 10, 22  # the docked panel's arrow up to the menu bar icon
+PAGE_KEEP = 90  # seconds the panel's page stays loaded after it closes (opening again is instant)
 POPUP_LEVEL = 101  # NSPopUpMenuWindowLevel: over other windows, like a popover
-ICON = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"  # the Dock icon, macOS shape
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
            "warn": "arrow.triangle.2.circlepath", "bad": "exclamationmark.arrow.triangle.2.circlepath"}
@@ -151,6 +149,8 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
         kind = body.get("type") if hasattr(body, "get") else None
         if kind in ("height", "width"):
             self.app.resize_panel(kind, float(body.get("value") or 0))
+            if kind == "height":
+                self.app.page_shown()
         elif kind == "dock":
             self.app.dock()
         elif kind == "dragStart":
@@ -176,8 +176,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         self.url = server.launch_url
         self.state = controller.snapshot()
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
-        self.full_window = None
-        self.canvas = None
+        self.full = None  # the full view's process (fullview_mac_app.Started)
         self.panel_size = [PANEL_WIDTH, 420]
         self.detached = False
         self.drag = None
@@ -188,8 +187,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     # ---------- setup ----------
     def applicationDidFinishLaunching_(self, _note):
         NSApp.setMainMenu_(self.main_menu())
-        icon = NSImage.alloc().initWithContentsOfFile_(str(ICON))
-        self.icon = icon
         self.item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         self.item.setAutosaveName_("AccountSwitcher")  # macOS remembers its place and visibility by this
         self.item.setVisible_(True)
@@ -199,10 +196,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         button.sendActionOn_(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
         self.shown_level = object()
         self.bridge = Bridge.alloc().initWithApp_(self)
-        base, token = self.url.split("/#token=")
-        view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, PANEL_WIDTH, 420), transparent=True,
-                        handler=self.bridge)
-        self.panel_view = view
+        self.panel_view = None  # the page: loaded when the panel opens, let go a while after it closes
+        self.page_ready = self.show_pending = False
+        self.page_generation = 0
         self.panel = self.make_panel()
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
         self.controller.quit_app = lambda: AppHelper.callAfter(self.quit_, None)
@@ -307,28 +303,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         return False
 
     def applicationDidResignActive_(self, _note):
-        """Switched to another app: the full view goes away with its Dock icon, so the menu bar
-        icon only ever opens the small panel. Full view brings it back as it was."""
-        if self.full_window is not None and self.full_window.isVisible():
-            self.full_window.close()  # closed, not hidden: its drawing is freed (windowWillClose_)
-            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         if not self.detached:
             self.hide_panel()  # docked: goes away like a popover
-
-    def windowWillClose_(self, note):
-        # Back to a menu bar app: no Dock icon once the full view is closed.
-        if note.object() == self.full_window:
-            AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
-            if getattr(self, "canvas", None) is not None:  # closed, not hidden: free its drawing
-                self.canvas.close()
-                self.canvas = None
-                AppHelper.callAfter(self.forget_full_window)
-            from .memory import trim_soon
-            trim_soon()
-
-    @objc.python_method
-    def forget_full_window(self):
-        self.full_window = None  # the next Full view makes a fresh one
 
     @objc.python_method
     def make_panel(self):
@@ -354,9 +330,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         material.setBlendingMode_(0)  # behind the window
         material.setState_(1)  # always active
         material.setAutoresizingMask_(2 | 16)  # width and height follow the window
-        self.panel_view.setFrame_(NSMakeRect(0, 0, width, height))
-        self.panel_view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
-        material.addSubview_(self.panel_view)
         self.panel_edge = PanelEdge.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
         self.panel_edge.setAutoresizingMask_(2 | 16)
         material.addSubview_(self.panel_edge)
@@ -373,7 +346,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         arrow = None if self.detached else self.arrow_x
         page = height - (ARROW_HEIGHT if arrow is not None else 0)
         self.panel_material.setFrame_(NSMakeRect(0, 0, width, height))
-        self.panel_view.setFrame_(NSMakeRect(0, 0, width, page))
+        if self.panel_view is not None:
+            self.panel_view.setFrame_(NSMakeRect(0, 0, width, page))
         self.panel_edge.setFrame_(NSMakeRect(0, 0, width, height))
         outline = panel_outline(width, height, arrow)
         self.panel_material.setMaskImage_(outline_mask(width, height, outline))
@@ -402,7 +376,66 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         return NSMakeRect(x, top - height, width, height)
 
     @objc.python_method
+    def load_page(self):
+        """The panel's page (a WKWebView, and the Web Content process macOS runs for it)."""
+        base, token = self.url.split("/#token=")
+        width, height = self.panel_size
+        view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, width, height), transparent=True,
+                        handler=self.bridge)
+        view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
+        self.panel_material.addSubview_positioned_relativeTo_(view, -1, self.panel_edge)  # under the edge
+        self.panel_view = view
+        self.page_ready = False
+        self.page_started = time.monotonic()
+
+    @objc.python_method
+    def drop_page(self, generation):
+        """Closed for PAGE_KEEP seconds: let the page go. Its Web Content process ends with it, and
+        the panel stays light while it's closed (the next click loads it again, in a blink)."""
+        if generation != self.page_generation or self.panel_view is None or self.panel.isVisible():
+            return
+        view, self.panel_view = self.panel_view, None
+        view.configuration().userContentController().removeScriptMessageHandlerForName_("app")
+        view.removeFromSuperview()
+        self.page_ready = self.show_pending = False
+        from .memory import trim_soon
+        trim_soon()
+
+    @objc.python_method
+    def page_shown(self):
+        """The page has drawn (it sent its height): a panel waiting for it opens now."""
+        if not self.page_ready and os.environ.get("LIMITSWITCH_PANEL_TEST"):
+            log.warning("panel test: page drew in %.2f s", time.monotonic() - self.page_started)
+        self.page_ready = True
+        if self.show_pending:
+            self.show_pending = False
+            self.show_panel()
+
+    @objc.python_method
+    def page_late(self):
+        if self.show_pending and not self.page_ready:
+            log.warning("panel: the page took over 1.5 s to draw; opened without waiting")
+        self.page_shown()
+
+    @objc.python_method
     def show_panel(self):
+        self.page_generation += 1  # a pending drop_page no longer applies
+        if self.panel_view is None:
+            self.load_page()
+        if not self.page_ready:  # opens once the page has drawn, so it never shows empty
+            if not self.show_pending:
+                self.show_pending = True
+                # WebKit only draws a page that is on screen: put the panel there, invisible and
+                # letting clicks through, until the page reports its size.
+                frame = self.docked_frame()
+                self.shape_panel(frame)
+                self.panel.setFrame_display_(frame, False)
+                self.panel.setIgnoresMouseEvents_(True)
+                self.panel.setAlphaValue_(0.0)
+                self.panel.orderFront_(None)
+                AppHelper.callLater(1.5, self.page_late)  # in case the page is slow: open anyway
+            return
+        self.panel.setIgnoresMouseEvents_(False)
         self.set_detached(False)
         frame = self.docked_frame()
         self.shape_panel(frame)
@@ -441,25 +474,19 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.dock()
             AppHelper.callLater(1, self.panel_test, 3)
             return
-        elif step == 3:
+        elif step == 3:  # the full view's own process draws it and logs "full view drawn"
             log.warning("panel test: docked again %s detached=%s visible=%s", frame(), self.detached,
                         self.panel.isVisible())
             self.hide_panel()
             self.showFullView_(None)
-            AppHelper.callLater(1, self.panel_test, 4)
-        elif step == 4:  # the full view draws whole, then (a hover) only what changed
-            canvas = self.canvas
-            if canvas is None:
-                log.warning("panel test: full view drawn=False (no canvas)")
-                return
-            canvas.invalidate()
-            canvas.display()
-            whole = canvas.picture is not None
-            canvas.view.mouse_move(120, 140)
-            canvas.invalidate()
-            canvas.display()
-            log.warning("panel test: full view drawn=%s, then %s changed area(s) redrawn", whole,
-                        "all" if canvas.view.changed is None else len(canvas.view.changed))
+            AppHelper.callLater(3, self.panel_test, 4)
+        elif step == 4:  # the page let go (as PAGE_KEEP after closing) and loaded again: a second load
+            self.drop_page(self.page_generation)
+            self.show_panel()
+            AppHelper.callLater(3, self.panel_test, 5)
+        elif step == 5:
+            log.warning("panel test: opened again after its page was let go, visible=%s", self.panel.isVisible())
+            self.hide_panel()
 
     @objc.python_method
     def trim_regularly(self):
@@ -475,8 +502,11 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
 
     @objc.python_method
     def hide_panel(self):
+        self.show_pending = False
         if self.panel is not None and self.panel.isVisible():
             self.panel.orderOut_(None)
+            self.page_generation += 1
+            AppHelper.callLater(PAGE_KEEP, self.drop_page, self.page_generation)
             from .memory import trim_soon
             trim_soon()
         if self.click_monitor is not None:
@@ -498,8 +528,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.panel.setFrame_display_(frame, True)
         from AppKit import NSFloatingWindowLevel
         self.panel.setLevel_(NSFloatingWindowLevel if detached else POPUP_LEVEL)
-        self.panel_view.evaluateJavaScript_completionHandler_(
-            f"window.setDetached && window.setDetached({'true' if detached else 'false'})", None)
+        if self.panel_view is not None:
+            self.panel_view.evaluateJavaScript_completionHandler_(
+                f"window.setDetached && window.setDetached({'true' if detached else 'false'})", None)
 
     # ---------- status item ----------
     def statusClicked_(self, sender):
@@ -616,46 +647,16 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
 
     # ---------- full view ----------
     def showFullView_(self, _sender):
-        if self.full_window is None:
-            # A real title bar above the page (the page would otherwise take the drags), dark to
-            # match it. At most a quarter of the screen: half its width and half its height.
-            from AppKit import NSAppearance, NSScreen
-            style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                     | NSWindowStyleMaskResizable)
-            area = NSScreen.mainScreen().visibleFrame().size if NSScreen.mainScreen() else NSMakeSize(1440, 900)
-            width, height = max(640, area.width / 2), max(460, area.height / 2 + 40)
-            window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
-            window.setTitle_(APP)
-            dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
-            if dark is not None:
-                window.setAppearance_(dark)
-            window.setTitlebarAppearsTransparent_(True)
-            window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
-            window.setReleasedWhenClosed_(False)
-            window.setMinSize_(NSMakeSize(600, 400))
-            try:  # drawn natively like the Windows one (no WebKit)
-                from .fullview_mac import FullViewCanvas
-                self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
-                    NSMakeRect(0, 0, width, height), self.controller, self.state)
-            except Exception:
-                log.exception("native full view unavailable")
-                self.canvas = None
-                notify(APP, "The full view couldn't open. Details are in app.log.")
-                return
-            window.setContentView_(self.canvas)
-            window.center()
-            # Remembers the user's size from here on. A new name when the default size changes: the
-            # old saved size would otherwise win over the new default.
-            window.setFrameAutosaveName_("AccountSwitcherFullView.v3")
-            window.setDelegate_(self)
-            self.full_window = window
-        # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-        if self.icon is not None:
-            NSApp.setApplicationIconImage_(self.icon)  # the Dock would show Python's icon otherwise
-        NSApp.activateIgnoringOtherApps_(True)
-        self.full_window.makeKeyAndOrderFront_(None)
+        """Starts the full view's process, or brings it to the front if it's open."""
+        if self.full is not None and self.full.alive():
+            self.full.front()
+            return
+        from .fullview_mac_app import start
+        try:
+            self.full = start(self.url)
+        except Exception:
+            log.exception("the full view couldn't start")
+            notify(APP, "The full view couldn't open. Details are in app.log.")
 
     # ---------- state ----------
     @objc.python_method
@@ -671,8 +672,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                 image.setTemplate_(True)
                 self.item.button().setImage_(image)
         self.item.button().setToolTip_(tooltip(state))
-        if getattr(self, "canvas", None) is not None:
-            self.canvas.set_state(state)
         self.announce_failovers(state)
 
     @objc.python_method
@@ -708,6 +707,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if not self.quitting:
             self.quitting = True
             self.hide_panel()
+            if self.full is not None and self.full.alive():
+                self.full.close()
             NSApp.terminate_(None)  # -> applicationShouldTerminate_, which cleans up
 
 

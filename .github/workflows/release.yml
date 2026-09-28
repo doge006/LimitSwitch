@@ -132,7 +132,7 @@ jobs:
           bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           for i in $(seq 1 80); do [ -f "$url" ] && [ "$(cat "$url")" != "$before" ] && break; sleep 0.25; done
           [ "$(cat "$url")" != "$before" ] || { echo "the app did not start again after the update"; exit 1; }
-          [ "$(pgrep -f MacOS/LimitSwitcher | wc -l | tr -d ' ')" = 1 ] || { echo "not exactly one copy running"; exit 1; }
+          [ "$(pgrep -fl MacOS/LimitSwitcher | grep -vc -- --full-view)" = 1 ] || { echo "not exactly one copy running"; exit 1; }
           for i in $(seq 1 40); do grep -q account-switcher ~/.codex/config.toml 2>/dev/null && break; sleep 0.25; done
           grep -q account-switcher ~/.codex/config.toml || { echo "Codex is not routed while running"; exit 1; }
           /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B \

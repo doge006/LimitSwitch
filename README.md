@@ -82,13 +82,13 @@ Try it idle in the tray, with the panel open, and with the full view open. Task 
 In Terminal, with LimitSwitcher running. This samples it over 60 seconds:
 
 ```sh
-pids=$(pgrep -f 'MacOS/LimitSwitcher' | head -1)
+pids=$(pgrep -fl 'MacOS/LimitSwitcher' | grep -v -- --full-view | head -1 | cut -d' ' -f1)
 cpu() { ps -o time= -p "$pids" | awk -F: '{s=0; for (i=1; i<=NF; i++) s=s*60+$i; print s}'; }
 a=$(cpu); sleep 60; b=$(cpu)
 footprint -p "$pids" | awk -v a="$a" -v b="$b" '/Footprint:/ {printf "%s %s memory, %.2f%% of one CPU core\n", $(NF-5), $(NF-4), (b-a)/60*100; exit}'
 ```
 
-The memory is the app's footprint, the same number as Activity Monitor's Memory column (search for **LimitSwitcher**). It leaves out the system libraries every app shares. Try it idle in the menu bar, with the panel open, and with the full view open. macOS hands memory an app has freed back to the system gradually, so a reading taken right after closing the full view is higher than one a few minutes later.
+The memory is the app's footprint, the same number as Activity Monitor's Memory column (search for **LimitSwitcher**). It leaves out the system libraries every app shares. Try it idle in the menu bar and with the panel open. The full view runs as a second LimitSwitcher process, only while its window is open, and ends when it closes, so its memory goes back to macOS: `pgrep -f 'LimitSwitcher --full-view'` gives its pid while it's open.
 
 ## macOS
 

@@ -25,16 +25,24 @@ def check(ok, text):
 
 
 def app_pid():
-    done = subprocess.run(["pgrep", "-f", "LimitSwitcher.pyw|MacOS/LimitSwitcher"], capture_output=True, text=True)
-    pids = [int(p) for p in done.stdout.split()]
+    """The menu bar app (the full view, while open, is a second process: --full-view)."""
+    done = subprocess.run(["pgrep", "-fl", "LimitSwitcher.pyw|MacOS/LimitSwitcher"], capture_output=True, text=True)
+    pids = [int(line.split()[0]) for line in done.stdout.splitlines() if line.strip() and "--full-view" not in line]
     return pids[0] if pids else None
 
 
+def app_pids():
+    done = subprocess.run(["pgrep", "-f", "LimitSwitcher.pyw|MacOS/LimitSwitcher"], capture_output=True, text=True)
+    return {int(p) for p in done.stdout.split()}
+
+
 def windows(pid):
+    """The windows of the app's processes (the menu bar app's and the full view's)."""
     info = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID) or []
+    owners = app_pids() | {pid}
     found = []
     for w in info:
-        if w.get("kCGWindowOwnerPID") == pid:
+        if w.get("kCGWindowOwnerPID") in owners:
             b = w.get("kCGWindowBounds", {})
             found.append({"layer": w.get("kCGWindowLayer"), "onscreen": bool(w.get("kCGWindowIsOnscreen")),
                           "name": w.get("kCGWindowName"), "owner": w.get("kCGWindowOwnerName"),

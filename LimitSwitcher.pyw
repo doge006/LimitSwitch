@@ -48,6 +48,14 @@ if sys.platform != "win32" and sys.stderr is not None:
     faulthandler.register(signal.SIGUSR1, all_threads=True)  # kill -USR1: where is it stuck?
 
 try:
+    if os.environ.get("LIMITSWITCH_FULL_VIEW"):  # the macOS full view's own process (fullview_mac_app.py)
+        import logging
+        from account_switcher.tray import _log_path
+        logging.basicConfig(filename=str(_log_path()), level=logging.WARNING,
+                            format="%(asctime)s %(name)s %(levelname)s %(message)s")
+        from account_switcher.fullview_mac_app import main as full_view
+        full_view()
+        sys.exit(0)
     from account_switcher.tray import main
     if BUNDLED:
         from account_switcher.tray import user_url_file

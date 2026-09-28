@@ -275,7 +275,7 @@ class Controller:
         """The 24-hour clock setting, or the system's own choice until it has been set."""
         saved = self.gateway.manager.meta.get("clock24") if self.live else self.clock24
         if saved is None:
-            from .fullview_render import clock_12h
+            from .clock import clock_12h
             return not clock_12h()
         return bool(saved)
 
@@ -390,7 +390,9 @@ def make_server(controller, port=0):
             self.respond(200, controller.snapshot())
 
         def do_POST(self):
-            if self.path == "/api/statusline":  # Claude Code's status line script: live usage, same narrow token
+            app_token = secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token)
+            if self.path == "/api/statusline" and not app_token:  # Claude Code's status line script: live usage, narrow token
+                # (with the app's own token it's the Settings switch, like any other action; the Mac full view uses it)
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
                     self.respond(403, {"error": "Forbidden"})

@@ -791,7 +791,7 @@ class LiveAccounts:
 def clock_text(ts, clock24=None):
     """A time of day in the app's clock setting (Settings → 24-hour clock; unset: the system's)."""
     if clock24 is None:
-        from .fullview_render import clock_12h
+        from .clock import clock_12h
         clock24 = not clock_12h()
     moment = time.localtime(ts)
     if clock24:

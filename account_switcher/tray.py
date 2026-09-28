@@ -17,10 +17,11 @@ import threading
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-import pystray
-from PIL import Image, ImageDraw
-from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loaded up front, Pillow
-# doesn't load all ~40 of its format plugins (TIFF, PDF, ...) to find it
+if sys.platform != "darwin":  # the Mac menu bar app (macos_app.py) draws with AppKit and needs neither
+    import pystray
+    from PIL import Image, ImageDraw
+    from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loaded up front, Pillow
+    # doesn't load all ~40 of its format plugins (TIFF, PDF, ...) to find it
 
 from .web import Controller, clear_url_file, make_server, write_url_file
 
