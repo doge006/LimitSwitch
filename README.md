@@ -17,7 +17,7 @@ I made this mainly for myself and decided to publish it on GitHub. Nothing else 
 - **Usage trackers** show your limits, but don't switch accounts for you.
 - **Account switchers** swap logins, but you have to notice the limit yourself, and sessions that are already open often need a restart.
 - **Few cover both** Claude Code and Codex, and fewer run on Windows.
-- **Most are heavy.** I'm a performance fanatic, and I didn't want a browser engine or an Electron app sitting in my tray all day just to show a few numbers.
+- **Most are heavy.** I wanted mine to be lightweight.
 
 LimitSwitcher does all of it in one small tray app: every limit at a glance, one-click switching that open sessions pick up, and Auto swap / Auto resume, so a long task keeps going when an account runs out.
 
@@ -114,8 +114,8 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
 
 ## Your accounts
 
-- **Works with:** Claude Code (the CLI and its VS Code extension) and Codex (the CLI, its editor extensions and the Claude Code Codex plugin). Not the Claude desktop or web app, which have their own login. A Codex session or editor that was already open before LimitSwitcher started keeps its account until it's reloaded; LimitSwitcher tells you when that's the case.
-- **Adding accounts:** whatever Claude Code / Codex login is active on this PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
+- **Works with:** Claude Code (the CLI and its VS Code extension) and Codex (the CLI, its editor extensions and the Claude Code Codex plugin). A Codex session or editor that was already open before LimitSwitcher started keeps its account until it's reloaded; LimitSwitcher tells you when that's the case.
+- **Adding accounts:** whatever Claude Code / Codex login is active on your PC is picked up automatically. Signing in to another account (`claude auth login`, `codex login`) adds it too. **Add account** (in the full view or the tray menu) runs the official sign-in in a separate window and an isolated folder, so the login you're using isn't touched.
 - **Switching:** click an account and every session moves to it, including sessions that are already open. Nothing needs restarting.
   - *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request.
   - *Codex:* the chosen login is written into `~/.codex/auth.json` (so new windows and Codex's `/status` show it), and while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. So a switch also applies to sessions that are already open, on their next request.
