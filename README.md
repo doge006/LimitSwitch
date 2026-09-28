@@ -198,6 +198,10 @@ While LimitSwitcher runs, it adds itself to Claude Code's status line (the line 
 
 Building from source, running the tests, publishing a release and how the code is laid out: see [DEVELOPMENT.md](DEVELOPMENT.md).
 
+## License
+
+MIT: see [LICENSE](LICENSE).
+
 ## Credits
 
 Built with [Claude Code](https://claude.com/claude-code).
