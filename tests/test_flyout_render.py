@@ -120,7 +120,8 @@ class FlyoutRenderTests(unittest.TestCase):
         names = [t[2] for t in layout.texts]
         self.assertIn("personal@example.com", names)          # the in-use account, full email
         self.assertNotIn("second@example.com", names)
-        self.assertIn("Codex · Pro", names)
+        self.assertIn("Pro", names)  # just the plan: the icon says which provider
+        self.assertNotIn("Codex · Pro", names)
         self.assertTrue(any(n.startswith("resets in") for n in names))
         self.assertEqual([a for _, a in layout.hits], ["open"])
         image, hits = fr.render_block(self.state, "codex", scale=1.5)
@@ -158,11 +159,18 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertIn("toggle:taskbar", actions)     # the Taskbar switch, next to AFK
         self.assertNotIn("compact", actions)
 
-    def test_block_puts_resets_after_the_plan(self):
+    def test_block_keeps_to_the_plan_and_the_age(self):
+        """The taskbar is short on room: the plan and how old the numbers are, nothing more (the
+        provider is the icon; banked resets are one click away in the panel)."""
+        import time
         state = self.controller.snapshot()
         state["accounts"][0]["credits"] = {"resets": 2}
+        state["accounts"][0]["updated_at"] = time.time() - 180
         layout, _ = fr.build_block(state, "claude")
-        self.assertIn("Claude · Max 5x · 2 resets", [t[2] for t in layout.texts])
+        texts = [t[2] for t in layout.texts]
+        self.assertIn("Max 5x", texts)
+        self.assertIn(" · 3m ago", texts)
+        self.assertFalse(any("reset" in t and "resets in" not in t for t in texts))
 
     def test_empty_state_offers_adding_accounts(self):
         state = dict(self.state, accounts=[])

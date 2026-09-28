@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs (or updates) LimitSwitcher on macOS from the latest GitHub release:
 #   curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
-# It picks the DMG for this Mac (Apple silicon or Intel), closes a running copy (which puts the
+# It downloads the Apple silicon DMG, closes a running copy (which puts the
 # Codex and Claude Code settings back), puts LimitSwitcher.app in Applications and opens it.
 # Saved accounts and settings are in ~/Library/Application Support/AccountSwitcher and are kept.
 #
@@ -27,8 +27,11 @@ say() { printf '\033[36m%s\033[0m\n' "$1"; }
 fail() { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 [ "$(uname -s)" = Darwin ] || fail "This installs the macOS app. On Windows, use LimitSwitcher-Setup.exe from the releases page."
-# Apple silicon even from a Terminal running under Rosetta.
-if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then KIND=AppleSilicon; else KIND=Intel; fi
+# Apple silicon only (true even from a Terminal running under Rosetta).
+KIND=AppleSilicon
+if [ -z "$DMG" ] && [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" != 1 ]; then
+  fail "LimitSwitcher for Mac needs Apple silicon (M1 or later); this Mac has an Intel processor."
+fi
 
 # /Applications when this user can write there (admin accounts can), else ~/Applications.
 if [ -w /Applications ]; then TARGET=/Applications; else TARGET="$HOME/Applications"; mkdir -p "$TARGET"; fi
@@ -53,7 +56,7 @@ if [ -z "$DMG" ]; then
 fi
 case "$DMG" in
   http://*|https://*)
-    say "Downloading LimitSwitcher for $([ $KIND = Intel ] && echo 'an Intel Mac' || echo 'Apple silicon')..."
+    say "Downloading LimitSwitcher..."
     curl -fL --progress-bar -o "$WORK/LimitSwitcher.dmg" "$DMG" || fail "The download failed ($DMG)."
     DMG="$WORK/LimitSwitcher.dmg" ;;
   *) [ -f "$DMG" ] || fail "No such file: $DMG" ;;

@@ -646,11 +646,12 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
             if status or old:
                 hint = status or f"Numbers from {ago(age)} ago · checking"
             else:  # what the account is doing, and how old its numbers are
-                parts = ["All sessions use this account"] if active else [] if eligible else ["Waiting for reset"]
+                parts = ["Used by all sessions"] if active else [] if eligible else ["Waiting for reset"]
                 if live and account.get("updated_at"):
                     parts.append(f"Updated {ago(age)} ago" if age >= 60 else "Updated now")
                 hint = " · ".join(parts)
-            c.text(18, fy + 21, fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
+            room = w - 36 - 124 - (0 if active else 96)  # the in-use card has no Remove button to leave room for
+            c.text(18, fy + 21, fit(hint, 12, False, room), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")

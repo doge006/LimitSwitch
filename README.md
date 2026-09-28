@@ -39,9 +39,9 @@ Paste this into Terminal:
 curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
 ```
 
-It downloads the right version for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
+It downloads the app (for Apple silicon Macs: M1 or later) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
 
-Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` or `LimitSwitcher-Intel.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
+Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
 
 It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/AccountSwitcher`. **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
 
@@ -49,22 +49,32 @@ It lives in the menu bar (no Dock icon) and starts there when you log in; turn t
 
 Built to be barely noticeable:
 
-- **One small process.** On Windows every window is native and drawn by the app itself: no browser, no Electron. (The macOS menu bar panel uses the system's own WebKit view, only while it's open.)
+- **One small process.** Every window is native: no browser, no Electron. On Windows the app draws them itself; on macOS the full view is drawn with the system's own graphics, in a second process that exists only while its window is open (its memory goes back to macOS when you close it), and the menu bar panel uses the system's WebKit view, loaded only while it's open.
 - **It sleeps** until an account is due for a usage check (every few minutes for the one in use, less often for the rest) or something changes, and uses no CPU in between.
 - **Windows exist only while they're open.** The panel, the menus and the full view are created when you open them and freed when you close them, and animation frames are drawn only while something moves.
 - **Checking usage doesn't touch your limits:** the usage endpoints it reads don't count against them.
 
 ### Measured
 
-On the author's Windows PC, over 60 seconds each, with real accounts and Claude Code and Codex in use:
+On the author's Windows PC, over 60 seconds each, with real accounts, the taskbar view on, and Claude Code and Codex in use:
 
 | | Memory (working set) | Private memory | CPU (one core) |
 |---|---|---|---|
-| In the tray, windows closed | 23.6 MB | 33.5 MB | 0.21% |
-| Tray panel open | 36.9 MB | 35.9 MB | 1.64% |
-| Full view open | 14.3 MB | 41.3 MB | 1.02% |
+| In the tray and taskbar, windows closed | 12.8 MB | 35.5 MB | 0.08% |
+| Tray panel open (popped out) | 34.0 MB | 39.2 MB | 0.13% |
+| Full view open | 35.8 MB | 45.8 MB | 0.16% |
 
 (The working set is what Task Manager shows. It can be lower than the private memory, because pages the app isn't using are handed back to Windows until they're needed again.)
+
+On the author's MacBook Pro (macOS 27, Retina), with real accounts:
+
+| | Memory (footprint) |
+|---|---|
+| In the menu bar, windows closed | 47 MB |
+| Menu bar panel open | 61 MB |
+| Full view open (its own process, on top of the menu bar app) | 70 MB |
+
+(The footprint is Activity Monitor's Memory column. Opening the full view briefly takes more while its cards fade in, then settles within a few seconds.)
 
 ### Measure it on Windows
 

@@ -45,7 +45,7 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 
 Measure the tray alone, with the panel open, and with the full view open, a few times each, and quote the typical number with the machine it ran on.
 
-On macOS, `scripts/mac_memory.py` shows where the memory goes, step by step (PyObjC, the app's code, fonts, the full view drawn at 2x, and after it's released), running with the installed app's own Python in demo mode:
+On macOS, `scripts/mac_memory.py` shows where the menu bar app's memory goes, step by step (Python, PyObjC, the app's code), running with the installed app's own Python in demo mode; `scripts/compare_native.py` draws the full view natively off screen at Retina size and reports its memory, time per frame and how close it is to the Windows drawing:
 
 ```sh
 /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
@@ -57,7 +57,7 @@ The **macOS app** workflow (job `dmg`) runs it too, and prints the running app's
 
 Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitcher-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
 
-The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitcher-AppleSilicon.dmg` and `LimitSwitcher-Intel.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs the Apple silicon one with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMGs are kept on the run for 14 days.
+The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitcher-AppleSilicon.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs it with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMG is kept on the run for 14 days (the Mac app is Apple silicon only; `build_mac.py --arch x86_64` still builds an Intel one if ever needed).
 
 ## Layout
 
@@ -80,4 +80,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitcher.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
 - `docs/media/`: the README's screenshots and GIFs (`demo.gif`, `settings.gif`).
-- `scripts/mac_memory.py`: where the Mac app's memory goes (see Measuring performance).
+- `scripts/mac_memory.py`: where the Mac menu bar app's memory goes (see Measuring performance).
+- `scripts/compare_native.py`: the Mac full view drawn natively vs the Pillow drawing (images, memory, timing).
+- `scripts/render_frames.py`: frame hashes of the full view (Pillow, as Windows draws it) through a fixed script of states: run before and after a change to the drawing code to prove Windows pixels are unchanged.
+- The full view's own process logs its memory at each step to app.log ("full view memory: ...").

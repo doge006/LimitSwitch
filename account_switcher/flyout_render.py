@@ -827,18 +827,19 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     L.image(x + BLOCK_PAD, round(height / 2) - 8, provider + ("@dark" if theme is THEMES[True] and provider == "codex" else ""), 16)
     name = fit(display_name(account), 12, True, 260)
     note = status_note(account)
-    resets = (account.get("credits") or {}).get("resets")
-    title = " · ".join([dict(PROVIDERS)[provider]] + ([account["plan"]] if account.get("plan") else [])
-                       + ([f"{resets} reset" + ("s" if resets != 1 else "")] if resets else []))
-    problem = note if account.get("status") else None  # sign in again, retrying: instead of the provider line
+    # Kept short for the taskbar: the plan and how old the numbers are (the provider is the icon;
+    # everything else is one click away in the panel).
+    title = account.get("plan") or ""
+    problem = note if account.get("status") else None  # sign in again, retrying: instead of the plan
     sub, sub_color = (problem, theme["warn"]) if problem else (title, theme["accent"][provider])
     age = None if problem else age_text(account)
     tx = x + BLOCK_PAD + 22
     L.text(tx, y1, name, 12, theme["text"], bold=True)
     L.text(tx, y3, sub, 10, sub_color)
-    if age:  # how old the numbers are, after the provider line (amber once 30 minutes old)
-        L.text(tx + text_w(sub, 10), y3, " · " + age, 10, theme["warn"] if stale(account) else theme["faint"])
-        sub += " · " + age
+    if age:  # how old the numbers are, after the plan (amber once 30 minutes old)
+        lead = " · " if sub else ""
+        L.text(tx + text_w(sub, 10), y3, lead + age, 10, theme["warn"] if stale(account) else theme["faint"])
+        sub += lead + age
     x = tx + max(text_w(name, 12, True), text_w(sub, 10)) + BLOCK_GAP
     windows = account["windows"][:columns]
     if not windows:
