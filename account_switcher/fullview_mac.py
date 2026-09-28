@@ -1,10 +1,8 @@
-"""macOS host for the full view: an NSView that shows what fullview.FullView draws.
+"""macOS host for the full view: an NSView that shows frames drawn by fullview.FullView.
 
-No WebKit, and no picture of the whole window: FullView.scene() gives the cards as cached images
-and small patches for what changes (bars, percentages, menus, toasts), and this view puts them on
-screen with Core Graphics over the background colour. At Retina scale a window-sized image is
-several MB; the only one left is the window's own. Timers are one-shot callLater()s, only while
-something is due. It runs in the full view's own process (fullview_mac_app.py).
+No WebKit: the window's content is this one view, drawn at the display's backing scale. It runs
+on the main thread with the rest of the menu bar app; timers are one-shot callLater()s, only
+while something is due. The view (and its cached tiles) goes away when the window closes.
 """
 import logging
 
@@ -28,9 +26,7 @@ class FullViewCanvas(NSView):
         if self is None:
             return None
         self.view = FullView(controller, self, state)
-        self.scene = None        # FullView.scene(): what is on screen
-        self.cg = {}             # id(tile) -> (tile, CGImage): the cards, made once each
-        self.fill = None         # 1x1 CGImage of the background colour
+        self.picture = None      # CGBitmapContext holding the window's pixels (updated in place)
         self.dirty = True
         self.cursor_kind = "arrow"
         self.timers = {}         # name -> generation (a later set/kill makes an earlier callLater a no-op)
@@ -80,47 +76,53 @@ class FullViewCanvas(NSView):
         if self.view is None or not self.view.width:
             return
         import Quartz
-        if self.dirty or self.scene is None:
-            self.scene = self.view.scene()
+        if self.dirty or self.picture is None:
+            self.update_picture(Quartz)
             self.dirty = False
+        if self.picture is None:
+            return
+        frame = Quartz.CGBitmapContextCreateImage(self.picture)  # shares the pixels until they change
         context = NSGraphicsContext.currentContext().CGContext()
         bounds = self.bounds()
-        height = float(bounds.size.height)
-        s = self.view.scale
         Quartz.CGContextSaveGState(context)
-        Quartz.CGContextTranslateCTM(context, 0, height)  # this view is flipped; CG draws bottom-up
+        Quartz.CGContextTranslateCTM(context, 0, bounds.size.height)  # this view is flipped; CG draws bottom-up
         Quartz.CGContextScaleCTM(context, 1, -1)
         Quartz.CGContextSetInterpolationQuality(context, Quartz.kCGInterpolationNone)
-        if self.fill is None:  # the background through the same colour path as the images on it
-            self.fill = image_from(Quartz, bytes(vr.BG) + b"\xff", 1, 1, Quartz.kCGImageAlphaNoneSkipLast)
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, height), self.fill)
-        cached = {}
-        for tile, x, y, alpha in self.scene["tiles"]:
-            held = self.cg.get(id(tile))
-            if held is None or held[0] is not tile:
-                premultiplied = tile.image.convert("RGBa")  # the form Core Graphics composites fastest
-                held = (tile, image_from(Quartz, premultiplied.tobytes(), tile.image.width, tile.image.height,
-                                         Quartz.kCGImageAlphaPremultipliedLast))
-                del premultiplied
-            cached[id(tile)] = held
-            Quartz.CGContextSetAlpha(context, max(0.0, min(1.0, alpha)))
-            self.put(Quartz, context, held[1], x, y, tile.image.width, tile.image.height, s, height)
-        Quartz.CGContextSetAlpha(context, 1.0)
-        self.cg = cached  # cards no longer shown are let go
-        for patch, x, y in self.scene["patches"]:
-            picture = image_from(Quartz, patch.tobytes("raw", "RGBX"), patch.width, patch.height,
-                                 Quartz.kCGImageAlphaNoneSkipLast)
-            self.put(Quartz, context, picture, x, y, patch.width, patch.height, s, height)
+        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, bounds.size.height), frame)
         Quartz.CGContextRestoreGState(context)
-        if not self.has_timer("anim"):  # still: what drawing freed goes back to macOS
-            from .memory import trim_soon
-            trim_soon(3.0)
+        del frame  # let go now, so the next update writes in place instead of copying the pixels
 
     @objc.python_method
-    def put(self, Quartz, context, picture, x, y, w, h, scale, height):
-        """Draw a device-px image whose top left is at device (x, y)."""
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(x / scale, height - (y + h) / scale, w / scale, h / scale),
-                                  picture)
+    def update_picture(self, Quartz):
+        """The window's pixels live in one Core Graphics bitmap, made once per size. Each frame
+        copies in only the areas that changed (the full view reports them): a hover or a bar
+        animation moves a few KB instead of the whole window (about 5 MB at 2x) every frame."""
+        image = self.view.frame()
+        width, height = image.size
+        boxes = self.view.changed
+        if self.picture is None or (Quartz.CGBitmapContextGetWidth(self.picture),
+                                    Quartz.CGBitmapContextGetHeight(self.picture)) != (width, height):
+            self.picture = Quartz.CGBitmapContextCreate(
+                None, width, height, 8, 0, Quartz.CGColorSpaceCreateDeviceRGB(), Quartz.kCGImageAlphaNoneSkipLast)
+            if self.picture is None:
+                return
+            Quartz.CGContextSetBlendMode(self.picture, Quartz.kCGBlendModeCopy)
+            Quartz.CGContextSetInterpolationQuality(self.picture, Quartz.kCGInterpolationNone)
+            boxes = None
+        if boxes is None:
+            boxes = [(0, 0, width, height)]
+        space = Quartz.CGColorSpaceCreateDeviceRGB()
+        for x0, y0, x1, y1 in boxes:
+            w, h = x1 - x0, y1 - y0
+            if w <= 0 or h <= 0:
+                continue
+            part = image if (w, h) == (width, height) else image.crop((x0, y0, x1, y1))
+            data = NSData.dataWithBytes_length_(part.tobytes("raw", "RGBX"), w * h * 4)
+            piece = Quartz.CGImageCreate(w, h, 8, 32, w * 4, space, Quartz.kCGImageAlphaNoneSkipLast,
+                                         Quartz.CGDataProviderCreateWithCFData(data), None, False,
+                                         Quartz.kCGRenderingIntentDefault)
+            # The bitmap is bottom-up: a box's top row y0 lands at height - y1.
+            Quartz.CGContextDrawImage(self.picture, Quartz.CGRectMake(x0, height - y1, w, h), piece)
 
     # ---------- input ----------
     @objc.python_method
@@ -220,13 +222,4 @@ class FullViewCanvas(NSView):
         self.timers = {}
         if self.view is not None:
             self.view.close()
-        self.view = self.scene = None
-        self.cg = {}
-
-
-def image_from(Quartz, raw, width, height, alpha_info):
-    """A CGImage over `raw` (8-bit RGBA-ordered pixels, width * 4 bytes a row)."""
-    data = NSData.dataWithBytes_length_(raw, len(raw))
-    return Quartz.CGImageCreate(width, height, 8, 32, width * 4, Quartz.CGColorSpaceCreateDeviceRGB(), alpha_info,
-                                Quartz.CGDataProviderCreateWithCFData(data), None, False,
-                                Quartz.kCGRenderingIntentDefault)
+        self.view = self.picture = None
