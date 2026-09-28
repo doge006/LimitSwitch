@@ -1,7 +1,7 @@
 name: Delete test releases
 
-# Deletes the test pre-releases (tags v<version>-test.<n>) and their tags. Full releases are never
-# touched. Manual only; with "dry run" on, it only lists what it would delete.
+# Deletes the test pre-releases (tags v<version>-test.<n>) and their tags, and test tags left without
+# a release. Full releases and their tags are never touched. Manual only; with "dry run" on, it only lists what it would delete.
 on:
   workflow_dispatch:
     inputs:
@@ -28,4 +28,14 @@ jobs:
           for tag in $tags; do
             if [ "${{ inputs.dry_run }}" = true ]; then echo "would delete $tag"; continue; fi
             gh release delete "$tag" --cleanup-tag --yes && echo "deleted $tag"
+          done
+      - name: Delete test tags left without a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tags=$(gh api --paginate "repos/$GH_REPO/tags" --jq '.[].name' | grep -E '^v[0-9.]+-test\.[0-9]+$' || true)
+          for tag in $tags; do
+            if [ "${{ inputs.dry_run }}" = true ]; then echo "would delete tag $tag"; continue; fi
+            gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$tag" && echo "deleted tag $tag"
           done
