@@ -422,8 +422,17 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if not self.page_ready:  # opens once the page has drawn, so it never shows empty
             if not self.show_pending:
                 self.show_pending = True
+                # WebKit only draws a page that is on screen: put the panel there, invisible and
+                # letting clicks through, until the page reports its size.
+                frame = self.docked_frame()
+                self.shape_panel(frame)
+                self.panel.setFrame_display_(frame, False)
+                self.panel.setIgnoresMouseEvents_(True)
+                self.panel.setAlphaValue_(0.0)
+                self.panel.orderFront_(None)
                 AppHelper.callLater(1.5, self.page_late)  # in case the page is slow: open anyway
             return
+        self.panel.setIgnoresMouseEvents_(False)
         self.set_detached(False)
         frame = self.docked_frame()
         self.shape_panel(frame)
