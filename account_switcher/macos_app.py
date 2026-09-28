@@ -35,6 +35,7 @@ log = logging.getLogger("account_switcher.macos")
 PANEL_WIDTH = 392
 PANEL_RADIUS = 12
 ARROW_HEIGHT, ARROW_WIDTH = 10, 22  # the docked panel's arrow up to the menu bar icon
+PAGE_KEEP = 90  # seconds the panel's page stays loaded after it closes (opening again is instant)
 POPUP_LEVEL = 101  # NSPopUpMenuWindowLevel: over other windows, like a popover
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
@@ -148,6 +149,8 @@ class Bridge(NSObject, protocols=protocols("WKScriptMessageHandler")):
         kind = body.get("type") if hasattr(body, "get") else None
         if kind in ("height", "width"):
             self.app.resize_panel(kind, float(body.get("value") or 0))
+            if kind == "height":
+                self.app.page_shown()
         elif kind == "dock":
             self.app.dock()
         elif kind == "dragStart":
@@ -193,10 +196,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         button.sendActionOn_(NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp)
         self.shown_level = object()
         self.bridge = Bridge.alloc().initWithApp_(self)
-        base, token = self.url.split("/#token=")
-        view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, PANEL_WIDTH, 420), transparent=True,
-                        handler=self.bridge)
-        self.panel_view = view
+        self.panel_view = None  # the page: loaded when the panel opens, let go a while after it closes
+        self.page_ready = self.show_pending = False
+        self.page_generation = 0
         self.panel = self.make_panel()
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
         self.controller.quit_app = lambda: AppHelper.callAfter(self.quit_, None)
@@ -328,9 +330,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         material.setBlendingMode_(0)  # behind the window
         material.setState_(1)  # always active
         material.setAutoresizingMask_(2 | 16)  # width and height follow the window
-        self.panel_view.setFrame_(NSMakeRect(0, 0, width, height))
-        self.panel_view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
-        material.addSubview_(self.panel_view)
         self.panel_edge = PanelEdge.alloc().initWithFrame_(NSMakeRect(0, 0, width, height))
         self.panel_edge.setAutoresizingMask_(2 | 16)
         material.addSubview_(self.panel_edge)
@@ -347,7 +346,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         arrow = None if self.detached else self.arrow_x
         page = height - (ARROW_HEIGHT if arrow is not None else 0)
         self.panel_material.setFrame_(NSMakeRect(0, 0, width, height))
-        self.panel_view.setFrame_(NSMakeRect(0, 0, width, page))
+        if self.panel_view is not None:
+            self.panel_view.setFrame_(NSMakeRect(0, 0, width, page))
         self.panel_edge.setFrame_(NSMakeRect(0, 0, width, height))
         outline = panel_outline(width, height, arrow)
         self.panel_material.setMaskImage_(outline_mask(width, height, outline))
@@ -376,7 +376,48 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         return NSMakeRect(x, top - height, width, height)
 
     @objc.python_method
+    def load_page(self):
+        """The panel's page (a WKWebView, and the Web Content process macOS runs for it)."""
+        base, token = self.url.split("/#token=")
+        width, height = self.panel_size
+        view = web_view(f"{base}/menu#token={token}", NSMakeRect(0, 0, width, height), transparent=True,
+                        handler=self.bridge)
+        view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
+        self.panel_material.addSubview_positioned_relativeTo_(view, -1, self.panel_edge)  # under the edge
+        self.panel_view = view
+        self.page_ready = False
+
+    @objc.python_method
+    def drop_page(self, generation):
+        """Closed for PAGE_KEEP seconds: let the page go. Its Web Content process ends with it, and
+        the panel stays light while it's closed (the next click loads it again, in a blink)."""
+        if generation != self.page_generation or self.panel_view is None or self.panel.isVisible():
+            return
+        view, self.panel_view = self.panel_view, None
+        view.configuration().userContentController().removeScriptMessageHandlerForName_("app")
+        view.removeFromSuperview()
+        self.page_ready = self.show_pending = False
+        from .memory import trim_soon
+        trim_soon()
+
+    @objc.python_method
+    def page_shown(self):
+        """The page has drawn (it sent its height): a panel waiting for it opens now."""
+        self.page_ready = True
+        if self.show_pending:
+            self.show_pending = False
+            self.show_panel()
+
+    @objc.python_method
     def show_panel(self):
+        self.page_generation += 1  # a pending drop_page no longer applies
+        if self.panel_view is None:
+            self.load_page()
+        if not self.page_ready:  # opens once the page has drawn, so it never shows empty
+            if not self.show_pending:
+                self.show_pending = True
+                AppHelper.callLater(1.5, self.page_shown)  # in case the page is slow: open anyway
+            return
         self.set_detached(False)
         frame = self.docked_frame()
         self.shape_panel(frame)
@@ -435,8 +476,11 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
 
     @objc.python_method
     def hide_panel(self):
+        self.show_pending = False
         if self.panel is not None and self.panel.isVisible():
             self.panel.orderOut_(None)
+            self.page_generation += 1
+            AppHelper.callLater(PAGE_KEEP, self.drop_page, self.page_generation)
             from .memory import trim_soon
             trim_soon()
         if self.click_monitor is not None:
@@ -458,8 +502,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.panel.setFrame_display_(frame, True)
         from AppKit import NSFloatingWindowLevel
         self.panel.setLevel_(NSFloatingWindowLevel if detached else POPUP_LEVEL)
-        self.panel_view.evaluateJavaScript_completionHandler_(
-            f"window.setDetached && window.setDetached({'true' if detached else 'false'})", None)
+        if self.panel_view is not None:
+            self.panel_view.evaluateJavaScript_completionHandler_(
+                f"window.setDetached && window.setDetached({'true' if detached else 'false'})", None)
 
     # ---------- status item ----------
     def statusClicked_(self, sender):
