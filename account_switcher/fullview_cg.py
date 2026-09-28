@@ -39,16 +39,17 @@ def font(size, bold):
     return NSFont.systemFontOfSize_weight_(size, NSFontWeightSemibold if bold else NSFontWeightRegular)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=128)
 def label(value, size, bold, rgb):
     return NSAttributedString.alloc().initWithString_attributes_(
         value, {NSFontAttributeName: font(size, bold), NSForegroundColorAttributeName: color(rgb)})
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=1024)
 def text_w(value, size, bold=False):
     """Logical width of a label as it is drawn here (the layout's measure on macOS)."""
-    return float(label(value, size, bool(bold), (0, 0, 0)).size().width)
+    return float(NSAttributedString.alloc().initWithString_attributes_(
+        value, {NSFontAttributeName: font(size, bool(bold))}).size().width)
 
 
 @lru_cache(maxsize=8)
@@ -140,17 +141,20 @@ class Painter:
             for j in range(3):
                 self.image(pieces[i, j], x0 + xs[i], y0 + ys[j], xs[i + 1] - xs[i], ys[j + 1] - ys[j])
 
-    def group_begin(self, alpha, box=None):
-        """What is drawn until group_end shows at `alpha`, as one layer (fades, dimmed cards)."""
+    def group_begin(self, alpha, box=None, layer=False):
+        """What is drawn until group_end shows at `alpha`. Fades (a card rising in, a menu or
+        toast) just draw each part at that opacity: no offscreen buffer, which at Retina size
+        is several MB a card. layer=True flattens first (a dimmed card, where parts overlap)."""
         Quartz.CGContextSaveGState(self.ctx)
         Quartz.CGContextSetAlpha(self.ctx, max(0.0, min(1.0, alpha)))
-        if box is not None:
+        self.layers = getattr(self, "layers", [])
+        self.layers.append(layer)
+        if layer:
             Quartz.CGContextBeginTransparencyLayerWithRect(self.ctx, self.points(*box), None)
-        else:
-            Quartz.CGContextBeginTransparencyLayer(self.ctx, None)
 
     def group_end(self):
-        Quartz.CGContextEndTransparencyLayer(self.ctx)
+        if self.layers.pop():
+            Quartz.CGContextEndTransparencyLayer(self.ctx)
         Quartz.CGContextRestoreGState(self.ctx)
 
     def tile(self, tile, tx, ty, rise):
@@ -173,7 +177,7 @@ class Painter:
         self.shadow(tx, ty, tile.width, tile.height, w, h, 1.0)
         bw, bh = round(w * s), round(h * s)
         if spent:
-            self.group_begin(184 / 255, (tx + m, ty + m, bw, bh))
+            self.group_begin(184 / 255, (tx + m, ty + m, bw, bh), layer=True)
         NSGraphicsContext.saveGraphicsState()
         radius = round(vr.RADIUS * s) / s
         NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.points(tx + m, ty + m, bw, bh), radius, radius).addClip()
