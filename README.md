@@ -195,13 +195,13 @@ In the full view, the gear opens Settings:
 
 ## Claude Code status line
 
-While LimitSwitcher runs, it adds itself to Claude Code's status line (the line under the prompt):
+LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
 
-- **With your own status line:** yours stays exactly as it was, with a dim `⇄ LimitSwitcher` after it, so you can see the app is on.
-- **Without one:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live without asking Claude's usage API, which allows only a few requests an hour.
+- **Turned on, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
+- **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
+- **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead.
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.
-- **Turn it off** in Settings → **Claude Code status line**. It then shows nothing of LimitSwitcher (your own status line is untouched), and the usage still comes in the same way.
 - **On quit** your original status line setting is put back.
 
 ## Development

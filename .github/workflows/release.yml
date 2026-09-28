@@ -163,11 +163,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=$(python3 -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)")
-          tag="v$v"; title="LimitSwitcher $v"; extra=""
+          tag="v$v"; title="LimitSwitcher $v"; notes="--notes-file .github/release-notes.md"; extra=""
           if [ "${{ inputs.prerelease }}" = true ]; then
-            tag="v$v-test.${{ github.run_number }}"; title="LimitSwitcher $v (test build ${{ github.run_number }})"; extra="--prerelease"
+            tag="v$v-test.${{ github.run_number }}"; title="LimitSwitcher $v (test build ${{ github.run_number }})"; notes="--generate-notes"; extra="--prerelease"
           fi
           if gh release view "$tag" >/dev/null 2>&1; then echo "$tag is already released: bump VERSION in account_switcher/version.py"; exit 1; fi
           ls -la build
           gh release create "$tag" build/LimitSwitcher-Setup.exe build/LimitSwitcher-AppleSilicon.dmg \
-            --title "$title" --generate-notes --target "${{ github.sha }}" $extra
+            --title "$title" $notes --target "${{ github.sha }}" $extra
