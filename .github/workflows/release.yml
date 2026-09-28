@@ -137,8 +137,8 @@ jobs:
           grep -q account-switcher ~/.codex/config.toml || { echo "Codex is not routed while running"; exit 1; }
           /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B \
             /Applications/LimitSwitcher.app/Contents/Resources/app/LimitSwitcher.pyw --quit
-          sleep 1
-          ! pgrep -f MacOS/LimitSwitcher || { echo "quit left it running"; exit 1; }
+          for i in $(seq 1 40); do pgrep -f MacOS/LimitSwitcher >/dev/null || break; sleep 0.25; done  # the full view closes too
+          ! pgrep -fl MacOS/LimitSwitcher || { echo "quit left it running"; exit 1; }
           ! grep -q account-switcher ~/.codex/config.toml || { echo "quit left Codex routed"; exit 1; }
           codesign --verify --deep --strict /Applications/LimitSwitcher.app
           echo "PASS installed, updated in place and quit cleanly"

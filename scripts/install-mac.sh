@@ -80,7 +80,14 @@ for existing in /Applications/LimitSwitcher.app "$HOME/Applications/LimitSwitche
     quit_copy "$existing"
   fi
 done
-sleep 1
+# Wait for every LimitSwitcher process to end (the full view has its own, which closes with the
+# app); a full view window still open after 10 s is closed so the app can be replaced.
+for _ in $(seq 1 40); do
+  pgrep -f '/Contents/MacOS/LimitSwitch' >/dev/null 2>&1 || break
+  sleep 0.25
+done
+pkill -f 'LimitSwitcher --full-view' >/dev/null 2>&1 || true
+sleep 0.5
 
 # 3. Replace the app (one copy only; also those from before the renames).
 say "Installing to $TARGET..."
