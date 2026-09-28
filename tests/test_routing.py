@@ -183,6 +183,22 @@ class RouterTests(unittest.TestCase):
         self.assertNotIn("encrypted_content", json.dumps(sent["input"]))  # nothing y cannot read
         self.assertEqual(len(sent["input"]), 3)  # x's reasoning is there, as its summary
 
+    def test_own_history_goes_through_untouched_and_unparsed(self):
+        """The account's own items: the request's bytes go out as they came (no parse, no rewrite)."""
+        _, body = post(self.url, {"input": []})
+        produced = next(json.loads(line[5:])["item"] for line in body.split(b"\n")
+                        if line.startswith(b"data:") and b"reasoning" in line)
+        history = {"input": [{"type": "message", "content": "hi"}, produced, {"type": "message", "content": "go on"}]}
+        from account_switcher import codex_proxy
+        with mock.patch.object(codex_proxy, "json", mock.Mock(wraps=json)) as spy:  # the router's json only
+            status, _ = post(self.url, history)
+        loads = spy.loads
+        self.assertEqual(status, 200)
+        self.assertEqual(self.upstream.seen[-1]["input"], history["input"])
+        requests_parsed = [c for c in loads.call_args_list
+                           if c.args and isinstance(c.args[0], bytes) and b'"go on"' in c.args[0]]
+        self.assertEqual(requests_parsed, [])  # the request body itself was never parsed
+
     def test_unknown_encrypted_items_are_dropped_after_a_rejection(self):
         foreign = {"type": "reasoning", "encrypted_content": "someone-else:abc"}
         status, _ = post(self.url, {"input": [foreign, {"type": "message", "content": "hi"}]})

@@ -20,6 +20,7 @@ from collections import OrderedDict
 from hashlib import blake2b
 from http.server import BaseHTTPRequestHandler
 import json
+import re
 import socket
 import secrets
 import threading
@@ -49,6 +50,25 @@ SUMMARY_PREFIX = ("Another language model started to solve this problem and prod
 
 def fingerprint(value):
     return blake2b(value.encode() if isinstance(value, str) else value, digest_size=12).hexdigest()
+
+
+# An encrypted item's value straight from the request bytes (JSON string contents).
+ENCRYPTED = re.compile(rb'"encrypted_content"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def encrypted_in_bytes(body):
+    """Every encrypted_content string in a JSON body, without parsing the body: a long Codex
+    session sends its whole history (megabytes) with every request, and parsing it all just to
+    look for items from another account would cost tens of MB per request."""
+    for match in ENCRYPTED.finditer(body):
+        raw = match.group(1)
+        if b"\\" in raw:
+            try:
+                yield json.loads(b'"' + raw + b'"')
+            except ValueError:
+                continue
+        elif raw:
+            yield raw.decode("utf-8", "replace")
 
 
 def encrypted_values(node):
@@ -324,16 +344,25 @@ class CodexProxy:
         if account is None:  # not routing: pass the session's login through unchanged
             return self.forward(h, path, dict(headers, **own), body, None, None)
         data = None
-        if body and body.lstrip()[:1] == b"{" and (b'"input"' in body):
+        routable = bool(body) and body.lstrip()[:1] == b"{" and b'"input"' in body
+
+        def parse():
             try:
-                data = json.loads(body)
+                return json.loads(body)
             except ValueError:
-                data = None
+                return None
+        # The request is parsed only when something may change: its account is used up (a
+        # planned switch between turns) or it carries items another account produced (right
+        # after a switch). Otherwise its bytes go through as they came.
+        if routable and (not self.accounts.usable(account) or self.foreign(body, account)):
+            data = parse()
         if isinstance(data, dict) and new_turn(data.get("input") or []):
             account = self.accounts.turn_start(account)  # planned switches happen between turns
         tried, drop_unknown = set(), False
         while True:
             target, payload = account, body
+            if data is None and routable and (drop_unknown or self.foreign(body, account)):
+                data = parse()
             if data is not None:
                 prepared, stay = self.router.prepare(data, account, drop_unknown, exclude=tried)
                 if stay is not None:
@@ -368,6 +397,14 @@ class CodexProxy:
                     continue
                 return self.reply(h, status, error_body, response.headers)
             return self.forward_response(h, response, status, target, data, outgoing)
+
+    def foreign(self, body, account):
+        """Does the request carry an encrypted item another account produced?"""
+        for value in encrypted_in_bytes(body):
+            owner = self.router.state.owner(value)
+            if owner is not None and owner != account:
+                return True
+        return False
 
     def open(self, method, path, headers, payload):
         try:
