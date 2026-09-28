@@ -56,7 +56,7 @@ Built to be barely noticeable:
 
 ### Measured
 
-On the author's Windows PC, over 60 seconds each, with real accounts, the taskbar view on, and Claude Code and Codex in use:
+Windows 11:
 
 | | Memory (working set) | Private memory | CPU (one core) |
 |---|---|---|---|
@@ -66,7 +66,7 @@ On the author's Windows PC, over 60 seconds each, with real accounts, the taskba
 
 (The working set is what Task Manager shows. It can be lower than the private memory, because pages the app isn't using are handed back to Windows until they're needed again.)
 
-On the author's MacBook Pro (macOS 27, Retina), with real accounts:
+MacOS 27 (Retina display):
 
 | | Memory (footprint) |
 |---|---|
