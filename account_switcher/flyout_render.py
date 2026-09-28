@@ -197,8 +197,17 @@ def text_w(value, size, bold=False):
 
 @lru_cache(maxsize=16)
 def asset(name, px):
+    # Pillow resizes RGBA through premultiplied RGBa; the source is kept in RGBa already, so
+    # the steps (and pixels) are Pillow's own without a full-size conversion per size.
+    return asset_source(name).resize((px, px), Image.Resampling.LANCZOS).convert("RGBA")
+
+
+@lru_cache(maxsize=4)
+def asset_source(name):
+    """The full-size logo, decoded once (not once per size: the Claude logo is 937 px, several MB
+    per decode). Dropped again by the memory cleanup once windows close (memory.trim)."""
     with Image.open(ASSETS / f"{name}.png") as source:
-        return source.convert("RGBA").resize((px, px), Image.Resampling.LANCZOS)
+        return source.convert("RGBA").convert("RGBa")
 
 
 # ---------- layout ----------

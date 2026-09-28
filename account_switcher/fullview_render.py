@@ -174,7 +174,23 @@ def display_name(account):
 # ---------- anti-aliased shapes from cached masks ----------
 @lru_cache(maxsize=256)
 def rr_mask(w, h, r):
-    """Rounded-rectangle coverage mask (w, h, r in device px), drawn at 4x and reduced."""
+    """Rounded-rectangle coverage mask (w, h, r in device px), drawn at 4x and reduced.
+
+    Only the corners need the 4x drawing: they come from a small copy (2r+2 square) and the rest
+    is solid, pixel for pixel what drawing the whole card at 4x gives (a card at 2x was a 4x
+    image of several MB for every mask; this is a few KB)."""
+    if r <= 0 or 2 * r + 2 > min(w, h):
+        return _rr_mask_4x(w, h, r)
+    corners = _rr_mask_4x(2 * r + 2, 2 * r + 2, r)
+    mask = Image.new("L", (w, h), 255)
+    far = r + 2
+    for box, at in (((0, 0, r, r), (0, 0)), ((far, 0, far + r, r), (w - r, 0)),
+                    ((0, far, r, far + r), (0, h - r)), ((far, far, far + r, far + r), (w - r, h - r))):
+        mask.paste(corners.crop(box), at)
+    return mask
+
+
+def _rr_mask_4x(w, h, r):
     k = 4
     big = Image.new("L", (max(1, w * k), max(1, h * k)), 0)
     ImageDraw.Draw(big).rounded_rectangle((0, 0, w * k - 1, h * k - 1), max(0, r * k), fill=255)
