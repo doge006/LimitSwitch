@@ -188,8 +188,13 @@ jobs:
           full=$(pgrep -f 'MacOS/LimitSwitcher --full-view' | head -1)
           [ -n "$full" ] && [ "$full" != "$pid" ] || { echo "the full view isn't a process of its own"; exit 1; }
           footprint -p $full | grep "Footprint:"
-          osascript -e 'tell application "Finder" to activate' || true  # switching apps closes the full view
-          sleep 12  # the cleanup runs 5 s after closing
+          osascript -e 'tell application "Finder" to activate' || true
+          sleep 2
+          pgrep -f 'MacOS/LimitSwitcher --full-view' >/dev/null || { echo "switching apps closed the full view"; exit 1; }
+          # Its close button, as a user would (System Events); the process ends with the window.
+          osascript -e "tell application \"System Events\" to tell (first process whose unix id is $full) to click button 1 of window 1" \
+            || { echo "no UI scripting here: ending it instead"; kill $full; }
+          sleep 12  # the menu bar app's own cleanup runs 5 s after its panel closed
           if pgrep -f 'MacOS/LimitSwitcher --full-view'; then echo "the full view's process didn't end"; pgrep -fl 'MacOS/LimitSwitcher'; exit 1; fi
           echo "== idle: full view and panel closed =="
           footprint -p $pid | head -22

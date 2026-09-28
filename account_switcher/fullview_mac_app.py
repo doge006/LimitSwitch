@@ -59,7 +59,7 @@ def main():
     state = remote.state()
 
     import objc
-    from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSBundle, NSColor,
+    from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSColor,
                         NSEventModifierFlagCommand, NSEventModifierFlagOption, NSImage, NSMenu, NSMenuItem,
                         NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable,
                         NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
@@ -83,9 +83,6 @@ def main():
             if image is not None:
                 NSApp.setApplicationIconImage_(image)  # the Dock would show Python's icon otherwise
             self.open_window()
-            from AppKit import NSWorkspace
-            NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
-                self, "otherAppActivated:", "NSWorkspaceDidActivateApplicationNotification", None)
             threading.Thread(target=self.watch, args=(state["revision"],), daemon=True).start()
             if os.environ.get("LIMITSWITCH_PANEL_TEST"):  # CI: the smoke test reads this in app.log
                 AppHelper.callLater(1, self.draw_test)
@@ -159,18 +156,6 @@ def main():
             except (RuntimeError, ValueError):
                 pass
             NSApp.terminate_(None)
-
-        def otherAppActivated_(self, note):
-            """Another app came to the front: the full view closes (it's opened again from the menu
-            bar). Not for LimitSwitcher itself: opening its panel leaves the full view open."""
-            app = note.userInfo().objectForKey_("NSWorkspaceApplicationKey") if note.userInfo() else None
-            if app is None or app.processIdentifier() in (os.getpid(), os.getppid()):
-                return
-            ours = NSBundle.mainBundle().bundleIdentifier()
-            if ours and app.bundleIdentifier() == ours:
-                return
-            if self.window is not None and self.window.isVisible():
-                self.window.close()
 
         def applicationShouldHandleReopen_hasVisibleWindows_(self, _app, _visible):
             if self.window is not None:
