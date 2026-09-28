@@ -155,6 +155,8 @@ class Controller:
                 with self.gateway.manager.lock:
                     self.gateway.manager.meta["statuslineShown"] = on
                     self.gateway.manager.save()
+                if getattr(self.gateway, "integrations", None):
+                    self.gateway.integrations.apply_afk()
             self.statusline_shown = on
             self.notify("changed", None)
             return
@@ -280,10 +282,10 @@ class Controller:
         return bool(saved)
 
     def statusline_on(self):
-        """Show LimitSwitcher in Claude Code's status line (on unless turned off in Settings)."""
+        """Show LimitSwitcher in Claude Code's status line (off unless turned on in Settings)."""
         if self.live:
-            return bool(self.gateway.manager.meta.get("statuslineShown", True))
-        return getattr(self, "statusline_shown", True)
+            return bool(self.gateway.manager.meta.get("statuslineShown", False))
+        return getattr(self, "statusline_shown", False)
 
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk

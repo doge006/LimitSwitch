@@ -261,9 +261,11 @@ class LiveTests(unittest.TestCase):
             start.assert_called_once_with(False)
             self.assertFalse(controller.snapshot()["launchAtLogin"])
             self.assertFalse(controller.gateway.manager.meta["startWithWindows"])  # remembered
-            # Claude Code's status line: shown by default; turned off, the usage still comes in.
-            self.assertTrue(state["statusline"])
+            # Claude Code's status line: off by default; turned off, the usage still comes in.
+            self.assertFalse(state["statusline"])
             limits = {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 3600}}
+            self.assertIsNone(controller.statusline({"rate_limits": limits}))
+            controller.action("statusline", {"on": True})
             self.assertIn("LimitSwitcher", controller.statusline({"rate_limits": limits}) or "")
             controller.action("statusline", {"on": False})
             self.assertFalse(controller.snapshot()["statusline"])

@@ -78,6 +78,12 @@ def age_text(account):
     return "now" if minutes < 1 else f"{minutes}m ago" if minutes < 60 else f"{minutes // 60}h ago"
 
 
+def age_room(size):
+    """The width kept for the age at any value, so nothing next to it moves as "now" becomes
+    "1m ago", "12m ago"..."""
+    return max(text_w(sample, size) for sample in ("now", "00m ago", "00h ago"))
+
+
 def stale(account):
     """Numbers 30 minutes old or more: their age is shown as a warning."""
     updated = account.get("updated_at") or 0
@@ -428,7 +434,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
                 right -= text_w(note, 11) + 12
             if age:  # how old the numbers are, on every account
                 L.text(right, cy, age, 11, FAINT, anchor="rm")
-                right -= text_w(age, 11) + 12
+                right -= age_room(11) + 12
             if not note and sub_text:
                 L.text(right, cy, sub_text, 11, sub_color, anchor="rm")
                 right -= text_w(sub_text, 11) + 12
@@ -580,7 +586,7 @@ def _compact_row(L, W, account, fx, top, right):
         right -= text_w(note, 11) + 8
     elif age_text(account):
         L.text(right, cy, age_text(account), 11, FAINT, anchor="rm")
-        right -= text_w(age_text(account), 11) + 8
+        right -= age_room(11) + 8
     L.text(32, cy, fit(display_name(account), 13, True, right - 32), 13, TEXT, bold=True)
     windows = account["windows"][:3]
     ly = top + 31
@@ -839,8 +845,9 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     if age:  # how old the numbers are, after the plan (amber once 30 minutes old)
         lead = " · " if sub else ""
         L.text(tx + text_w(sub, 10), y3, lead + age, 10, theme["warn"] if stale(account) else theme["faint"])
-        sub += lead + age
-    x = tx + max(text_w(name, 12, True), text_w(sub, 10)) + BLOCK_GAP
+    # The age's width is kept at any value: the bars don't move as it counts up.
+    sub_w = text_w(sub, 10) + (text_w(" · " if sub else "", 10) + age_room(10) if age else 0)
+    x = tx + max(text_w(name, 12, True), sub_w) + BLOCK_GAP
     windows = account["windows"][:columns]
     if not windows:
         label = "Usage not loaded yet"

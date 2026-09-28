@@ -42,11 +42,24 @@ def _short(path):
 _NO_PYC = " -B" if sys.dont_write_bytecode else ""
 
 
-def hook_command(state_file):
+def _python():
+    """The Python that runs the hook and the status line script: a console one (they need
+    stdout). The installed Windows app runs as LimitSwitcher.exe, which always starts the app,
+    so they get its bundled runtime\\python.exe instead."""
     python = Path(sys.executable)
+    name = python.name.lower()
+    if sys.platform == "win32" and not name.startswith("python"):
+        bundled = python.parent / "runtime" / "python.exe"
+        if bundled.exists():
+            return bundled
     console = python.with_name("python.exe")
-    if python.name.lower() == "pythonw.exe" and console.exists():
-        python = console  # hooks need stdout/stderr
+    if name == "pythonw.exe" and console.exists():
+        return console
+    return python
+
+
+def hook_command(state_file):
+    python = _python()
     script = Path(__file__).with_name("afk_hook.py")
     return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {MARK}"
 
@@ -182,10 +195,7 @@ STATUS_REFRESH = 30  # seconds
 
 
 def statusline_command(state_file):
-    python = Path(sys.executable)
-    console = python.with_name("python.exe")
-    if python.name.lower() == "pythonw.exe" and console.exists():
-        python = console  # the status line is read from stdout
+    python = _python()
     script = Path(__file__).with_name("statusline.py")
     return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"
 
@@ -219,6 +229,20 @@ def install_statusline(state_file, root=None):
         atomic_write(path, (json.dumps(updated, indent=2) + "\n").encode("utf-8"))
     command = (previous or {}).get("command")
     return command if isinstance(command, str) and command.strip() else None
+
+
+def own_statusline(state_file, root=None):
+    """The user's own status line (the one ours runs, or the one in place now), or None."""
+    try:
+        current = _load((Path(root) if root else settings_path()) / "settings.json").get("statusLine")
+    except (OSError, ValueError):
+        return None
+    if isinstance(current, dict) and STATUS_MARK in str(current.get("command", "")):
+        try:
+            current = json.loads(_backup(state_file).read_text(encoding="utf-8")).get("previous")
+        except (OSError, ValueError, AttributeError):
+            return None
+    return current if isinstance(current, dict) and str(current.get("command") or "").strip() else None
 
 
 def statusline_installed(root=None):
