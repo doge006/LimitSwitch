@@ -92,7 +92,7 @@ jobs:
 
   dmg:
     if: inputs.job == 'dmg'
-    runs-on: macos-15  # Apple silicon; the Intel DMG is built here too (wheels for x86_64)
+    runs-on: macos-15  # Apple silicon
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +105,6 @@ jobs:
         run: |
           python -m pip install --quiet Pillow
           python scripts/build_mac.py --arch arm64
-          python scripts/build_mac.py --arch x86_64
           ls -la build/*.dmg
       - name: Install from the DMG with the README's command (scripts/install-mac.sh)
         run: |

@@ -649,6 +649,11 @@ class TaskbarView:
         flyout = self.tray.flyout
         if flyout is None:
             return
+        if flyout.pinned and flyout.hwnd and not flyout.closing:
+            # The panel is popped out (and already lists every account): bring it to the front
+            # instead of closing it and opening it again as this block's panel.
+            fl.force_foreground(flyout.hwnd)
+            return
         same = flyout.only == block.provider
         if same and flyout.hwnd and not flyout.closing:
             flyout.close()

@@ -39,9 +39,9 @@ Paste this into Terminal:
 curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
 ```
 
-It downloads the right version for your Mac (Apple silicon or Intel) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
+It downloads the app (for Apple silicon Macs: M1 or later) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
 
-Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` or `LimitSwitcher-Intel.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
+Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
 
 It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/AccountSwitcher`. **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
 
@@ -56,13 +56,13 @@ Built to be barely noticeable:
 
 ### Measured
 
-On the author's Windows PC, over 60 seconds each, with real accounts and Claude Code and Codex in use:
+On the author's Windows PC, over 60 seconds each, with real accounts, the taskbar view on, and Claude Code and Codex in use:
 
 | | Memory (working set) | Private memory | CPU (one core) |
 |---|---|---|---|
-| In the tray, windows closed | 23.6 MB | 33.5 MB | 0.21% |
-| Tray panel open | 36.9 MB | 35.9 MB | 1.64% |
-| Full view open | 14.3 MB | 41.3 MB | 1.02% |
+| In the tray and taskbar, windows closed | 12.8 MB | 35.5 MB | 0.08% |
+| Tray panel open (popped out) | 34.0 MB | 39.2 MB | 0.13% |
+| Full view open | 35.8 MB | 45.8 MB | 0.16% |
 
 (The working set is what Task Manager shows. It can be lower than the private memory, because pages the app isn't using are handed back to Windows until they're needed again.)
 
