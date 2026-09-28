@@ -48,9 +48,12 @@ MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
 # gently and follows live through Claude Code's status line instead (no tokens, no API calls).
 PROVIDER_INTERVALS = {"claude": (300, 180)}   # (in use, near a limit) when not live
-# Accounts not in use: Claude every 15 minutes (and just after a window resets). The same accounts
-# are often checked by a second computer too, which shares the same small allowance.
-PROVIDER_IDLE = {"claude": 900}
+# Accounts not in use: Claude every 10 minutes (and just after a window resets); they may be in use
+# on another computer, and nothing else reports that. That computer may check them too, sharing the
+# same small allowance: a rate limit slows an account down, at most 3x (IDLE_PACE_CAP).
+PROVIDER_IDLE = {"claude": 600}
+IDLE_PACE_CAP = 3
+UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
 LIVE_FRESH = 900            # status line data this recent counts as live
 LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
 SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
@@ -75,6 +78,7 @@ class LiveAccounts:
         for entry in (meta.get("accounts") or {}).values():  # a hiccup's back-off doesn't outlive the app
             if entry.get("backoffKind") == "transient":
                 entry.update(backoffUntil=0.0, backoffFailures=0, backoffKind=None)
+            entry["pace"] = 1.0  # a slower pace from rate limits starts over (a real Retry-After still holds)
         self.meta = {**meta, "accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
@@ -191,7 +195,7 @@ class LiveAccounts:
             return max(held, meta.get("apiAt", updated) + (urgent if near else active) * pace)
         # Inactive: usage only changes when a window resets (or if used elsewhere).
         resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
-        idle = PROVIDER_IDLE.get(meta.get("provider"), IDLE_INTERVAL) * pace
+        idle = PROVIDER_IDLE.get(meta.get("provider"), IDLE_INTERVAL) * min(pace, IDLE_PACE_CAP)
         return max(held, min([updated + idle] + resets))
 
     def refresh(self, only=None, force=False, max_age=None):
@@ -207,7 +211,7 @@ class LiveAccounts:
                 is_active = i == self.active.get(m["provider"])
                 is_live = i == self.live_ids.get(m["provider"])
                 if max_age is not None:
-                    due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
+                    due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, UI_FRESH_IDLE))
                 else:
                     due = 0.0 if (force or only) else self.due(i, m, is_active, now)
                 held = m.get("backoffUntil", 0.0) > now
@@ -269,7 +273,7 @@ class LiveAccounts:
             except Exception as error:  # a malformed response must not stop the loop
                 self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                 continue
-            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.85)} if meta.get("pace", 1.0) > 1 else {}
+            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.5)} if meta.get("pace", 1.0) > 1 else {}
             self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
             if updated is not None:
                 self.vault.write_secret(account_id, updated)

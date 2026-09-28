@@ -643,8 +643,13 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         else:
             age = time.time() - (account.get("updated_at") or 0)
             old = live and account.get("updated_at") and age > STALE_AFTER
-            hint = status or (f"Numbers from {ago(age)} ago · checking" if old else
-                              "All sessions use this account" if active else "Waiting for reset" if not eligible else "")
+            if status or old or active:
+                hint = status or (f"Numbers from {ago(age)} ago · checking" if old else "All sessions use this account")
+            else:  # not in use here (maybe elsewhere): say how old its numbers are
+                parts = [] if eligible else ["Waiting for reset"]
+                if live and account.get("updated_at") and age >= 60:
+                    parts.append(f"Updated {ago(age)} ago")
+                hint = " · ".join(parts)
             c.text(18, fy + 21, fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:

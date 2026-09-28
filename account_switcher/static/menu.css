@@ -55,6 +55,7 @@ header { display: flex; align-items: center; gap: 9px; padding: 13px 12px 8px 14
 .row.switchable:hover .state.hint { opacity: 1; }
 .state.confirm { color: var(--good); }
 .state.note { color: var(--warn); font-weight: 500; }
+.age { font-size: 10px; color: var(--faint); white-space: nowrap; }
 
 .bars { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 0 14px; margin-top: 7px; }
 .meter { display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 7px; }
