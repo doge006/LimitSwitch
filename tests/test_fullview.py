@@ -291,3 +291,75 @@ class IncrementalDrawingTests(unittest.TestCase):
                 self.assertIsNotNone(views[0].last_page)
         finally:
             controller.close()
+
+
+class FakePainter:
+    """Stands in for the macOS painter: keeps what it was asked to draw."""
+    OPS = {"rect", "outline", "line", "text", "image", "glyph", "mark"}
+
+    def __init__(self, test):
+        self.test, self.tiles, self.live, self.overlays = test, [], [], 0
+
+    def background(self):
+        pass
+
+    def visible(self, box):
+        return True
+
+    def tile(self, tile, x, y, alpha):
+        self.test.assertIsNone(tile.image)  # recorded, never drawn into pixels
+        for op in tile.ops:
+            self.test.assertIn(op[0], self.OPS)
+        self.tiles.append((tile, x, y, alpha))
+
+    def canvas(self, bg):
+        from account_switcher import fullview_render as vr
+        rec = vr.Recorder(1.0, bg)
+        self.live.append(rec)
+        return rec
+
+    def surface(self):
+        painter = self
+
+        class Surface:
+            def canvas(self, bg):
+                painter.overlays += 1
+                return painter.canvas(bg)
+
+            def shadow(self, *args):
+                pass
+
+            def fade_begin(self):
+                return None
+
+            def fade_end(self, before, box, t):
+                pass
+        return Surface()
+
+
+class NativeDrawingTests(unittest.TestCase):
+    """The macOS full view records tiles as drawing calls and draws them itself."""
+
+    def test_native_frames_record_and_draw_everything(self):
+        from account_switcher.web import Controller
+        controller = Controller()
+        try:
+            view = fullview.FullView(controller, Host(), controller.snapshot())
+            view.native = True
+            view.resize(900, 600, 2.0)
+            painter = FakePainter(self)
+            boxes = view.draw_native(painter)
+            self.assertTrue(boxes)
+            cards = [t for t, *_ in painter.tiles if t.shape and t.shape[0] == "card"]
+            self.assertTrue(cards)
+            self.assertTrue(any(op[0] == "text" for t in cards for op in t.ops))
+            self.assertEqual(len(view.tiles), len(view.items))  # nothing kept but the recorded calls
+            view.activate("settings")
+            view.toast("Swapped", "ok")
+            for _ in range(10):
+                view.draw_native(painter)
+            self.assertGreater(painter.overlays, 0)
+            self.assertTrue(view.overlay_hits)
+            self.assertIsNone(view.last_page)  # no picture of the page
+        finally:
+            controller.close()

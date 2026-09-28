@@ -12,7 +12,6 @@ import time
 from PIL import Image
 
 from . import fullview_render as vr
-from .flyout_render import text_w as fr_text_w
 
 FAIL = re.compile(r"fail|exhaust|error|stopped|attention|interrupt|quota|not found|closed without", re.I)
 SWAP = re.compile(r"→|swap|selected|routed|failover|continue|now uses", re.I)
@@ -33,21 +32,11 @@ def window_size(area_width, area_height):
     return max(720, round(area_width / 2)), max(480, min(920, round(area_height * .95)))
 
 
-def blend_region(image, before, box, t, scale):
-    """Fade a freshly drawn overlay (box, logical px, plus its shadow) in over what was there."""
-    m = vr.SHADOW + 8
-    x, y, w, h = box
-    region = tuple(round(v * scale) for v in (x - m, y - m, x + w + m, y + h + m))
-    region = (max(0, region[0]), max(0, region[1]), min(image.width, region[2]), min(image.height, region[3]))
-    if region[2] > region[0] and region[3] > region[1]:
-        image.paste(Image.blend(before.crop(region), image.crop(region), max(0.0, min(1.0, t))), region[:2])
-
-
 def widest_percent():
     """Logical width of the widest percentage a card shows ("100%")."""
     global _widest
     if _widest is None:
-        _widest = fr_text_w("100%", 13, True)
+        _widest = vr.text_w("100%", 13, True)
     return _widest
 
 
@@ -156,6 +145,7 @@ class FullView:
         self.seen = set()          # tiles already on screen (new ones rise in, like the web page)
         self.last_page = None      # (layout, [(box, what)], image): the page, to redraw only what changes
         self.incremental = True
+        self.native = False        # a host that draws with the platform (macOS): tiles are recorded, not drawn
         self.changed = None        # device boxes the last frame changed (None: all of it), for the host
         self.had_overlays = False
         self.take_log(state)
@@ -258,17 +248,18 @@ class FullView:
         locked = bool(state.get("busy") or ui.pending)
         if kind == "card":
             cache = vr.card_key(data, ui, bool(state.get("nameMode")), live, locked)
-            make = lambda: vr.draw_card(data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
+            make = lambda: (vr.record_card if self.native else vr.draw_card)(
+                data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
         elif kind == "topbar":
             cache = (w, tuple(vr.quantize(ui.fades.get(k, 0.0)) for k in ("settings", "add", "refresh")),
                      ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"))
-            make = lambda: vr.draw_topbar(state, w, self.scale, ui)
+            make = lambda: (vr.record_topbar if self.native else vr.draw_topbar)(state, w, self.scale, ui)
         elif kind == "group":
             cache = (w, data)
-            make = lambda: vr.draw_group(data, w, self.scale)
+            make = lambda: (vr.record_group if self.native else vr.draw_group)(data, w, self.scale)
         else:
             cache = (w, live, ui.hover)
-            make = lambda: vr.draw_empty(state, w, self.scale, ui)
+            make = lambda: (vr.record_empty if self.native else vr.draw_empty)(state, w, self.scale, ui)
         held = self.tiles.get(key)
         if held and held[0] == cache:
             return held[1]
@@ -276,8 +267,9 @@ class FullView:
         self.tiles[key] = (cache, made)
         return made
 
-    def frame(self):
-        """The window's pixels (RGB, device px) and the clickable regions."""
+    def build(self):
+        """What goes on the page this frame: ([(device box, signature, how to draw it)], still
+        moving). Also sets the page's clickable regions."""
         s, motion, ui = self.scale, self.motion, self.ui
         moving = motion.step()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
@@ -304,7 +296,7 @@ class FullView:
                 continue  # off screen: not drawn (still cached)
             t = self.tile(kind, key, w, h, data)
             tx, ty = round(x * s) - t.margin, round(top * s) - t.margin
-            ops.append(((tx, ty, tx + t.image.width, ty + t.image.height),
+            ops.append(((tx, ty, tx + t.width, ty + t.height),
                         ("tile", key, self.tiles[key][0], tx, ty, rise), ("tile", t, tx, ty, rise)))
             for part in t.live:  # bars fill and percentages count, on top of the cached card
                 params, still = self.live(part, x, top, rise)
@@ -320,24 +312,53 @@ class FullView:
         for key, delay in fresh:  # drawing them took a moment: start their rise from here
             start, end, _, seconds = motion.runs[("rise", key)]
             motion.runs[("rise", key)] = (start, end, now + delay, seconds)
-        image = self.compose(ops)
         self.page_hits = hits
+        return ops, moving
+
+    def frame(self):
+        """The window's pixels (RGB, device px) and the clickable regions."""
+        ops, moving = self.build()
+        image = self.compose(ops)
         self.overlay_hits = []
         overlays = self.overlays_showing()
         if overlays:
             image = image.copy()  # the page stays as it is, for the next frame to build on
-            moving |= self.draw_overlays(image)
+            moving |= self.draw_overlays(vr.Surface(image, self.scale))
         else:
-            self.draw_overlays(image)  # nothing to draw; keeps the toast timers right
+            self.draw_overlays(vr.Surface(image, self.scale))  # nothing to draw; keeps the toast timers right
         if overlays or self.had_overlays:
             self.changed = None  # menus and toasts sit on top of the page: all of it (while they show)
         self.had_overlays = overlays
-        moving |= bool(motion.runs)
-        if moving:
+        self.animate(moving)
+        return image
+
+    def animate(self, moving):
+        if moving or self.motion.runs:
             self.host.set_timer("anim", 16)
         else:
             self.host.kill_timer("anim")
-        return image
+
+    def draw_native(self, painter):
+        """Draw the frame with a platform painter (macOS: fullview_cg), straight to the window:
+        the recorded tiles, the live bars and percentages, then menus and toasts. No pixels are
+        kept here; returns the frame's [(device box, signature)] so the host can tell what moved."""
+        ops, moving = self.build()
+        painter.background()
+        for box, _, how in ops:
+            if not painter.visible(box):
+                continue
+            if how[0] == "tile":
+                _, t, tx, ty, rise = how
+                painter.tile(t, tx, ty, rise)
+            else:
+                self.paint_live(painter.canvas(vr.BG), how[1])
+        self.overlay_hits = []
+        overlays = self.overlays_showing()
+        moving |= self.draw_overlays(painter.surface())
+        self.had_overlays = overlays
+        self.changed = None
+        self.animate(moving)
+        return [(box, sig) for box, sig, _ in ops]
 
     def overlays_showing(self):
         ui = self.ui
@@ -427,7 +448,7 @@ class FullView:
             _, x, y, text, color = params
             canvas.text(x, y, text, 13, color, True, anchor="rs")
 
-    def draw_overlays(self, image):
+    def draw_overlays(self, image):  # image: a Surface (vr.Surface, or a platform's own)
         """Menus, the date editor and toasts, fading in (and toasts out). True while any moves."""
         ui, s, motion = self.ui, self.scale, self.motion
         top = next((y for kind, _, _, y, *_ in self.items if kind == "topbar"), vr.PAD) - self.scroll
@@ -436,11 +457,11 @@ class FullView:
 
         def faded(key, draw):
             t = motion.get(("open", key), 1.0)
-            before = image.copy() if t < 1 else None
+            before = image.fade_begin() if t < 1 else None
             box, hits = draw(4 * (1 - t))  # rises 4 px as it fades in, like the web menus
             self.overlay_hits.append((box, hits))
             if before is not None:
-                blend_region(image, before, box, t, s)
+                image.fade_end(before, box, t)
             return t < 1
 
         if ui.menu == "settings" and "settings" in ui.anchors:

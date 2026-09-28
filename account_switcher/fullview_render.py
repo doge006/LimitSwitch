@@ -142,6 +142,29 @@ def credits_items(account):
     return items
 
 
+# ---------- text metrics ----------
+_measure = None  # a platform's own text measure (the macOS full view: Core Text); None: FreeType
+
+
+def set_measure(measure):
+    """Width of a label as the platform draws it: text_w(value, size, bold) in logical px."""
+    global _measure
+    _measure = measure
+
+
+def text_w(value, size, bold=False):
+    return _measure(value, size, bold) if _measure else fr.text_w(value, size, bold)
+
+
+def fit(value, size, bold, width):
+    """`value`, cut with an ellipsis to fit `width`."""
+    if text_w(value, size, bold) <= width:
+        return value
+    while value and text_w(value + "…", size, bold) > width:
+        value = value[:-1]
+    return value + "…"
+
+
 STALE_AFTER = 1800  # numbers older than this show their age (they're kept, not guessed)
 
 
@@ -272,6 +295,62 @@ class Canvas:
         icon = glyph(kind, self.px(size), color)
         self.image.paste(icon, (self.px(cx) - icon.width // 2, self.px(cy) - icon.height // 2), icon)
 
+    def spin_glyph(self, kind, cx, cy, size, color, degrees):
+        """glyph, turned `degrees` anticlockwise and laid over what is there (the refresh arrow)."""
+        icon = glyph(kind, self.px(size), color)
+        if degrees:
+            icon = icon.rotate(degrees, resample=Image.Resampling.BICUBIC)
+        self.image.alpha_composite(icon, (self.px(cx) - icon.width // 2 - self.ox, self.px(cy) - icon.height // 2 - self.oy))
+
+    def mark(self, x, y, size, radius):
+        """The app's logo, `size` square with rounded corners (the header)."""
+        mark = fr.asset("switcher", self.px(size))
+        rounded = Image.new("RGBA", mark.size, (0, 0, 0, 0))
+        rounded.paste(mark, (0, 0), Image.composite(mark.getchannel("A"), Image.new("L", mark.size, 0),
+                                                    rr_mask(*mark.size, self.px(radius))))
+        self.image.alpha_composite(rounded, (self.px(x) - self.ox, self.px(y) - self.oy))
+
+
+class Recorder:
+    """The Canvas calls, kept (logical px) to be replayed by a platform's own painter instead of
+    drawn into pixels here. Colours are resolved as Canvas resolves them (alpha text and hairlines
+    are blended over the background), so a replay needs no more than the calls."""
+
+    def __init__(self, scale, bg):
+        self.s, self.bg, self.ops = scale, bg, []
+
+    def px(self, v):
+        return round(v * self.s)
+
+    def rect(self, x, y, w, h, r, fill):
+        self.ops.append(("rect", x, y, w, h, r, tuple(fill) if len(fill) == 4 else tuple(fill) + (255,)))
+
+    def outline(self, x, y, w, h, r, color, width=1):
+        self.ops.append(("outline", x, y, w, h, r, tuple(color) if len(color) == 4 else tuple(color) + (255,), width))
+
+    def dot(self, cx, cy, r, fill):
+        self.rect(cx - r, cy - r, 2 * r, 2 * r, r, fill)
+
+    def line(self, x, y, w, color):
+        self.ops.append(("line", x, y, w, over(self.bg, color) if len(color) == 4 else tuple(color)))
+
+    def text(self, x, y, value, size, fill, bold=False, anchor="ls", bg=None):
+        if len(fill) == 4:
+            fill = over(bg or self.bg, fill)
+        self.ops.append(("text", x, y, value, size, tuple(fill), bold, anchor))
+
+    def image_at(self, x, y, name, size):
+        self.ops.append(("image", x, y, name, size))
+
+    def glyph(self, kind, cx, cy, size, color):
+        self.ops.append(("glyph", kind, cx, cy, size, tuple(color), 0))
+
+    def spin_glyph(self, kind, cx, cy, size, color, degrees):
+        self.ops.append(("glyph", kind, cx, cy, size, tuple(color), degrees))
+
+    def mark(self, x, y, size, radius):
+        self.ops.append(("mark", x, y, size, radius))
+
 
 @lru_cache(maxsize=64)
 def glyph(kind, px, color):
@@ -373,9 +452,14 @@ def layout(state, width):
 
 # ---------- tiles ----------
 class Tile:
-    def __init__(self, image, hits, margin=0, live=()):
+    """A drawn part of the page: `image` (Pillow), or `ops` recorded for a platform's own painter
+    with the device `size` it covers and its `shape` (a card's rounded body and shadow)."""
+
+    def __init__(self, image, hits, margin=0, live=(), ops=None, size=None, shape=None):
         self.image, self.hits, self.margin = image, hits, margin
         self.live = live  # parts drawn each frame on top (bars, percentages): [(kind, key, x, y, w, ...)]
+        self.ops, self.shape = ops, shape
+        self.width, self.height = image.size if image is not None else size
 
 
 def mixc(a, b, t):
@@ -400,6 +484,31 @@ def card_key(account, ui, name_mode, live, locked):
 def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     """One account card: returns a Tile (RGBA with shadow margin) with hits relative to the card.
     Bars and percentages are left out: they animate, so the frame draws them (Tile.live)."""
+    m = round(SHADOW * scale)
+    body = Image.new("RGB", (round(w * scale), round(h * scale)), SURFACE)
+    hits, live_parts, border, spent = card_content(Canvas(body, scale, SURFACE), account, w, h, ui, name_mode, live, locked)
+    # Shape: rounded card, border (accent when in use, stronger on hover), shadow, dimmed when spent
+    card = body.convert("RGBA")
+    ring = ring_alpha(body.width, body.height, round(RADIUS * scale), max(1, round(scale)), border[3])
+    card.paste(border[:3], (0, 0), ring)
+    card.putalpha(rr_alpha(body.width, body.height, round(RADIUS * scale), 184 if spent else 255))  # .72 when spent
+    tile = shadow(w, h, scale).copy()
+    tile.alpha_composite(card, (m, m))
+    return Tile(tile, hits, m, [part + (spent,) for part in live_parts])
+
+
+def record_card(account, w, h, scale, ui, name_mode, live, locked):
+    """draw_card as recorded drawing calls, for a platform's own painter (no pixels here)."""
+    m = round(SHADOW * scale)
+    c = Recorder(scale, SURFACE)
+    hits, live_parts, border, spent = card_content(c, account, w, h, ui, name_mode, live, locked)
+    return Tile(None, hits, m, [part + (spent,) for part in live_parts], ops=c.ops,
+                size=(round(w * scale) + 2 * m, round(h * scale) + 2 * m), shape=("card", w, h, border, spent))
+
+
+def card_content(c, account, w, h, ui, name_mode, live, locked):
+    """What a card shows, drawn with canvas `c` (logical px, the card's top left at 0, 0) on its
+    SURFACE body: (hits, live parts, border colour, spent)."""
     provider, aid = account["provider"], account["id"]
     accent = ACCENT[provider]
     active, eligible = account.get("active"), account.get("eligible", True)
@@ -408,9 +517,6 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
         return quantize(ui.fades.get(action + ":" + aid, 0.0))
 
     card_t = a("card")
-    m = round(SHADOW * scale)
-    body = Image.new("RGB", (round(w * scale), round(h * scale)), SURFACE)
-    c = Canvas(body, scale, SURFACE)
     hits, live_parts = [], []
 
     def hit(x, y, bw, bh, action, cursor="hand"):
@@ -427,7 +533,7 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     badge = "In use" if active else ("Limit reached" if not eligible else "")
     for value, size in ((renew, 11.5), (badge, 12)):
         if value:
-            side_w = max(side_w, fr.text_w(value, size, size == 12) + (13 if value == badge else 0))
+            side_w = max(side_w, text_w(value, size, size == 12) + (13 if value == badge else 0))
     name_w = w - ix - 18 - (side_w + 12 if side_w else 0)
     iy = y + 15
     if name_mode:
@@ -439,14 +545,14 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
             c.outline(ix - 6, iy - 16, box_w, 24, 6, FOCUS + (255,))
             text, caret = editing[1], editing[2]
             if editing[3] and text:  # all selected
-                c.rect(ix, iy - 12, fr.text_w(text, 15, True), 17, 3, FOCUS + (90,))
+                c.rect(ix, iy - 12, text_w(text, 15, True), 17, 3, FOCUS + (90,))
             c.text(ix, iy, text, 15, TEXT, True, bg=SURFACE_2)
-            c.rect(ix + fr.text_w(text[:caret], 15, True), iy - 13, 1.2, 17, 0, TEXT + (255,))
+            c.rect(ix + text_w(text[:caret], 15, True), iy - 13, 1.2, 17, 0, TEXT + (255,))
         else:
             if a("name"):
                 c.outline(ix - 6, iy - 16, box_w, 24, 6, LINE_STRONG[:3] + (round(LINE_STRONG[3] * a("name")),))
             if label:
-                c.text(ix, iy, fr.fit(label, 15, True, name_w), 15, TEXT, True)
+                c.text(ix, iy, fit(label, 15, True, name_w), 15, TEXT, True)
             else:
                 c.text(ix, iy, "Name this account", 15, MUTED)
         hit(ix - 6, iy - 16, box_w, 24, "name", "text")
@@ -454,20 +560,20 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
         email = account.get("email") or ""
         shown = email if aid in ui.revealed else redact(email)
         if shown:
-            c.text(ix, iy, fr.fit(shown, 12, False, name_w), 12, mixc(MUTED, TEXT, a("email")))
-            hit(ix, iy - 12, min(name_w, fr.text_w(shown, 12) + 4), 16, "email")
+            c.text(ix, iy, fit(shown, 12, False, name_w), 12, mixc(MUTED, TEXT, a("email")))
+            hit(ix, iy - 12, min(name_w, text_w(shown, 12) + 4), 16, "email")
     else:
-        c.text(ix, iy, fr.fit(display_name(account), 15, True, name_w), 15, TEXT, True)
+        c.text(ix, iy, fit(display_name(account), 15, True, name_w), 15, TEXT, True)
     if account.get("plan"):
         py = iy + 6
-        pw = fr.text_w(account["plan"], 11, True) + 14
+        pw = text_w(account["plan"], 11, True) + 14
         c.rect(ix, py, pw, 17, 6, accent + (36,))
         c.text(ix + 7, py + 12.5, account["plan"], 11, accent, True, bg=over(SURFACE, accent + (36,)))
     right = w - 18
     if renew:
         rcolor = WARN if sub and (account.get("subscription") or {}).get("ends") else (MUTED if sub else FAINT)
         t = a("renew") if live else 0
-        rw = fr.text_w(renew, 11.5)
+        rw = text_w(renew, 11.5)
         rbg = mixc(SURFACE, SURFACE_3, t)
         if t:
             c.rect(right - rw - 4, y + 1, rw + 8, 17, 5, rbg + (255,))
@@ -477,7 +583,7 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     if badge:
         bcolor = GOOD if active else BAD
         c.text(right, y + 33, badge, 12, bcolor, True, anchor="rs")
-        c.dot(right - fr.text_w(badge, 12, True) - 8, y + 29, 3.5, bcolor)
+        c.dot(right - text_w(badge, 12, True) - 8, y + 29, 3.5, bcolor)
 
     # Usage windows: labels, tracks and reset times here; the fills and percentages animate (live)
     y = 16 + identity_height(account, name_mode) + 14
@@ -489,7 +595,7 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
         left = remaining(win.get("used", 0))
         c.text(18, y + 14, win.get("label", ""), 13, TEXT)
         c.text(w - 18, y + 14, " left", 12, MUTED, anchor="rs")
-        live_parts.append(("pct", (aid, win["key"]), w - 18 - fr.text_w(" left", 12), y + 14, left))
+        live_parts.append(("pct", (aid, win["key"]), w - 18 - text_w(" left", 12), y + 14, left))
         c.rect(18, y + 24, w - 36, 6, 3, TRACK)
         live_parts.append(("bar", (aid, win["key"]), 18, y + 24, w - 36, left))
         c.text(18, y + 46, reset_text(win.get("resetsAt")), 11.5, FAINT)
@@ -502,10 +608,10 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
         cx = 18
         for i, (label, value) in enumerate(items):
             if i == len(items) - 1 and len(items) > 1:  # the last one sits at the right
-                cx = w - 18 - fr.text_w(label + ": ", 12) - fr.text_w(value, 12)
+                cx = w - 18 - text_w(label + ": ", 12) - text_w(value, 12)
             c.text(cx, y + 13, label + ": ", 12, MUTED)
-            c.text(cx + fr.text_w(label + ": ", 12), y + 13, value, 12, TEXT)
-            cx += fr.text_w(label + ": " + value, 12) + 12
+            c.text(cx + text_w(label + ": ", 12), y + 13, value, 12, TEXT)
+            cx += text_w(label + ": " + value, 12) + 12
 
     # Foot: hint on the left, Remove and the swap button on the right (web .button: 32 tall, radius 8)
     fy = h - 14 - 32
@@ -531,15 +637,15 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
             label = "Login expired · Sign in again"
             color = FAINT if signing else mixc(MUTED, TEXT, 0.6 + 0.4 * a("relogin"))
             c.text(18, fy + 21, label, 12, color)
-            c.line(18, fy + 23, fr.text_w(label, 12), color + (160,))
+            c.line(18, fy + 23, text_w(label, 12), color + (160,))
             if not signing:
-                hit(18, fy + 4, fr.text_w(label, 12), 22, "relogin")
+                hit(18, fy + 4, text_w(label, 12), 22, "relogin")
         else:
             age = time.time() - (account.get("updated_at") or 0)
             old = live and account.get("updated_at") and age > STALE_AFTER
             hint = status or (f"Numbers from {ago(age)} ago · checking" if old else
                               "All sessions use this account" if active else "Waiting for reset" if not eligible else "")
-            c.text(18, fy + 21, fr.fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
+            c.text(18, fy + 21, fit(hint, 12, False, w - 36 - 124 - 96), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
@@ -564,16 +670,8 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
             if not locked and card_t >= .5:
                 hit(rx, fy, 80, 32, "remove")
 
-    # Shape: rounded card, border (accent when in use, stronger on hover), shadow, dimmed when spent
-    card = body.convert("RGBA")
     border = accent + (115,) if active else mixc(LINE, LINE_STRONG, card_t)
-    ring = ring_alpha(body.width, body.height, round(RADIUS * scale), max(1, round(scale)), border[3])
-    card.paste(border[:3], (0, 0), ring)
-    spent = not eligible and not active
-    card.putalpha(rr_alpha(body.width, body.height, round(RADIUS * scale), 184 if spent else 255))  # .72 when spent
-    tile = shadow(w, h, scale).copy()
-    tile.alpha_composite(card, (m, m))
-    return Tile(tile, hits, m, [part + (spent,) for part in live_parts])
+    return hits, live_parts, border, not eligible and not active
 
 
 def quiet_button(c, x, y, w, label, hover, visible=1.0):
@@ -595,13 +693,19 @@ def button(c, x, y, w, hover, active=False):
 
 def draw_topbar(state, w, scale, ui):
     image = Image.new("RGBA", (round(w * scale), round(TOPBAR_H * scale)), (0, 0, 0, 0))
-    c = Canvas(image, scale, BG)
+    return Tile(image, topbar_content(Canvas(image, scale, BG), state, w, ui))
+
+
+def record_topbar(state, w, scale, ui):
+    c = Recorder(scale, BG)
+    return Tile(None, topbar_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(TOPBAR_H * scale)))
+
+
+def topbar_content(c, state, w, ui):
+    """The header, drawn with canvas `c` over the page background: its hits."""
     hits = []
     f = lambda key: quantize(ui.fades.get(key, 0.0))
-    mark = fr.asset("switcher", c.px(44))
-    rounded = Image.new("RGBA", mark.size, (0, 0, 0, 0))
-    rounded.paste(mark, (0, 0), Image.composite(mark.getchannel("A"), Image.new("L", mark.size, 0), rr_mask(*mark.size, c.px(12))))
-    image.alpha_composite(rounded, (0, c.px(11)))
+    c.mark(0, 11, 44, 12)
     c.text(58, 30, "LimitSwitcher", 22, TEXT, True)
     c.text(58, 51, "Every Claude and Codex limit, at a glance.", 13, MUTED)
     live = state.get("mode") == "live"
@@ -611,16 +715,13 @@ def draw_topbar(state, w, scale, ui):
     t = f("refresh")
     c.rect(x, 15, 36, 36, 9, mixc(SURFACE, SURFACE_3, t) + (255,))
     c.outline(x, 15, 36, 36, 9, LINE)
-    icon = glyph("refresh", c.px(18), mixc(MUTED, TEXT, t))
     turn = ui.fades.get("spin", 0.0)
-    if 0 < turn < 1:
-        icon = icon.rotate(360 * (1 - (1 - turn) ** 3), resample=Image.Resampling.BICUBIC)
-    image.alpha_composite(icon, (c.px(x + 18) - icon.width // 2, c.px(33) - icon.height // 2))
+    c.spin_glyph("refresh", x + 18, 33, 18, mixc(MUTED, TEXT, t), 360 * (1 - (1 - turn) ** 3) if 0 < turn < 1 else 0)
     hits.append(((x, 15, 36, 36), "refresh", "hand"))
     # Add account: padding 14, a plus, gap 8, the label, padding 14
     if live:
         label = "Add account"
-        bw = 14 + 12 + 8 + fr.text_w(label, 13) + 14
+        bw = 14 + 12 + 8 + text_w(label, 13) + 14
         x -= 10 + bw
         base = button(c, x, 17, bw, f("add"), ui.menu == "add")
         c.glyph("plus", x + 14 + 6, 33, 13, TEXT)
@@ -631,37 +732,57 @@ def draw_topbar(state, w, scale, ui):
     busy = state.get("busy")
     pill = "Working…" if busy else "Auto resume" if state.get("afk") else "Auto swap" if state.get("autoSwap") else "Manual"
     pill_bg, pill_fg = ((229, 181, 74, 38), WARN) if busy else ((76, 195, 138, 36), GOOD) if (state.get("afk") or state.get("autoSwap")) else (SURFACE_3 + (255,), MUTED)
-    pw = fr.text_w(pill, 11, True) + 18
-    bw = 14 + fr.text_w("Settings", 13) + 8 + pw + 8 + 12 + 14
+    pw = text_w(pill, 11, True) + 18
+    bw = 14 + text_w("Settings", 13) + 8 + pw + 8 + 12 + 14
     x -= 10 + bw
     base = button(c, x, 17, bw, f("settings"), ui.menu == "settings")
     c.text(x + 14, 33, "Settings", 13, TEXT, anchor="lm", bg=base)
-    px_ = x + 14 + fr.text_w("Settings", 13) + 8
+    px_ = x + 14 + text_w("Settings", 13) + 8
     c.rect(px_, 24, pw, 18, 9, pill_bg)
     c.text(px_ + pw / 2, 33, pill, 11, pill_fg, True, anchor="mm", bg=over(base, pill_bg))
     c.glyph("caret", x + bw - 14 - 6, 33, 13, MUTED)
     hits.append(((x, 17, bw, 32), "settings", "hand"))
     ui.anchors["settings"] = (x, bw)
-    return Tile(image, hits)
+    return hits
 
 
 def draw_group(data, w, scale):
-    provider, title, caption, count = data
     image = Image.new("RGBA", (round(w * scale), round(GROUP_HEAD_H * scale)), (0, 0, 0, 0))
-    c = Canvas(image, scale, BG)
-    c.image_at(2, 7, provider, 20)
-    c.text(32, 22, title, 15, ACCENT[provider], True)
-    tx = 32 + fr.text_w(title, 15, True) + 10
-    c.text(tx, 22, f"{count} account{'s' if count != 1 else ''}", 12, MUTED)
-    if caption:
-        c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
+    group_content(Canvas(image, scale, BG), data, w)
     return Tile(image, [])
 
 
+def record_group(data, w, scale):
+    c = Recorder(scale, BG)
+    group_content(c, data, w)
+    return Tile(None, [], ops=c.ops, size=(round(w * scale), round(GROUP_HEAD_H * scale)))
+
+
+def group_content(c, data, w):
+    provider, title, caption, count = data
+    c.image_at(2, 7, provider, 20)
+    c.text(32, 22, title, 15, ACCENT[provider], True)
+    tx = 32 + text_w(title, 15, True) + 10
+    c.text(tx, 22, f"{count} account{'s' if count != 1 else ''}", 12, MUTED)
+    if caption:
+        c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
+
+
+EMPTY_H = 170
+
+
 def draw_empty(state, w, scale, ui):
-    h = 170
-    image = Image.new("RGBA", (round(w * scale), round(h * scale)), (0, 0, 0, 0))
-    c = Canvas(image, scale, BG)
+    image = Image.new("RGBA", (round(w * scale), round(EMPTY_H * scale)), (0, 0, 0, 0))
+    return Tile(image, empty_content(Canvas(image, scale, BG), state, w, ui))
+
+
+def record_empty(state, w, scale, ui):
+    c = Recorder(scale, BG)
+    return Tile(None, empty_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(EMPTY_H * scale)))
+
+
+def empty_content(c, state, w, ui):
+    h = EMPTY_H
     c.outline(0, 0, w, h, RADIUS, LINE_STRONG)
     live = state.get("mode") == "live"
     c.text(w / 2, 58, "No accounts yet", 16, TEXT, True, anchor="ms")
@@ -669,7 +790,7 @@ def draw_empty(state, w, scale, ui):
            if live else "No sample accounts.", 13, MUTED, anchor="ms")
     hits = []
     if live:
-        widths = [fr.text_w(f"Add {t} account", 13) + 28 for _, t, _ in PROVIDERS]
+        widths = [text_w(f"Add {t} account", 13) + 28 for _, t, _ in PROVIDERS]
         x = w / 2 - (sum(widths) + 10) / 2
         for (provider, title, _), bw in zip(PROVIDERS, widths):
             hot = ui.hover == "add:" + provider
@@ -678,7 +799,7 @@ def draw_empty(state, w, scale, ui):
             c.text(x + bw / 2, 124, f"Add {title} account", 13, TEXT, anchor="mm", bg=SURFACE_3 if hot else SURFACE_2)
             hits.append(((x, 108, bw, 32), "add:" + provider, "hand"))
             x += bw + 10
-    return Tile(image, hits)
+    return hits
 
 
 @lru_cache(maxsize=1)  # only the window's current size (about 5 MB at 150%)
@@ -695,12 +816,38 @@ def release():
 
 
 # ---------- overlays: menus, the date editor, toasts ----------
-def panel(image, scale, x, y, w, h):
+class Surface:
+    """Where overlays draw: the whole frame (Pillow here; macOS has its own with the same calls)."""
+
+    def __init__(self, image, scale):
+        self.image, self.s = image, scale
+
+    def canvas(self, bg):
+        return Canvas(self.image, self.s, bg)
+
+    def shadow(self, x, y, w, h, strength):
+        """A floating surface's shadow (logical box), 4 px lower."""
+        s = self.s
+        sh = shadow(w, h, s, strength)
+        self.image.paste(sh, (round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)), sh)
+
+    def fade_begin(self):
+        return self.image.copy()
+
+    def fade_end(self, before, box, t):
+        """What was drawn since fade_begin over `box` (logical, plus its shadow) at opacity t."""
+        m = SHADOW + 8
+        x, y, w, h = box
+        region = tuple(round(v * self.s) for v in (x - m, y - m, x + w + m, y + h + m))
+        region = (max(0, region[0]), max(0, region[1]), min(self.image.width, region[2]), min(self.image.height, region[3]))
+        if region[2] > region[0] and region[3] > region[1]:
+            self.image.paste(Image.blend(before.crop(region), self.image.crop(region), max(0.0, min(1.0, t))), region[:2])
+
+
+def panel(surface, scale, x, y, w, h):
     """A floating surface (menus, editor) with its shadow, drawn straight onto the frame."""
-    s = scale
-    sh = shadow(w, h, s, 1.4)
-    image.paste(sh, (round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)), sh)
-    c = Canvas(image, s, SURFACE_3)
+    surface.shadow(x, y, w, h, 1.4)
+    c = surface.canvas(SURFACE_3)
     c.rect(x, y, w, h, 10, SURFACE_3 + (255,))
     c.outline(x, y, w, h, 10, LINE_STRONG)
     return c
@@ -757,11 +904,11 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         ry += row_h
     if chooser:  # which display: a row of buttons, the chosen one marked like a switch that is on
         c.text(x + 66, ry + 15, "Show on", 13, MUTED, anchor="lm")
-        cx = x + 66 + fr.text_w("Show on", 13) + 10
+        cx = x + 66 + text_w("Show on", 13) + 10
         current = state.get("taskbarDisplay") or "main"
         for d in displays:
             label = d["label"].replace(" display", "")
-            bw = fr.text_w(label, 12) + 22
+            bw = text_w(label, 12) + 22
             chosen = d["id"] == current
             hot = ui.hover == "display:" + d["id"]
             if chosen:
@@ -793,7 +940,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         label, action, primary = "Up to date · Check again", "update:check", False
     else:
         label, action, primary = "Check for updates", "update:check", False
-    bw = fr.text_w(label, 12, primary) + 24
+    bw = text_w(label, 12, primary) + 24
     bx = x + w - 14 - bw
     hot = bool(action) and ui.hover == action
     if primary:
@@ -848,7 +995,7 @@ def date_editor(image, scale, ui, x, y):
         c.dot(kx + 8, ry + 14, 8, (GOOD if on else (MUTED if hot else FAINT)) + (255,))
         c.dot(kx + 8, ry + 14, 6.5 if not on else 3.5, SURFACE_3 + (255,) if not on else (255, 255, 255))
         c.text(kx + 22, ry + 14, label, 13, TEXT, anchor="lm")
-        bw = 22 + fr.text_w(label, 13) + 6
+        bw = 22 + text_w(label, 13) + 6
         hits.append(((kx - 4, ry, bw + 8, 28), "ed-kind:" + kind, "hand"))
         kx += bw + 18
     ry += 28 + 10
@@ -893,7 +1040,7 @@ def date_editor(image, scale, ui, x, y):
     bx = x + w - 14
     for action, label, primary in (("ed-save", "Save", True), ("ed-cancel", "Cancel", False)) + \
             ((("ed-clear", "Use detected", False),) if ed.get("source") == "manual" else ()):
-        bw = fr.text_w(label, 13) + 28
+        bw = text_w(label, 13) + 28
         bx -= bw
         hot = hover == action
         if primary:
@@ -914,7 +1061,7 @@ def wrap(text, size, width, bold=False):
     lines, line = [], ""
     for word in text.split():
         trial = (line + " " + word).strip()
-        if fr.text_w(trial, size, bold) <= width or not line:
+        if text_w(trial, size, bold) <= width or not line:
             line = trial
         else:
             lines.append(line)
@@ -933,10 +1080,10 @@ def toasts(image, scale, items, vw, vh):
     for text, kind, alpha in reversed(items[-4:]):
         lines = wrap(text, 13, 380 - 42)
         h = 22 + 18 * len(lines)
-        w = min(380, 42 + max(fr.text_w(line, 13) for line in lines) + 14)
+        w = min(380, 42 + max(text_w(line, 13) for line in lines) + 14)
         y -= h
         x = vw - 20 - w
-        before = image.copy() if alpha < 1 else None
+        before = image.fade_begin() if alpha < 1 else None
         dy = 4 * (1 - alpha)
         c = panel(image, scale, x, y + dy, w, h)
         if kind == "error":
@@ -945,8 +1092,5 @@ def toasts(image, scale, items, vw, vh):
         for i, line in enumerate(lines):
             c.text(x + 32, y + dy + 16 + i * 18, line, 13, TEXT, anchor="lm")
         if before is not None:
-            m = SHADOW + 8
-            box = tuple(round(v * scale) for v in (x - m, y - m, x + w + m, y + h + m))
-            box = (max(0, box[0]), max(0, box[1]), min(image.width, box[2]), min(image.height, box[3]))
-            image.paste(Image.blend(before.crop(box), image.crop(box), max(0.0, alpha)), box[:2])
+            image.fade_end(before, (x, y, w, h), alpha)
         y -= 8
