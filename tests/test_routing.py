@@ -368,6 +368,33 @@ class ClaudeHookTests(unittest.TestCase):
             claude_hooks.uninstall_statusline(state, tmp)
             self.assertEqual(json.loads(path.read_text()), {"model": "opus"})
 
+    def test_own_status_line_is_found_also_behind_ours(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path, state = Path(tmp) / "settings.json", Path(tmp) / "state.json"
+            path.write_text(json.dumps({"model": "opus"}))
+            self.assertIsNone(claude_hooks.own_statusline(state, tmp))
+            claude_hooks.install_statusline(state, tmp)
+            self.assertIsNone(claude_hooks.own_statusline(state, tmp))  # only ours
+            claude_hooks.uninstall_statusline(state, tmp)
+            path.write_text(json.dumps({"statusLine": {"type": "command", "command": "my-line.sh"}}))
+            self.assertEqual(claude_hooks.own_statusline(state, tmp)["command"], "my-line.sh")
+            claude_hooks.install_statusline(state, tmp)
+            self.assertEqual(claude_hooks.own_statusline(state, tmp)["command"], "my-line.sh")
+
+    def test_installed_windows_app_runs_its_scripts_with_the_bundled_python(self):
+        # LimitSwitcher.exe always starts the app, so the hook and status line use runtime\python.exe.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "LimitSwitcher.exe"
+            (Path(tmp) / "runtime").mkdir()
+            (Path(tmp) / "runtime" / "python.exe").write_text("")
+            with mock.patch.object(claude_hooks.sys, "executable", str(exe)), \
+                    mock.patch.object(claude_hooks.sys, "platform", "win32"), \
+                    mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                for command in (claude_hooks.hook_command(Path(tmp) / "s.json"),
+                                claude_hooks.statusline_command(Path(tmp) / "s.json")):
+                    self.assertTrue(command.startswith(str(Path(tmp) / "runtime" / "python.exe").replace("\\", "/")), command)
+                    self.assertNotIn("LimitSwitcher.exe", command)
+
     def test_auto_resume_pauses_claude_codes_own_wait_and_puts_it_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             path, state = Path(tmp) / "settings.json", Path(tmp) / "state.json"
@@ -505,6 +532,7 @@ class AfkTests(unittest.TestCase):
         server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.manager.live_since["claude"] = 0
+        self.manager.meta["statuslineShown"] = True  # shown in Claude Code (off by default)
         state = Path(self.tmp.name) / "state.json"
         state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
         event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}}}
@@ -660,7 +688,7 @@ class IntegrationTests(unittest.TestCase):
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"),
                                   {"claude": Claude(config_dir=claude_root, home=root), "codex": Codex(codex_home=codex_home)},
                                   background=False)
-            gateway.manager.meta.update(afk=True, startWithWindows=False)
+            gateway.manager.meta.update(afk=True, startWithWindows=False, statuslineShown=True)
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=codex_home,
                                         claude_root=claude_root, upstream="http://127.0.0.1:9")
             with mock.patch("account_switcher.codex_proxy.DEFAULT_PORT", 0), \
@@ -678,7 +706,8 @@ class IntegrationTests(unittest.TestCase):
             self.assertFalse(integrations.state_file.exists())
 
 
-    def test_status_line_comes_back_when_settings_are_rewritten(self):
+    def test_status_line_off_leaves_claude_code_alone_unless_the_user_has_one(self):
+        # Off (the default) and no status line of their own: ours would only add an empty line.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             claude_root = root / "claude"
@@ -687,6 +716,35 @@ class IntegrationTests(unittest.TestCase):
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
             gateway.manager.meta.update(startWithWindows=False)
+            integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
+                                        claude_root=claude_root)
+            with mock.patch("account_switcher.integrations.codex_present", return_value=False):
+                integrations.start()
+            try:
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))
+                gateway.manager.meta["statuslineShown"] = True  # turned on in Settings
+                integrations.apply_afk()
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+                gateway.manager.meta["statuslineShown"] = False
+                integrations.apply_afk()
+                self.assertNotIn("statusLine", json.loads((claude_root / "settings.json").read_text()))
+                # Their own status line: ours runs it (for live usage), their line unchanged.
+                (claude_root / "settings.json").write_text('{"statusLine": {"type": "command", "command": "mine.sh"}}')
+                integrations.apply_afk()
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+            finally:
+                integrations.stop()
+            self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
+
+    def test_status_line_comes_back_when_settings_are_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_root = root / "claude"
+            claude_root.mkdir()
+            (claude_root / "settings.json").write_text('{"model": "opus"}')
+            gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
+                                  background=False)
+            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             integrations.SETTINGS_EVERY = 0.05

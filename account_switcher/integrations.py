@@ -312,7 +312,7 @@ class Integrations:
                 if stamp == seen:
                     continue
                 seen = stamp
-                if not claude_hooks.statusline_installed(self.claude_root):
+                if not claude_hooks.statusline_installed(self.claude_root) and self.statusline_wanted():
                     log.warning("Claude Code's status line was not ours any more (settings.json rewritten); restoring it")
                     self.apply_afk()
                     try:
@@ -361,11 +361,21 @@ class Integrations:
         atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
                                                    "statusline": statusline}).encode())
 
+    def statusline_wanted(self):
+        """Ours in Claude Code's status line: when it's turned on in Settings, or around the
+        user's own one (which stays unchanged). Otherwise Claude Code's status line is left alone:
+        ours would show an empty line there."""
+        return bool(self.manager.meta.get("statuslineShown", False)) or \
+            claude_hooks.own_statusline(self.state_file, self.claude_root) is not None
+
     def apply_afk(self):
         previous = None
         try:
             # Live Claude usage from Claude Code's status line: no tokens, no API calls.
-            previous = claude_hooks.install_statusline(self.state_file, self.claude_root)
+            if self.statusline_wanted():
+                previous = claude_hooks.install_statusline(self.state_file, self.claude_root)
+            else:
+                claude_hooks.uninstall_statusline(self.state_file, self.claude_root)
         except (OSError, ValueError) as error:
             log.warning("could not install Claude Code's status line: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's status line: {error}")
