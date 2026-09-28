@@ -46,6 +46,7 @@ jobs:
           $url = "$dir\.runtime\tray.url"
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           & "$dir\runtime\python.exe" "$dir\LimitSwitcher.pyw" --quit
+          foreach ($i in 1..80) { if (-not (Test-Path $url)) { break }; Start-Sleep -Milliseconds 250 }  # the old copy is gone
           Start-Process -FilePath "$dir\LimitSwitcher.exe" -ArgumentList '--demo', '--show'
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }

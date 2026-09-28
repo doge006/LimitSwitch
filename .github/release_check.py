@@ -23,6 +23,10 @@ listed = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, 
 check('"limitswitcher.exe"' in listed, "the app runs as LimitSwitcher.exe (Task Manager shows LimitSwitcher)")
 check('"pythonw.exe"' not in listed, "no separate Python process")
 user32 = ctypes.windll.user32
+for _ in range(40):  # a first start on a fresh runner can be slow (the new exe is scanned)
+    if user32.FindWindowW("AccountSwitcherFullView", None):
+        break
+    time.sleep(0.5)
 check(bool(user32.FindWindowW("AccountSwitcherFullView", None)), "the full view window opened (native, bundled Python)")
 link = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "LimitSwitcher.lnk"
 for _ in range(20):
