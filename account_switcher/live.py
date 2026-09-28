@@ -83,6 +83,8 @@ class LiveAccounts:
         self.routed = set()      # providers whose requests go through the local router
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
+        self.afk_lock = threading.Lock()  # one limit report at a time (several hooks can ask at once)
+        self.afk_continues = []  # every session's continues (times): a cap that no session id can dodge
         self.session_reports = {}  # Claude session -> its last status line numbers
         self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
         self.signatures = {}
@@ -629,7 +631,15 @@ class LiveAccounts:
     def claude_limit(self, session):
         """Called by the StopFailure hook when a Claude turn ended on a usage limit.
         Auto swap moves to another account now; AFK also continues the session (or waits
-        for a reset when no account has room)."""
+        for a reset when no account has room). One report at a time: hooks that ask together
+        (several waits ending at once) must not all get "continue"."""
+        with self.afk_lock:
+            answer = self._claude_limit(session)
+        logging.getLogger("account_switcher").warning("auto resume: a limit in session %s -> %s",
+                                                      (session or "?")[:8], answer.get("action"))
+        return answer
+
+    def _claude_limit(self, session):
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
         if not (afk or auto):
             return {"action": "stop"}
@@ -639,21 +649,25 @@ class LiveAccounts:
         now = time.time()
         state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
         state["continues"] = [t for t in state["continues"] if now - t < 600]
-        if state["continues"] and now - state["continues"][-1] < 20:
-            return {"action": "stop"}  # the same limit reported twice: the session is already continuing
-        if len(state["continues"]) >= 3:  # something keeps failing: do not loop
+        self.afk_continues = [t for t in self.afk_continues if now - t < 600]
+        if state["continues"] and now - state["continues"][-1] < 90:
+            # Reported again right after continuing: the same limit twice, or the continued turn
+            # failed at once (the new account is used up too). Either way: no second wake.
+            return {"action": "stop"}
+        if len(state["continues"]) >= 3 or len(self.afk_continues) >= 6:  # something keeps failing: do not loop
             return {"action": "wait", "seconds": 900}
         before = (self.meta["accounts"].get(current) or {}).get("apiAt")
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
         if (self.meta["accounts"].get(current) or {}).get("apiAt") == before:
             self.mark_used_up(current)  # none (rate limited, offline): the limit itself says it's used up
         self.on_limit()
-        best = self._best_other("claude", current, allow_unknown=True) if auto else None
+        best = self.confirmed_other("claude", current) if auto else None
         if best is not None:
             self.swap(best.id, reason="auto")
             if not afk:
                 return {"action": "stop"}  # the next message goes to the new account
             state["continues"].append(now)
+            self.afk_continues.append(now)
             state["waiting"] = False
             return {"action": "continue", "message": AFK_NOTE}
         if not afk:
@@ -661,6 +675,7 @@ class LiveAccounts:
         account = next((a for a in self.accounts() if a.id == current), None)
         if state["waiting"] and account is not None and all(w["used"] < 100 for w in account.windows()):
             state["continues"].append(now)
+            self.afk_continues.append(now)
             state["waiting"] = False
             return {"action": "continue", "message": AFK_RESUMED}
         state["waiting"] = True
@@ -668,6 +683,28 @@ class LiveAccounts:
                   for w in a.windows() if w["used"] >= 100 and w.get("resetsAt")]
         wait = min(resets) - now + 30 if resets else 900
         return {"action": "wait", "seconds": max(60, min(wait, 6 * 3600))}
+
+    def confirmed_other(self, name, current):
+        """The account to continue on after a limit: the best other one whose numbers were just
+        checked (or are under 5 minutes old) and show room. Stale numbers can make an account
+        that is used up elsewhere look free, and continuing onto it fails at once."""
+        tried = set()
+        for _ in range(2):  # the best, and if that turns out used up, the next best
+            candidates = [a for a in self.accounts() if a.provider == name and a.id != current and a.id not in tried
+                          and a.eligible and not a.status]
+            if not candidates:
+                return None
+            best = max(candidates, key=lambda a: a.headroom)
+            tried.add(best.id)
+            entry = self.meta["accounts"].get(best.id) or {}
+            if time.time() - entry.get("updatedAt", 0.0) > 300:
+                self.refresh(only=best.id)
+                entry = self.meta["accounts"].get(best.id) or {}
+            fresh = time.time() - entry.get("updatedAt", 0.0) <= 300
+            account = next((a for a in self.accounts() if a.id == best.id), None)
+            if fresh and account is not None and account.eligible and account.headroom > 0:
+                return account
+        return None
 
     def auto_swap(self):
         """Move off an account that has used up a limit, to the one with the most headroom."""
