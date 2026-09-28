@@ -18,7 +18,7 @@ Each run:
 
 Options: `--branch NAME` (follow another branch), `--force`, `--no-launch`. A copy from source also offers updates in Settings; there, **Update** runs this installer.
 
-A first install from nothing: `git clone https://github.com/doge006/LimitSwitch.git`, then run the installer in that folder.
+A first install from nothing: `git clone https://github.com/doge006/LimitSwitcher.git`, then run the installer in that folder.
 
 ## Development (any OS)
 

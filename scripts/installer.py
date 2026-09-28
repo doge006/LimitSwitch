@@ -28,7 +28,7 @@ import time
 from urllib.request import ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parent.parent
-REPO = "https://github.com/doge006/LimitSwitch.git"
+REPO = "https://github.com/doge006/LimitSwitcher.git"
 REQUIREMENTS = ROOT / "requirements-native.txt"
 VENV = ROOT / ".venv"
 RUNTIME = ROOT / ".runtime"
