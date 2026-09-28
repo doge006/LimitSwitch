@@ -7,7 +7,8 @@
   as you like; its dock button slides it back under the icon. Docked, a click elsewhere or Esc
   closes it. (Not an NSPopover: a popover dragged off becomes a window the app can't move.)
 - Right-click (or Control-click): a native menu.
-- Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit).
+- Full View: a native window, drawn like the Windows one (fullview_mac.py; no WebKit), in a process
+  of its own that ends when it closes (fullview_mac_app.py): its memory never stays with this one.
 - Notifications when Auto swap moves an account.
 No Dock icon (accessory app). Built on PyObjC (pyobjc-framework-Cocoa and -WebKit).
 """
@@ -17,16 +18,13 @@ import threading
 import time
 
 import logging
-from pathlib import Path
 
 import objc
-from AppKit import (NSApp, NSView, NSApplication, NSApplicationActivationPolicyAccessory, NSApplicationActivationPolicyRegular,
+from AppKit import (NSApp, NSView, NSApplication, NSApplicationActivationPolicyAccessory,
                     NSBackingStoreBuffered, NSColor, NSEventModifierFlagCommand, NSEventModifierFlagOption,
                     NSEventMaskLeftMouseUp, NSEventMaskRightMouseUp, NSEventModifierFlagControl,
                     NSEventTypeRightMouseUp, NSImage, NSMenu, NSMenuItem, NSOffState, NSOnState,
-                    NSPanel, NSStatusBar, NSVariableStatusItemLength,
-                    NSWindow, NSWindowStyleMaskClosable,
-                    NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
+                    NSPanel, NSStatusBar, NSVariableStatusItemLength)
 from Foundation import NSMakeRect, NSMakeSize, NSObject, NSURL, NSURLRequest
 from PyObjCTools import AppHelper
 from WebKit import WKWebView, WKWebViewConfiguration
@@ -38,7 +36,6 @@ PANEL_WIDTH = 392
 PANEL_RADIUS = 12
 ARROW_HEIGHT, ARROW_WIDTH = 10, 22  # the docked panel's arrow up to the menu bar icon
 POPUP_LEVEL = 101  # NSPopUpMenuWindowLevel: over other windows, like a popover
-ICON = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"  # the Dock icon, macOS shape
 TERMINATE_NOW = 1  # NSTerminateNow
 SYMBOLS = {None: "arrow.triangle.2.circlepath", "good": "arrow.triangle.2.circlepath",
            "warn": "arrow.triangle.2.circlepath", "bad": "exclamationmark.arrow.triangle.2.circlepath"}
@@ -176,8 +173,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         self.url = server.launch_url
         self.state = controller.snapshot()
         self.last_active = {a["provider"]: a["id"] for a in active_accounts(self.state)}
-        self.full_window = None
-        self.canvas = None
+        self.full = None  # the full view's process (fullview_mac_app.Started)
         self.panel_size = [PANEL_WIDTH, 420]
         self.detached = False
         self.drag = None
@@ -188,8 +184,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     # ---------- setup ----------
     def applicationDidFinishLaunching_(self, _note):
         NSApp.setMainMenu_(self.main_menu())
-        icon = NSImage.alloc().initWithContentsOfFile_(str(ICON))
-        self.icon = icon
         self.item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         self.item.setAutosaveName_("AccountSwitcher")  # macOS remembers its place and visibility by this
         self.item.setVisible_(True)
@@ -307,28 +301,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         return False
 
     def applicationDidResignActive_(self, _note):
-        """Switched to another app: the full view goes away with its Dock icon, so the menu bar
-        icon only ever opens the small panel. Full view brings it back as it was."""
-        if self.full_window is not None and self.full_window.isVisible():
-            self.full_window.close()  # closed, not hidden: its drawing is freed (windowWillClose_)
-            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         if not self.detached:
             self.hide_panel()  # docked: goes away like a popover
-
-    def windowWillClose_(self, note):
-        # Back to a menu bar app: no Dock icon once the full view is closed.
-        if note.object() == self.full_window:
-            AppHelper.callAfter(NSApp.setActivationPolicy_, NSApplicationActivationPolicyAccessory)
-            if getattr(self, "canvas", None) is not None:  # closed, not hidden: free its drawing
-                self.canvas.close()
-                self.canvas = None
-                AppHelper.callAfter(self.forget_full_window)
-            from .memory import trim_soon
-            trim_soon()
-
-    @objc.python_method
-    def forget_full_window(self):
-        self.full_window = None  # the next Full view makes a fresh one
 
     @objc.python_method
     def make_panel(self):
@@ -441,25 +415,11 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.dock()
             AppHelper.callLater(1, self.panel_test, 3)
             return
-        elif step == 3:
+        elif step == 3:  # the full view's own process draws it and logs "full view drawn"
             log.warning("panel test: docked again %s detached=%s visible=%s", frame(), self.detached,
                         self.panel.isVisible())
             self.hide_panel()
             self.showFullView_(None)
-            AppHelper.callLater(1, self.panel_test, 4)
-        elif step == 4:  # the full view draws whole, then (a hover) only what changed
-            canvas = self.canvas
-            if canvas is None:
-                log.warning("panel test: full view drawn=False (no canvas)")
-                return
-            canvas.invalidate()
-            canvas.display()
-            whole = canvas.picture is not None
-            canvas.view.mouse_move(120, 140)
-            canvas.invalidate()
-            canvas.display()
-            log.warning("panel test: full view drawn=%s, then %s changed area(s) redrawn", whole,
-                        "all" if canvas.view.changed is None else len(canvas.view.changed))
 
     @objc.python_method
     def trim_regularly(self):
@@ -616,46 +576,16 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
 
     # ---------- full view ----------
     def showFullView_(self, _sender):
-        if self.full_window is None:
-            # A real title bar above the page (the page would otherwise take the drags), dark to
-            # match it. At most a quarter of the screen: half its width and half its height.
-            from AppKit import NSAppearance, NSScreen
-            style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-                     | NSWindowStyleMaskResizable)
-            area = NSScreen.mainScreen().visibleFrame().size if NSScreen.mainScreen() else NSMakeSize(1440, 900)
-            width, height = max(640, area.width / 2), max(460, area.height / 2 + 40)
-            window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(0, 0, width, height), style, NSBackingStoreBuffered, False)
-            window.setTitle_(APP)
-            dark = NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua")
-            if dark is not None:
-                window.setAppearance_(dark)
-            window.setTitlebarAppearsTransparent_(True)
-            window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
-            window.setReleasedWhenClosed_(False)
-            window.setMinSize_(NSMakeSize(600, 400))
-            try:  # drawn natively like the Windows one (no WebKit)
-                from .fullview_mac import FullViewCanvas
-                self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
-                    NSMakeRect(0, 0, width, height), self.controller, self.state)
-            except Exception:
-                log.exception("native full view unavailable")
-                self.canvas = None
-                notify(APP, "The full view couldn't open. Details are in app.log.")
-                return
-            window.setContentView_(self.canvas)
-            window.center()
-            # Remembers the user's size from here on. A new name when the default size changes: the
-            # old saved size would otherwise win over the new default.
-            window.setFrameAutosaveName_("AccountSwitcherFullView.v3")
-            window.setDelegate_(self)
-            self.full_window = window
-        # A window gets a Dock icon and a menu bar like any app, so it can be found and quit.
-        NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
-        if self.icon is not None:
-            NSApp.setApplicationIconImage_(self.icon)  # the Dock would show Python's icon otherwise
-        NSApp.activateIgnoringOtherApps_(True)
-        self.full_window.makeKeyAndOrderFront_(None)
+        """Starts the full view's process, or brings it to the front if it's open."""
+        if self.full is not None and self.full.alive():
+            self.full.front()
+            return
+        from .fullview_mac_app import start
+        try:
+            self.full = start(self.url)
+        except Exception:
+            log.exception("the full view couldn't start")
+            notify(APP, "The full view couldn't open. Details are in app.log.")
 
     # ---------- state ----------
     @objc.python_method
@@ -671,8 +601,6 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                 image.setTemplate_(True)
                 self.item.button().setImage_(image)
         self.item.button().setToolTip_(tooltip(state))
-        if getattr(self, "canvas", None) is not None:
-            self.canvas.set_state(state)
         self.announce_failovers(state)
 
     @objc.python_method
@@ -708,6 +636,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if not self.quitting:
             self.quitting = True
             self.hide_panel()
+            if self.full is not None and self.full.alive():
+                self.full.close()
             NSApp.terminate_(None)  # -> applicationShouldTerminate_, which cleans up
 
 

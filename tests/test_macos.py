@@ -141,3 +141,32 @@ class MacAppShapeTests(unittest.TestCase):
                     continue
                 args = len(fn.args.args) - 1
                 self.assertEqual(fn.name.count("_"), args, f"{cls.name}.{fn.name}: {args} argument(s)")
+
+
+class FullViewProcessTest(unittest.TestCase):
+    """The Mac full view's own process reaches the menu bar app only through its local API."""
+
+    def test_remote_state_and_actions(self):
+        import threading
+        from account_switcher.fullview_mac_app import Remote
+        from account_switcher.web import Controller, make_server
+        controller = Controller(live=False)
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            remote = Remote(server.launch_url)
+            state = remote.state()
+            self.assertEqual(state["revision"], controller.revision)
+            self.assertEqual(len(state["accounts"]), len(controller.snapshot()["accounts"]))
+            remote.action("statusline", {"on": not state["statusline"]})
+            changed = remote.state(state["revision"])  # the long poll answers once it changes
+            self.assertEqual(changed["statusline"], not state["statusline"])
+            with self.assertRaises((ValueError, RuntimeError)):
+                remote.action("no-such-action", {})
+            with self.assertRaises(RuntimeError):  # a wrong token is refused, not ignored
+                Remote(server.launch_url.split("#token=")[0] + "#token=wrong").state()
+        finally:
+            server.shutdown()
+            server.server_close()
+        with self.assertRaises(RuntimeError):  # the app has quit: the full view's process ends
+            remote.state()

@@ -53,17 +53,15 @@ import Foundation  # noqa: E402,F401
 import AppKit  # noqa: E402,F401
 step("PyObjC: AppKit + Foundation")
 import WebKit  # noqa: E402,F401
-step("PyObjC: WebKit")
-import Quartz  # noqa: E402,F401
-step("PyObjC: Quartz (full view drawing)")
-from PIL import Image  # noqa: E402,F401
-import pystray  # noqa: E402,F401
-step("Pillow + pystray")
+step("PyObjC: WebKit (the panel)")
 from account_switcher import tray, web, live, providers, macos_app  # noqa: E402,F401
 step("the app's code")
+print(f"  = {last[0]:.1f} MB: the menu bar app loads this much (Pillow loaded: {'PIL' in sys.modules})")
+print("The full view's own process (open only while the window is) also loads:")
+import Quartz  # noqa: E402,F401
+step("PyObjC: Quartz")
 from account_switcher import fullview, fullview_render as vr, flyout_render as fr  # noqa: E402
-step("full view code")
-
+step("Pillow + full view code")
 for bold in (False, True):
     for size in range(9, 25):
         fr.font(size, bold, 2.0)
@@ -96,5 +94,5 @@ step("full view: 60 hover frames")
 view.close()
 del view
 relieve()
-step("full view closed and released")
+step("full view closed and released (its process then ends: all of it goes back to macOS)")
 print(f"font file: {fr._font_files()[0]} ({os.path.getsize(fr._font_files()[0]) / 2**20:.1f} MB on disk)")

@@ -15,11 +15,9 @@ _lock = threading.Lock()
 
 
 def trim():
-    try:  # decoded logos are only needed while something is drawn
-        from .flyout_render import asset_source
-        asset_source.cache_clear()
-    except ImportError:
-        pass
+    drawing = sys.modules.get(__package__ + ".flyout_render")  # never loaded just to be cleared
+    if drawing is not None:  # decoded logos are only needed while something is drawn
+        drawing.asset_source.cache_clear()
     gc.collect()
     if sys.platform == "win32":
         import ctypes
