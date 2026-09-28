@@ -329,9 +329,12 @@ class Claude:
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
                                                   "User-Agent": "account-switcher"})
         except ProviderError as error:
-            if not (error.relogin and allow_refresh and updated is None):
+            # Anthropic answers an expired access token with 429, not 401: a saved login (ours to
+            # renew) whose token has expired, or whose expiry is unknown, is renewed and asked again.
+            expired = not expires or expires < time.time() + 60
+            if not ((error.relogin or (error.rate_limited and expired)) and allow_refresh and updated is None):
                 raise
-            secret = updated = self.refresh(secret, "usage check")
+            secret = updated = self.refresh(secret, "usage check" if error.relogin else "usage check, expired token")
             oauth = secret["credentials"]["claudeAiOauth"]
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",

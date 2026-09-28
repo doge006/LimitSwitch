@@ -293,68 +293,73 @@ class IncrementalDrawingTests(unittest.TestCase):
             controller.close()
 
 
-def composite(scene, size):
-    """What the macOS host puts on screen for a scene(): the background, the tiles, the patches."""
-    from PIL import Image
-    page = Image.new("RGB", size, vr.BG)
-    for tile, x, y, alpha in scene["tiles"]:
-        mask = tile.image if alpha >= 1 else tile.image.getchannel("A").point(lambda v: round(v * alpha))
-        page.paste(tile.image, (x, y), mask)
-    for patch, x, y in scene["patches"]:
-        page.paste(patch, (x, y))
-    return page
+class FakePainter:
+    """Stands in for the macOS painter: keeps what it was asked to draw."""
+    OPS = {"rect", "outline", "line", "text", "image", "glyph", "mark"}
+
+    def __init__(self, test):
+        self.test, self.tiles, self.live, self.overlays = test, [], [], 0
+
+    def background(self):
+        pass
+
+    def visible(self, box):
+        return True
+
+    def tile(self, tile, x, y, alpha):
+        self.test.assertIsNone(tile.image)  # recorded, never drawn into pixels
+        for op in tile.ops:
+            self.test.assertIn(op[0], self.OPS)
+        self.tiles.append((tile, x, y, alpha))
+
+    def canvas(self, bg):
+        from account_switcher import fullview_render as vr
+        rec = vr.Recorder(1.0, bg)
+        self.live.append(rec)
+        return rec
+
+    def surface(self):
+        painter = self
+
+        class Surface:
+            def canvas(self, bg):
+                painter.overlays += 1
+                return painter.canvas(bg)
+
+            def shadow(self, *args):
+                pass
+
+            def fade_begin(self, t):
+                return None
+
+            def fade_end(self, before, box, t):
+                pass
+        return Surface()
 
 
-class LayeredDrawingTests(unittest.TestCase):
-    """The macOS full view composites layers itself (no picture of the whole window): the result
-    must be exactly the pixels of the whole frame."""
+class NativeDrawingTests(unittest.TestCase):
+    """The macOS full view records tiles as drawing calls and draws them itself."""
 
-    def test_layers_give_the_same_pixels_as_the_frame(self):
+    def test_native_frames_record_and_draw_everything(self):
         from account_switcher.web import Controller
-        clock = [1000.0]
         controller = Controller()
         try:
-            with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]), \
-                    unittest.mock.patch.object(fullview.time, "monotonic", lambda: clock[0]):
-                views = [fullview.FullView(controller, Host(), controller.snapshot()) for _ in range(2)]
-                for view in views:
-                    view.resize(900, 600, 2.0)
-                size = (1800, 1200)
-                biggest = [0]
-
-                def step(n):
-                    for _ in range(n):
-                        clock[0] += 0.04
-                        state = controller.snapshot()
-                        for view in views:
-                            view.set_state(state)
-                        whole = views[0].frame()
-                        scene = views[1].scene()
-                        for patch, _, _ in scene["patches"]:
-                            biggest[0] = max(biggest[0], patch.width * patch.height)
-                        self.assertEqual(composite(scene, size).tobytes(), whole.tobytes())
-                        self.assertEqual(views[0].overlay_hits, views[1].overlay_hits)
-
-                step(25)  # rising in
-                cards = [item for item in views[0].items if item[0] == "card"]
-                for _, _, x, y, w, h, _ in cards[:2]:
-                    for view in views:
-                        view.mouse_move(x + w / 2, y + h / 2 - view.scroll)
-                    step(5)
-                account = controller.gateway.router.current("claude")
-                account.five_hour = min(100, account.five_hour + 8)  # bars and % animate
-                step(12)
-                for view in views:
-                    view.activate("settings")  # the menu fades in over the cards
-                step(8)
-                for view in views:
-                    view.toast("Swapped to another account", "info")
-                step(8)
-                for view in views:
-                    view.activate("settings")
-                    view.wheel(100)
-                step(8)
-                # The biggest patch is the open settings menu with its shadow: well under the window.
-                self.assertLess(biggest[0], size[0] * size[1] // 2)
+            view = fullview.FullView(controller, Host(), controller.snapshot())
+            view.native = True
+            view.resize(900, 600, 2.0)
+            painter = FakePainter(self)
+            boxes = view.draw_native(painter)
+            self.assertTrue(boxes)
+            cards = [t for t, *_ in painter.tiles if t.shape and t.shape[0] == "card"]
+            self.assertTrue(cards)
+            self.assertTrue(any(op[0] == "text" for t in cards for op in t.ops))
+            self.assertEqual(len(view.tiles), len(view.items))  # nothing kept but the recorded calls
+            view.activate("settings")
+            view.toast("Swapped", "ok")
+            for _ in range(10):
+                view.draw_native(painter)
+            self.assertGreater(painter.overlays, 0)
+            self.assertTrue(view.overlay_hits)
+            self.assertIsNone(view.last_page)  # no picture of the page
         finally:
             controller.close()

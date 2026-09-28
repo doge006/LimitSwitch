@@ -74,9 +74,11 @@ def status_note(account):
     status = account.get("status") or ""
     if not status:
         updated = account.get("updated_at") or 0
-        if updated and time.time() - updated > 1800:  # old numbers say so rather than pass as current
-            minutes = int((time.time() - updated) // 60)
-            return f"{minutes}m old" if minutes < 60 else f"{minutes // 60}h old"
+        minutes = int((time.time() - updated) // 60) if updated else 0
+        # How old the numbers are: always for accounts not in use here (they may be in use
+        # elsewhere, and are checked every few minutes), and for any once they are 30 minutes old.
+        if updated and (minutes >= 30 or (minutes >= 1 and not account.get("active"))):
+            return f"{minutes}m ago" if minutes < 60 else f"{minutes // 60}h ago"
         return None
     if "sign in" in status.lower() or "missing" in status.lower():
         return "Sign in again"

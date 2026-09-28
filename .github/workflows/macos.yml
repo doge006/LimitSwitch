@@ -92,6 +92,8 @@ jobs:
 
   dmg:
     if: inputs.job == 'dmg'
+    permissions:
+      contents: write  # only to push the screenshots to the ci-shots branch (never main)
     runs-on: macos-15  # Apple silicon; the Intel DMG is built here too (wheels for x86_64)
     timeout-minutes: 25
     steps:
@@ -208,6 +210,18 @@ jobs:
           vmmap --summary $pid | grep -E "^(Malloc|CG Image|IOSurface|WebKit|TOTAL)" || true
       - name: Where the memory goes (scripts/mac_memory.py, with the app's own Python)
         run: /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
+      - name: The full view drawn natively vs with Pillow (images in the screenshots artifact and the ci-shots branch)
+        run: |
+          /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/compare_native.py shots
+          dir=$(mktemp -d)
+          cp shots/native*.png shots/pillow.png shots/difference-x4.png "$dir"/
+          cd "$dir"
+          git init -q -b ci-shots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Full view: native vs Pillow (${GITHUB_SHA::7})"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:ci-shots || true
       - name: Smoke test (menu bar icon, window, quit)
         run: |
           python3 -m venv /tmp/probe

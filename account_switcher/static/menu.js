@@ -48,6 +48,10 @@ function row(account) {
   const head = el('div', 'head');
   head.append(el('span', 'email', account.name));
   if (account.plan) head.append(el('span', `plan ${account.provider}`, account.plan));
+  const age = account.updated_at ? Math.floor((Date.now() / 1000 - account.updated_at) / 60) : 0;
+  if (!account.active && age >= 1) {  // accounts not in use here: how old their numbers are
+    head.append(el('span', 'age', age < 60 ? `${age}m ago` : `${Math.floor(age / 60)}h ago`));
+  }
   const windows = account.windows.slice(0, 3);
   const relogin = /sign in|expired|missing/i.test(account.status || '');
   if (pending === account.id) head.append(el('span', 'state', 'Switching…'));

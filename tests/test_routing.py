@@ -434,6 +434,36 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})  # reported again: no second wake or switch
         self.assertEqual(self.claude.read_live().email, "b@example.com")
 
+    def test_many_hooks_at_once_continue_only_once(self):
+        """Several hooks asking together (waits that end at the same moment) must not all be told
+        to continue: that woke Claude Code dozens of times, each turn failing at once."""
+        self.gateway.set_afk(True)
+        answers = []
+        threads = [threading.Thread(target=lambda i=i: answers.append(self.manager.claude_limit(f"s{i % 2}")))
+                   for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sum(1 for a in answers if a["action"] == "continue"), 2)  # one per session at most
+        self.assertLessEqual(len(self.manager.afk_continues), 2)
+
+    def test_a_continued_turn_that_fails_at_once_is_not_continued_again(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.manager.afk_sessions["s1"]["continues"][-1] -= 60  # a minute later, the new account hits a limit too
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
+
+    def test_no_continue_onto_an_account_that_only_looks_free(self):
+        """b's numbers are old and say it has room, but it is used up (on another computer):
+        checked first, so the session waits instead of continuing into another limit."""
+        self.gateway.set_afk(True)
+        b = next(i for i, m in self.manager.meta["accounts"].items() if m.get("email") == "b@example.com")
+        self.manager.meta["accounts"][b]["updatedAt"] = time.time() - 3600
+        self.api.claude_usage["at-b"] = claude_usage(100, 10, reset_in=1800)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "wait")
+        self.assertEqual(self.claude.read_live().email, "a@example.com")  # no pointless switch
+
     def test_a_limit_marks_the_account_used_up_when_the_api_cannot_say(self):
         self.manager.meta["autoSwap"] = False
         self.gateway.set_afk(True)

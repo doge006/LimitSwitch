@@ -35,6 +35,7 @@ class FakeAPI:
     def __init__(self):
         self.claude_usage, self.codex_usage = {}, {}
         self.claude_profile, self.codex_check = {}, {}
+        self.limited = set()
         self.calls = []
         self.refreshes = []
         api = self
@@ -58,6 +59,8 @@ class FakeAPI:
                     table = api.claude_profile if self.path == "/claude/profile" else api.codex_check
                     return self.reply(200, table.get(token, {"account": {"email": "x"}}))
                 table = api.claude_usage if self.path == "/claude/usage" else api.codex_usage
+                if token in api.limited:  # Anthropic answers an expired token with 429, not 401
+                    return self.reply(429, {"error": "rate_limited"})
                 if token not in table:
                     return self.reply(401, {"error": "expired"})
                 self.reply(200, table[token])
@@ -450,6 +453,54 @@ class LiveTests(unittest.TestCase):
                 self.assertEqual(a.status, "")  # a blip is not worth showing
         self.assertIn("isn't answering", a.status)  # a problem that lasts is
         self.assertGreater(m.meta["accounts"][a.id]["backoffUntil"], time.time() + 200)
+
+    def test_an_expired_saved_login_answered_with_429_is_renewed_not_backed_off(self):
+        """Anthropic says 429 (not 401) to an expired token: for a saved login that isn't in use
+        here, renew it and ask again, instead of backing off for hours with stale numbers."""
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b", expires_in=-60)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()  # a is in use here; b's saved login has expired
+        self.api.uuid_for["rt-b"] = "uuid-b"
+        self.api.limited.add("at-b")
+        self.api.claude_usage["at-rt-b+"] = claude_usage(35, 10)
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertEqual(b.status, "")
+        self.assertEqual(max(w["used"] for w in b.windows()), 35.0)
+        self.assertIn(("/claude/token", "rt-b"), self.api.refreshes)
+        self.assertEqual(m.meta["accounts"][b.id].get("backoffUntil", 0.0), 0.0)
+        self.assertNotIn(("/claude/token", "rt-a"), self.api.refreshes)  # the login in use here is never renewed
+
+    def test_a_429_for_a_token_of_unknown_age_renews_it_once(self):
+        from account_switcher.providers import ProviderError
+        claude = self.providers["claude"]
+        self.api.uuid_for["rt-q"] = "uuid-q"
+        self.api.limited.add("at-q")
+        self.api.claude_usage["at-rt-q+"] = claude_usage(12, 3)
+        secret = {"credentials": {"claudeAiOauth": {"accessToken": "at-q", "refreshToken": "rt-q"}},
+                  "oauthAccount": {"accountUuid": "uuid-q", "emailAddress": "q@example.com"}}
+        with self.assertRaises(ProviderError):  # the login in use here: never renewed by the app
+            claude.fetch(secret, allow_refresh=False)
+        windows, _, updated = claude.fetch(secret, allow_refresh=True)
+        self.assertIsNotNone(updated)
+        self.assertEqual(max(w["used"] for w in windows), 12.0)
+        fresh = {"credentials": {"claudeAiOauth": {"accessToken": "at-q", "refreshToken": "rt-q2",
+                                                   "expiresAt": int((time.time() + 3600) * 1000)}}}
+        with self.assertRaises(ProviderError):  # a token that is still valid: a real rate limit, no renewal
+            claude.fetch(fresh, allow_refresh=True)
+
+    def test_accounts_not_in_use_are_checked_every_few_minutes_even_after_rate_limits(self):
+        from account_switcher.live import IDLE_PACE_CAP, PROVIDER_IDLE
+        m = self.manager()
+        m.sync_live()
+        a = self.by_email(m, "a@example.com")
+        meta = dict(m.meta["accounts"][a.id], updatedAt=1000.0, attemptedAt=1000.0, pace=8.0, usage=[], status="")
+        self.assertEqual(m.due(a.id, meta, False, 1000.0), 1000.0 + PROVIDER_IDLE["claude"] * IDLE_PACE_CAP)
+        self.assertLessEqual(PROVIDER_IDLE["claude"] * IDLE_PACE_CAP, 1800)  # never more than half an hour
+        again = self.manager()  # a restart starts the pace over
+        self.assertEqual(again.meta["accounts"].get(a.id, {}).get("pace", 1.0), 1.0)
 
     def test_backoff_on_rate_limit(self):
         from account_switcher.providers import ProviderError

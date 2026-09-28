@@ -48,9 +48,12 @@ MAX_PACE = 8
 # Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
 # gently and follows live through Claude Code's status line instead (no tokens, no API calls).
 PROVIDER_INTERVALS = {"claude": (300, 180)}   # (in use, near a limit) when not live
-# Accounts not in use: Claude every 15 minutes (and just after a window resets). The same accounts
-# are often checked by a second computer too, which shares the same small allowance.
-PROVIDER_IDLE = {"claude": 900}
+# Accounts not in use: Claude every 10 minutes (and just after a window resets); they may be in use
+# on another computer, and nothing else reports that. That computer may check them too, sharing the
+# same small allowance: a rate limit slows an account down, at most 3x (IDLE_PACE_CAP).
+PROVIDER_IDLE = {"claude": 600}
+IDLE_PACE_CAP = 3
+UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
 LIVE_FRESH = 900            # status line data this recent counts as live
 LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
 SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
@@ -75,6 +78,7 @@ class LiveAccounts:
         for entry in (meta.get("accounts") or {}).values():  # a hiccup's back-off doesn't outlive the app
             if entry.get("backoffKind") == "transient":
                 entry.update(backoffUntil=0.0, backoffFailures=0, backoffKind=None)
+            entry["pace"] = 1.0  # a slower pace from rate limits starts over (a real Retry-After still holds)
         self.meta = {**meta, "accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
@@ -83,6 +87,8 @@ class LiveAccounts:
         self.routed = set()      # providers whose requests go through the local router
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
+        self.afk_lock = threading.Lock()  # one limit report at a time (several hooks can ask at once)
+        self.afk_continues = []  # every session's continues (times): a cap that no session id can dodge
         self.session_reports = {}  # Claude session -> its last status line numbers
         self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
         self.signatures = {}
@@ -189,7 +195,7 @@ class LiveAccounts:
             return max(held, meta.get("apiAt", updated) + (urgent if near else active) * pace)
         # Inactive: usage only changes when a window resets (or if used elsewhere).
         resets = [w["resetsAt"] + 30 for w in meta.get("usage") or [] if w.get("resetsAt") and w["resetsAt"] > updated]
-        idle = PROVIDER_IDLE.get(meta.get("provider"), IDLE_INTERVAL) * pace
+        idle = PROVIDER_IDLE.get(meta.get("provider"), IDLE_INTERVAL) * min(pace, IDLE_PACE_CAP)
         return max(held, min([updated + idle] + resets))
 
     def refresh(self, only=None, force=False, max_age=None):
@@ -205,7 +211,7 @@ class LiveAccounts:
                 is_active = i == self.active.get(m["provider"])
                 is_live = i == self.live_ids.get(m["provider"])
                 if max_age is not None:
-                    due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, 900))
+                    due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, UI_FRESH_IDLE))
                 else:
                     due = 0.0 if (force or only) else self.due(i, m, is_active, now)
                 held = m.get("backoffUntil", 0.0) > now
@@ -267,7 +273,7 @@ class LiveAccounts:
             except Exception as error:  # a malformed response must not stop the loop
                 self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                 continue
-            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.85)} if meta.get("pace", 1.0) > 1 else {}
+            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.5)} if meta.get("pace", 1.0) > 1 else {}
             self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
@@ -629,7 +635,15 @@ class LiveAccounts:
     def claude_limit(self, session):
         """Called by the StopFailure hook when a Claude turn ended on a usage limit.
         Auto swap moves to another account now; AFK also continues the session (or waits
-        for a reset when no account has room)."""
+        for a reset when no account has room). One report at a time: hooks that ask together
+        (several waits ending at once) must not all get "continue"."""
+        with self.afk_lock:
+            answer = self._claude_limit(session)
+        logging.getLogger("account_switcher").warning("auto resume: a limit in session %s -> %s",
+                                                      (session or "?")[:8], answer.get("action"))
+        return answer
+
+    def _claude_limit(self, session):
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
         if not (afk or auto):
             return {"action": "stop"}
@@ -639,21 +653,25 @@ class LiveAccounts:
         now = time.time()
         state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
         state["continues"] = [t for t in state["continues"] if now - t < 600]
-        if state["continues"] and now - state["continues"][-1] < 20:
-            return {"action": "stop"}  # the same limit reported twice: the session is already continuing
-        if len(state["continues"]) >= 3:  # something keeps failing: do not loop
+        self.afk_continues = [t for t in self.afk_continues if now - t < 600]
+        if state["continues"] and now - state["continues"][-1] < 90:
+            # Reported again right after continuing: the same limit twice, or the continued turn
+            # failed at once (the new account is used up too). Either way: no second wake.
+            return {"action": "stop"}
+        if len(state["continues"]) >= 3 or len(self.afk_continues) >= 6:  # something keeps failing: do not loop
             return {"action": "wait", "seconds": 900}
         before = (self.meta["accounts"].get(current) or {}).get("apiAt")
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
         if (self.meta["accounts"].get(current) or {}).get("apiAt") == before:
             self.mark_used_up(current)  # none (rate limited, offline): the limit itself says it's used up
         self.on_limit()
-        best = self._best_other("claude", current, allow_unknown=True) if auto else None
+        best = self.confirmed_other("claude", current) if auto else None
         if best is not None:
             self.swap(best.id, reason="auto")
             if not afk:
                 return {"action": "stop"}  # the next message goes to the new account
             state["continues"].append(now)
+            self.afk_continues.append(now)
             state["waiting"] = False
             return {"action": "continue", "message": AFK_NOTE}
         if not afk:
@@ -661,6 +679,7 @@ class LiveAccounts:
         account = next((a for a in self.accounts() if a.id == current), None)
         if state["waiting"] and account is not None and all(w["used"] < 100 for w in account.windows()):
             state["continues"].append(now)
+            self.afk_continues.append(now)
             state["waiting"] = False
             return {"action": "continue", "message": AFK_RESUMED}
         state["waiting"] = True
@@ -668,6 +687,28 @@ class LiveAccounts:
                   for w in a.windows() if w["used"] >= 100 and w.get("resetsAt")]
         wait = min(resets) - now + 30 if resets else 900
         return {"action": "wait", "seconds": max(60, min(wait, 6 * 3600))}
+
+    def confirmed_other(self, name, current):
+        """The account to continue on after a limit: the best other one whose numbers were just
+        checked (or are under 5 minutes old) and show room. Stale numbers can make an account
+        that is used up elsewhere look free, and continuing onto it fails at once."""
+        tried = set()
+        for _ in range(2):  # the best, and if that turns out used up, the next best
+            candidates = [a for a in self.accounts() if a.provider == name and a.id != current and a.id not in tried
+                          and a.eligible and not a.status]
+            if not candidates:
+                return None
+            best = max(candidates, key=lambda a: a.headroom)
+            tried.add(best.id)
+            entry = self.meta["accounts"].get(best.id) or {}
+            if time.time() - entry.get("updatedAt", 0.0) > 300:
+                self.refresh(only=best.id)
+                entry = self.meta["accounts"].get(best.id) or {}
+            fresh = time.time() - entry.get("updatedAt", 0.0) <= 300
+            account = next((a for a in self.accounts() if a.id == best.id), None)
+            if fresh and account is not None and account.eligible and account.headroom > 0:
+                return account
+        return None
 
     def auto_swap(self):
         """Move off an account that has used up a limit, to the one with the most headroom."""

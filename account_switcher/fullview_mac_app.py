@@ -103,7 +103,9 @@ def main():
             if dark is not None:
                 window.setAppearance_(dark)
             window.setTitlebarAppearsTransparent_(True)
-            window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
+            from AppKit import NSColorSpace
+            window.setColorSpace_(NSColorSpace.sRGBColorSpace())  # blends as the drawing was designed (sRGB)
+            window.setBackgroundColor_(NSColor.colorWithSRGBRed_green_blue_alpha_(22 / 255, 22 / 255, 22 / 255, 1.0))
             window.setReleasedWhenClosed_(False)
             window.setMinSize_(NSMakeSize(600, 400))
             self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
@@ -188,19 +190,20 @@ def main():
 
         @objc.python_method
         def draw_test(self):
-            """CI only: the full view draws, then again after a hover; its layers go to app.log."""
+            """CI only: the full view draws natively, then again after a hover; app.log gets the result."""
+            import sys
             canvas = self.canvas
             canvas.invalidate()
             canvas.display()
-            scene = canvas.scene
+            first = canvas.drawn
             canvas.view.mouse_move(120, 140)
             canvas.invalidate()
             canvas.display()
-            biggest = max([p.width * p.height for p, _, _ in canvas.scene["patches"]] or [0])
-            log.warning("panel test: full view drawn=%s, %d cards, %d patches (largest %d px, window %d px) (process %s)",
-                        scene is not None and bool(scene["tiles"]), len(canvas.scene["tiles"]), len(canvas.scene["patches"]),
-                        biggest, round(canvas.view.width * canvas.view.scale) * round(canvas.view.height * canvas.view.scale),
+            log.warning("panel test: full view drawn=%s natively, %d parts, Pillow images kept: %d (process %s)",
+                        bool(first), len(first or ()), sum(1 for t in canvas.view.tiles.values() if t[1].image is not None),
                         os.getpid())
+            if "PIL.Image" in sys.modules:
+                log.warning("panel test: Pillow is loaded in the full view process (only for shadows)")
 
     app = NSApplication.sharedApplication()
     delegate = FullViewApp.alloc().init()

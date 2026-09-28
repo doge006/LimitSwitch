@@ -1,21 +1,23 @@
-"""macOS host for the full view: an NSView that shows what fullview.FullView draws.
+"""macOS host for the full view: an NSView that fullview.FullView draws into with the system's
+own drawing (fullview_cg), every frame, straight into the window.
 
-No WebKit, and no picture of the whole window: FullView.scene() gives the cards as cached images
-and small patches for what changes (bars, percentages, menus, toasts), and this view puts them on
-screen with Core Graphics over the background colour. At Retina scale a window-sized image is
-several MB; the only one left is the window's own. Timers are one-shot callLater()s, only while
-something is due. It runs in the full view's own process (fullview_mac_app.py).
+No WebKit and no pictures: cards are kept as their drawing calls (a few KB each), and the only
+pixel buffer is the window's own, so the full view stays light at Retina scale. Timers are
+one-shot callLater()s, only while something is due. It runs in the full view's own process
+(fullview_mac_app.py); the view goes away when the window closes.
 """
 import logging
 
 import objc
-from AppKit import (NSCursor, NSEventModifierFlagCommand, NSGraphicsContext, NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
+from AppKit import (NSCursor, NSEventModifierFlagCommand, NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
                     NSTrackingMouseEnteredAndExited, NSTrackingMouseMoved, NSView)
-from Foundation import NSData
 from PyObjCTools import AppHelper
 
+from . import fullview_cg as cg
 from . import fullview_render as vr
 from .fullview import FullView
+
+vr.set_measure(cg.text_w)  # the layout measures text as Core Text draws it
 
 log = logging.getLogger("account_switcher.fullview")
 KEYS = {53: "escape", 36: "enter", 76: "enter", 51: "backspace", 117: "delete", 123: "left", 124: "right",
@@ -28,10 +30,8 @@ class FullViewCanvas(NSView):
         if self is None:
             return None
         self.view = FullView(controller, self, state)
-        self.scene = None        # FullView.scene(): what is on screen
-        self.cg = {}             # id(tile) -> (tile, CGImage): the cards, made once each
-        self.fill = None         # 1x1 CGImage of the background colour
-        self.dirty = True
+        self.view.native = True  # tiles are recorded drawing calls, drawn by fullview_cg
+        self.drawn = None        # the last frame's [(device box, signature)]
         self.cursor_kind = "arrow"
         self.timers = {}         # name -> generation (a later set/kill makes an earlier callLater a no-op)
         self.addTrackingArea_(NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
@@ -79,48 +79,10 @@ class FullViewCanvas(NSView):
     def drawRect_(self, _rect):
         if self.view is None or not self.view.width:
             return
-        import Quartz
-        if self.dirty or self.scene is None:
-            self.scene = self.view.scene()
-            self.dirty = False
-        context = NSGraphicsContext.currentContext().CGContext()
-        bounds = self.bounds()
-        height = float(bounds.size.height)
-        s = self.view.scale
-        Quartz.CGContextSaveGState(context)
-        Quartz.CGContextTranslateCTM(context, 0, height)  # this view is flipped; CG draws bottom-up
-        Quartz.CGContextScaleCTM(context, 1, -1)
-        Quartz.CGContextSetInterpolationQuality(context, Quartz.kCGInterpolationNone)
-        if self.fill is None:  # the background through the same colour path as the images on it
-            self.fill = image_from(Quartz, bytes(vr.BG) + b"\xff", 1, 1, Quartz.kCGImageAlphaNoneSkipLast)
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, height), self.fill)
-        cached = {}
-        for tile, x, y, alpha in self.scene["tiles"]:
-            held = self.cg.get(id(tile))
-            if held is None or held[0] is not tile:
-                premultiplied = tile.image.convert("RGBa")  # the form Core Graphics composites fastest
-                held = (tile, image_from(Quartz, premultiplied.tobytes(), tile.image.width, tile.image.height,
-                                         Quartz.kCGImageAlphaPremultipliedLast))
-                del premultiplied
-            cached[id(tile)] = held
-            Quartz.CGContextSetAlpha(context, max(0.0, min(1.0, alpha)))
-            self.put(Quartz, context, held[1], x, y, tile.image.width, tile.image.height, s, height)
-        Quartz.CGContextSetAlpha(context, 1.0)
-        self.cg = cached  # cards no longer shown are let go
-        for patch, x, y in self.scene["patches"]:
-            picture = image_from(Quartz, patch.tobytes("raw", "RGBX"), patch.width, patch.height,
-                                 Quartz.kCGImageAlphaNoneSkipLast)
-            self.put(Quartz, context, picture, x, y, patch.width, patch.height, s, height)
-        Quartz.CGContextRestoreGState(context)
+        self.drawn = self.view.draw_native(cg.Painter(self, self.view.scale))
         if not self.has_timer("anim"):  # still: what drawing freed goes back to macOS
             from .memory import trim_soon
             trim_soon(3.0)
-
-    @objc.python_method
-    def put(self, Quartz, context, picture, x, y, w, h, scale, height):
-        """Draw a device-px image whose top left is at device (x, y)."""
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(x / scale, height - (y + h) / scale, w / scale, h / scale),
-                                  picture)
 
     # ---------- input ----------
     @objc.python_method
@@ -174,7 +136,6 @@ class FullViewCanvas(NSView):
     # ---------- the host interface FullView uses ----------
     @objc.python_method
     def invalidate(self):
-        self.dirty = True
         self.setNeedsDisplay_(True)
 
     @objc.python_method
@@ -220,13 +181,4 @@ class FullViewCanvas(NSView):
         self.timers = {}
         if self.view is not None:
             self.view.close()
-        self.view = self.scene = None
-        self.cg = {}
-
-
-def image_from(Quartz, raw, width, height, alpha_info):
-    """A CGImage over `raw` (8-bit RGBA-ordered pixels, width * 4 bytes a row)."""
-    data = NSData.dataWithBytes_length_(raw, len(raw))
-    return Quartz.CGImageCreate(width, height, 8, 32, width * 4, Quartz.CGColorSpaceCreateDeviceRGB(), alpha_info,
-                                Quartz.CGDataProviderCreateWithCFData(data), None, False,
-                                Quartz.kCGRenderingIntentDefault)
+        self.view = self.drawn = None
