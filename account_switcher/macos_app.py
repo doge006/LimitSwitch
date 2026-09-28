@@ -197,7 +197,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         self.shown_level = object()
         self.bridge = Bridge.alloc().initWithApp_(self)
         self.panel_view = None  # the page: loaded when the panel opens, let go a while after it closes
-        self.page_ready = self.show_pending = False
+        self.page_ready = self.page_drawn = self.show_pending = False
         self.page_generation = 0
         self.panel = self.make_panel()
         self.server.quit = lambda: AppHelper.callAfter(self.quit_, None)  # the API's shutdown
@@ -385,7 +385,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         view.setAutoresizingMask_(2 | 16)  # the arrow's room above it stays fixed
         self.panel_material.addSubview_positioned_relativeTo_(view, -1, self.panel_edge)  # under the edge
         self.panel_view = view
-        self.page_ready = False
+        self.page_ready = self.page_drawn = False
         self.page_started = time.monotonic()
 
     @objc.python_method
@@ -402,9 +402,11 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         trim_soon()
 
     @objc.python_method
-    def page_shown(self):
+    def page_shown(self, late=False):
         """The page has drawn (it sent its height): a panel waiting for it opens now."""
-        if not self.page_ready and os.environ.get("LIMITSWITCH_PANEL_TEST"):
+        if not late:
+            self.page_drawn = True
+        if not self.page_ready and not late and os.environ.get("LIMITSWITCH_PANEL_TEST"):
             log.warning("panel test: page drew in %.2f s", time.monotonic() - self.page_started)
         self.page_ready = True
         if self.show_pending:
@@ -415,7 +417,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     def page_late(self):
         if self.show_pending and not self.page_ready:
             log.warning("panel: the page took over 1.5 s to draw; opened without waiting")
-        self.page_shown()
+        self.page_shown(late=True)
 
     @objc.python_method
     def show_panel(self):
@@ -462,7 +464,11 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             return f"({f.origin.x:.0f}, {f.origin.y:.0f}, {f.size.width:.0f}, {f.size.height:.0f})"
         if step == 0:
             self.show_panel()
-            AppHelper.callLater(2, self.panel_test, 1)
+            AppHelper.callLater(0.5, self.panel_test, 0.5)
+        elif step == 0.5:  # a busy runner can take a while for the first page: wait for it (up to 10 s)
+            self.test_waits = getattr(self, "test_waits", 0) + 1
+            waiting = not self.page_drawn and self.test_waits < 20
+            AppHelper.callLater(0.5 if waiting else 1, self.panel_test, 0.5 if waiting else 1)
         elif step == 1:
             log.warning("panel test: docked %s visible=%s", frame(), self.panel.isVisible())
             f = self.panel.frame()
