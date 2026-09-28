@@ -186,6 +186,8 @@ jobs:
           echo "== idle: full view and panel closed =="
           footprint -p $pid | head -22
           vmmap --summary $pid | grep -E "^(Malloc|CG Image|IOSurface|WebKit|TOTAL)" || true
+      - name: Where the memory goes (scripts/mac_memory.py, with the app's own Python)
+        run: /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
       - name: Smoke test (menu bar icon, window, quit)
         run: |
           python3 -m venv /tmp/probe
