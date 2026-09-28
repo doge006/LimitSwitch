@@ -23,7 +23,7 @@ LimitSwitcher does all of it in one small tray app: every limit at a glance, one
 
 ## Install (Windows)
 
-Download **`LimitSwitcher-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitcher` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
+Download **`LimitSwitcher-Setup.exe`** from the [latest release](https://github.com/doge006/LimitSwitcher/releases/latest) and run it. It installs for your Windows user only (no admin rights), asks where to put it (`%LOCALAPPDATA%\Programs\LimitSwitcher` by default), and has boxes for a Start menu entry (on) and a desktop shortcut (off). It starts in the tray when you sign in; turn that off in Settings. It brings its own Python, so nothing else is needed.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
@@ -36,10 +36,10 @@ Your accounts and settings are kept in `%LOCALAPPDATA%\AccountSwitcher` (the app
 Paste this into Terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
+curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/install-mac.sh | bash
 ```
 
-It downloads the app (for Apple silicon Macs: M1 or later) from the [latest release](https://github.com/doge006/LimitSwitch/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
+It downloads the app (for Apple silicon Macs: M1 or later) from the [latest release](https://github.com/doge006/LimitSwitcher/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
 
 Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
 

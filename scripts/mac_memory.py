@@ -3,7 +3,7 @@
 Run it with the installed app's own Python, while the app itself may keep running:
     /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
 or straight from GitHub:
-    curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/mac_memory.py | \\
+    curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/mac_memory.py | \\
         /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B -
 
 It loads what the app loads, in the same order, in demo mode (no accounts are touched), and

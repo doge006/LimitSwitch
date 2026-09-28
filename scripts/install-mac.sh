@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs (or updates) LimitSwitcher on macOS from the latest GitHub release:
-#   curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitch/main/scripts/install-mac.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/install-mac.sh | bash
 # It downloads the Apple silicon DMG, closes a running copy (which puts the
 # Codex and Claude Code settings back), puts LimitSwitcher.app in Applications and opens it.
 # Saved accounts and settings are in ~/Library/Application Support/AccountSwitcher and are kept.
@@ -12,7 +12,7 @@
 # The app's own updater runs this too (with --from-app).
 set -euo pipefail
 
-REPO="doge006/LimitSwitch"
+REPO="doge006/LimitSwitcher"
 DMG=""
 FROM_APP=0
 while [ $# -gt 0 ]; do

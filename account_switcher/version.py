@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 VERSION = "1.0.0"
-REPO = "doge006/LimitSwitch"
+REPO = "doge006/LimitSwitcher"
 ROOT = Path(__file__).resolve().parent.parent
 
 
