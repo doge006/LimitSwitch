@@ -409,6 +409,12 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             self.show_panel()
 
     @objc.python_method
+    def page_late(self):
+        if self.show_pending and not self.page_ready:
+            log.warning("panel: the page took over 1.5 s to draw; opened without waiting")
+        self.page_shown()
+
+    @objc.python_method
     def show_panel(self):
         self.page_generation += 1  # a pending drop_page no longer applies
         if self.panel_view is None:
@@ -416,7 +422,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         if not self.page_ready:  # opens once the page has drawn, so it never shows empty
             if not self.show_pending:
                 self.show_pending = True
-                AppHelper.callLater(1.5, self.page_shown)  # in case the page is slow: open anyway
+                AppHelper.callLater(1.5, self.page_late)  # in case the page is slow: open anyway
             return
         self.set_detached(False)
         frame = self.docked_frame()

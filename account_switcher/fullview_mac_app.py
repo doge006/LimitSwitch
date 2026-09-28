@@ -77,12 +77,11 @@ def main():
         def applicationDidFinishLaunching_(self, _note):
             NSApp.setMainMenu_(self.main_menu())
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)  # a Dock icon while it's open
-            if not str(NSBundle.mainBundle().bundlePath()).endswith(".app"):  # run from a terminal
-                from pathlib import Path
-                icon = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"
-                image = NSImage.alloc().initWithContentsOfFile_(str(icon))
-                if image is not None:
-                    NSApp.setApplicationIconImage_(image)  # the Dock would show Python's icon otherwise
+            from pathlib import Path
+            icon = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"
+            image = NSImage.alloc().initWithContentsOfFile_(str(icon))
+            if image is not None:
+                NSApp.setApplicationIconImage_(image)  # the Dock would show Python's icon otherwise
             self.open_window()
             from AppKit import NSWorkspace
             NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
