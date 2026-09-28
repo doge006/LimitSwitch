@@ -57,42 +57,4 @@ step("PyObjC: WebKit (the panel)")
 from account_switcher import tray, web, live, providers, macos_app  # noqa: E402,F401
 step("the app's code")
 print(f"  = {last[0]:.1f} MB: the menu bar app loads this much (Pillow loaded: {'PIL' in sys.modules})")
-print("The full view's own process (open only while the window is) also loads:")
-import Quartz  # noqa: E402,F401
-step("PyObjC: Quartz")
-from account_switcher import fullview, fullview_render as vr, flyout_render as fr  # noqa: E402
-step("Pillow + full view code")
-for bold in (False, True):
-    for size in range(9, 25):
-        fr.font(size, bold, 2.0)
-step(f"fonts: 32 sizes of {fr._font_files()[0].name} at 2x")
-fr.font.cache_clear()
-relieve()
-step("fonts released")
-
-
-class Host:
-    def invalidate(self): pass
-    def set_timer(self, name, ms): pass
-    def kill_timer(self, name): pass
-    def has_timer(self, name): return False
-    def set_cursor(self, kind): pass
-    def clipboard(self): return None
-
-
-controller = web.Controller(live=False)
-state = controller.snapshot()
-view = fullview.FullView(controller, Host(), state)
-view.resize(640, 488, 2.0)
-view.frame()
-step("full view: first frame at 2x (640x488)")
-for i in range(60):
-    view.mouse_move(40 + i * 9, 120 + (i % 7) * 40)
-    view.motion.settle()
-    view.frame()
-step("full view: 60 hover frames")
-view.close()
-del view
-relieve()
-step("full view closed and released (its process then ends: all of it goes back to macOS)")
-print(f"font file: {fr._font_files()[0]} ({os.path.getsize(fr._font_files()[0]) / 2**20:.1f} MB on disk)")
+print("The full view runs in its own process, drawn natively: scripts/compare_native.py measures it.")

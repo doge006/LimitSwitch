@@ -45,7 +45,7 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 
 Measure the tray alone, with the panel open, and with the full view open, a few times each, and quote the typical number with the machine it ran on.
 
-On macOS, `scripts/mac_memory.py` shows where the memory goes, step by step (PyObjC, the app's code, fonts, the full view drawn at 2x, and after it's released), running with the installed app's own Python in demo mode:
+On macOS, `scripts/mac_memory.py` shows where the menu bar app's memory goes, step by step (Python, PyObjC, the app's code), running with the installed app's own Python in demo mode; `scripts/compare_native.py` draws the full view natively off screen at Retina size and reports its memory, time per frame and how close it is to the Windows drawing:
 
 ```sh
 /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
@@ -80,4 +80,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitcher.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
 - `docs/media/`: the README's screenshots and GIFs (`demo.gif`, `settings.gif`).
-- `scripts/mac_memory.py`: where the Mac app's memory goes (see Measuring performance).
+- `scripts/mac_memory.py`: where the Mac menu bar app's memory goes (see Measuring performance).
+- `scripts/compare_native.py`: the Mac full view drawn natively vs the Pillow drawing (images, memory, timing).
+- `scripts/render_frames.py`: frame hashes of the full view (Pillow, as Windows draws it) through a fixed script of states: run before and after a change to the drawing code to prove Windows pixels are unchanged.
+- The full view's own process logs its memory at each step to app.log ("full view memory: ...").
