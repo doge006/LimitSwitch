@@ -188,16 +188,19 @@ def main():
 
         @objc.python_method
         def draw_test(self):
-            """CI only: the full view draws whole, then (a hover) only what changed."""
+            """CI only: the full view draws, then again after a hover; its layers go to app.log."""
             canvas = self.canvas
             canvas.invalidate()
             canvas.display()
-            whole = canvas.picture is not None
+            scene = canvas.scene
             canvas.view.mouse_move(120, 140)
             canvas.invalidate()
             canvas.display()
-            log.warning("panel test: full view drawn=%s, then %s changed area(s) redrawn (process %s)", whole,
-                        "all" if canvas.view.changed is None else len(canvas.view.changed), os.getpid())
+            biggest = max([p.width * p.height for p, _, _ in canvas.scene["patches"]] or [0])
+            log.warning("panel test: full view drawn=%s, %d cards, %d patches (largest %d px, window %d px) (process %s)",
+                        scene is not None and bool(scene["tiles"]), len(canvas.scene["tiles"]), len(canvas.scene["patches"]),
+                        biggest, round(canvas.view.width * canvas.view.scale) * round(canvas.view.height * canvas.view.scale),
+                        os.getpid())
 
     app = NSApplication.sharedApplication()
     delegate = FullViewApp.alloc().init()

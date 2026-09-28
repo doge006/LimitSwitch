@@ -270,7 +270,7 @@ class Canvas:
 
     def glyph(self, kind, cx, cy, size, color):
         icon = glyph(kind, self.px(size), color)
-        self.image.paste(icon, (self.px(cx) - icon.width // 2, self.px(cy) - icon.height // 2), icon)
+        self.image.paste(icon, (self.px(cx) - icon.width // 2 - self.ox, self.px(cy) - icon.height // 2 - self.oy), icon)
 
 
 @lru_cache(maxsize=64)
@@ -695,12 +695,13 @@ def release():
 
 
 # ---------- overlays: menus, the date editor, toasts ----------
-def panel(image, scale, x, y, w, h):
-    """A floating surface (menus, editor) with its shadow, drawn straight onto the frame."""
+def panel(image, scale, x, y, w, h, origin=(0, 0)):
+    """A floating surface (menus, editor) with its shadow, drawn straight onto the frame (or onto
+    the part of it at device `origin`)."""
     s = scale
     sh = shadow(w, h, s, 1.4)
-    image.paste(sh, (round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)), sh)
-    c = Canvas(image, s, SURFACE_3)
+    image.paste(sh, (round(x * s) - round(SHADOW * s) - origin[0], round(y * s) - round(SHADOW * s) + round(4 * s) - origin[1]), sh)
+    c = Canvas(image, s, SURFACE_3, origin=origin)
     c.rect(x, y, w, h, 10, SURFACE_3 + (255,))
     c.outline(x, y, w, h, 10, LINE_STRONG)
     return c
@@ -724,7 +725,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
             ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
 
 
-def settings_menu(image, scale, state, ui, x, y, prefs):
+def settings_menu(image, scale, state, ui, x, y, prefs, origin=(0, 0)):
     w = 320
     rows = list(SETTINGS)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
@@ -737,7 +738,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     chooser = taskbar and state.get("taskbar") and len(displays) > 1
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
     h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (38 if chooser else 0) + 52
-    c = panel(image, scale, x, y, w, h)
+    c = panel(image, scale, x, y, w, h, origin)
     hits = []
     ry = y + 8
     for (key, title, _), lines in zip(rows, wrapped):
@@ -810,9 +811,9 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     return (x, y, w, h), hits
 
 
-def add_menu(image, scale, ui, x, y):
+def add_menu(image, scale, ui, x, y, origin=(0, 0)):
     w, h = 260, 12 + 2 * 36
-    c = panel(image, scale, x, y, w, h)
+    c = panel(image, scale, x, y, w, h, origin)
     hits = []
     for i, (provider, title, _) in enumerate(PROVIDERS):
         ry = y + 6 + i * 36
@@ -831,13 +832,13 @@ def month_grid(year, month):
     return calendar.Calendar(0).monthdayscalendar(year, month)
 
 
-def date_editor(image, scale, ui, x, y):
+def date_editor(image, scale, ui, x, y, origin=(0, 0)):
     """Renews / Ends, a month calendar, where the date came from, and the buttons."""
     ed = ui.editor
     weeks = month_grid(ed["year"], ed["month"])
     w = 280
     h = 12 + 28 + 10 + 30 + 22 + len(weeks) * 30 + 8 + 34 + 12 + 32 + 12
-    c = panel(image, scale, x, y, w, h)
+    c = panel(image, scale, x, y, w, h, origin)
     hits = []
     hover = ui.hover
     ry = y + 12
@@ -927,8 +928,10 @@ def wrap(text, size, width, bold=False):
 TOAST_COLORS = {"error": BAD, "ok": GOOD, "": ACCENT["codex"]}
 
 
-def toasts(image, scale, items, vw, vh):
-    """Bottom right, newest at the bottom. items: (text, kind, alpha): each fades in and out."""
+def toasts(image, scale, items, vw, vh, origin=(0, 0)):
+    """Bottom right, newest at the bottom. items: (text, kind, alpha): each fades in and out.
+    Returns each toast's box (logical px)."""
+    boxes = []
     y = vh - 20
     for text, kind, alpha in reversed(items[-4:]):
         lines = wrap(text, 13, 380 - 42)
@@ -938,7 +941,8 @@ def toasts(image, scale, items, vw, vh):
         x = vw - 20 - w
         before = image.copy() if alpha < 1 else None
         dy = 4 * (1 - alpha)
-        c = panel(image, scale, x, y + dy, w, h)
+        boxes.append((x, y, w, h))
+        c = panel(image, scale, x, y + dy, w, h, origin)
         if kind == "error":
             c.outline(x, y + dy, w, h, 11, BAD + (128,))
         c.dot(x + 18, y + dy + 17, 4, TOAST_COLORS.get(kind, ACCENT["codex"]))
@@ -946,7 +950,9 @@ def toasts(image, scale, items, vw, vh):
             c.text(x + 32, y + dy + 16 + i * 18, line, 13, TEXT, anchor="lm")
         if before is not None:
             m = SHADOW + 8
-            box = tuple(round(v * scale) for v in (x - m, y - m, x + w + m, y + h + m))
+            box = tuple(round(v * scale) - origin[i % 2] for i, v in enumerate((x - m, y - m, x + w + m, y + h + m)))
             box = (max(0, box[0]), max(0, box[1]), min(image.width, box[2]), min(image.height, box[3]))
-            image.paste(Image.blend(before.crop(box), image.crop(box), max(0.0, alpha)), box[:2])
+            if box[2] > box[0] and box[3] > box[1]:
+                image.paste(Image.blend(before.crop(box), image.crop(box), max(0.0, alpha)), box[:2])
         y -= 8
+    return boxes
