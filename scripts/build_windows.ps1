@@ -28,7 +28,7 @@ python -m pip install --quiet --disable-pip-version-check --no-compile --only-bi
 # 3. The app itself.
 Copy-Item -Recurse -LiteralPath account_switcher -Destination $app
 Get-ChildItem -LiteralPath (Join-Path $app 'account_switcher') -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
-Copy-Item -LiteralPath LimitSwitcher.pyw, README.md, THIRD-PARTY-NOTICES.txt -Destination $app
+Copy-Item -LiteralPath LimitSwitcher.pyw, README.md, LICENSE, THIRD-PARTY-NOTICES.txt -Destination $app
 
 # 4. LimitSwitcher.exe: runs the bundled Python in its own process (Task Manager shows LimitSwitcher),
 #    with the app icon and version details.

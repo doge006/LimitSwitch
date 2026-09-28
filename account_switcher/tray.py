@@ -25,6 +25,7 @@ from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loa
 from .web import Controller, clear_url_file, make_server, write_url_file
 
 APP = "LimitSwitcher"
+WM_QUERYENDSESSION, WM_ENDSESSION = 0x0011, 0x0016  # Windows is shutting down / signing out
 PROVIDERS = (("claude", "Claude"), ("codex", "Codex"))
 ASSETS = Path(__file__).with_name("static") / "assets"
 LEVEL_RGB = {"good": (76, 195, 138), "warn": (229, 181, 74), "bad": (239, 106, 91)}
@@ -188,6 +189,14 @@ class Tray:
         server.show = self.open_full_view
         self.full_view = None
         self.menu = self.taskbar = None
+        self.on_end_session = None  # set by main(): undo the app's changes before Windows ends it
+        if sys.platform == "win32" and hasattr(self.icon, "_message_handlers"):
+            # pystray answers every message it doesn't know with 0, which for Windows' "may I
+            # shut down?" (WM_QUERYENDSESSION) means no: the app was listed as preventing shutdown.
+            # Say yes, and when the session really ends (WM_ENDSESSION), put the Codex and Claude
+            # Code settings back, as a quit does, before the process is ended.
+            self.icon._message_handlers[WM_QUERYENDSESSION] = lambda w, l: 1
+            self.icon._message_handlers[WM_ENDSESSION] = lambda w, l: self.end_session(w)
         if native:
             try:  # the full view: a window of our own, drawn like the panel (no browser)
                 from .fullview_win import FullViewWindow, WM_APP_SHOW
@@ -335,6 +344,17 @@ class Tray:
                 self.full_view.dismiss()
             self.icon.stop()
 
+    def end_session(self, ending):
+        """WM_ENDSESSION: Windows is shutting down or signing out (ending is nonzero). The
+        process is ended right after this returns, so the settings are put back now."""
+        if ending and self.on_end_session:
+            logging.getLogger("account_switcher").warning("Windows is ending the session; closing")
+            try:
+                self.on_end_session()
+            except Exception:
+                logging.getLogger("account_switcher").exception("cleanup at shutdown")
+        return 0
+
     def run(self, open_now=False):
         def setup(icon):
             icon.visible = True
@@ -431,7 +451,9 @@ def main(argv=None):
             # Cocoa ends the process inside its own quit, so the app runs shutdown there.
             run(controller, server, open_now=args.show or not args.quiet, cleanup=shutdown)
         else:
-            Tray(controller, server).run(open_now=args.show or not args.quiet)
+            tray = Tray(controller, server)
+            tray.on_end_session = shutdown
+            tray.run(open_now=args.show or not args.quiet)
     finally:
         shutdown()
 

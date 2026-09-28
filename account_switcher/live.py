@@ -140,6 +140,9 @@ class LiveAccounts:
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
                 if previous != account_id:
                     self.live_since[name] = time.time()
+                    if previous is not None:  # a switch by the app itself sets live_ids directly
+                        logging.getLogger("account_switcher").warning(
+                            "%s's login changed to %s outside LimitSwitcher", name.title(), login.email or "?")
                 # Routed: the router decides; only a different login in the file (the user
                 # signed in to another account) changes the account in use.
                 follow = name not in self.routed or previous != account_id or name not in self.active
@@ -350,6 +353,8 @@ class LiveAccounts:
             if target is None:
                 raise ValueError("Unknown account")
             name = target["provider"]
+            logging.getLogger("account_switcher").warning(
+                "switching %s to %s (%s)", name.title(), target.get("email") or "?", reason)
             provider = self.providers[name]
             if self.active.get(name) == account_id and self.live_ids.get(name) == account_id:
                 return
@@ -430,7 +435,7 @@ class LiveAccounts:
             tokens = secret["auth"]["tokens"]
             expires = _jwt_payload(tokens.get("access_token")).get("exp")
             if isinstance(expires, (int, float)) and expires - time.time() < 300:
-                secret = provider.refresh(secret)
+                secret = provider.refresh(secret, "Codex router, saved login about to expire")
                 self.vault.write_secret(account_id, secret)
                 tokens = secret["auth"]["tokens"]
             return tokens["access_token"], tokens.get("account_id")

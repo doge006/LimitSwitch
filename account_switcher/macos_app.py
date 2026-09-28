@@ -440,9 +440,26 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
             log.warning("panel test: moved %s detached=%s", frame(), self.detached)
             self.dock()
             AppHelper.callLater(1, self.panel_test, 3)
-        else:
+            return
+        elif step == 3:
             log.warning("panel test: docked again %s detached=%s visible=%s", frame(), self.detached,
                         self.panel.isVisible())
+            self.hide_panel()
+            self.showFullView_(None)
+            AppHelper.callLater(1, self.panel_test, 4)
+        elif step == 4:  # the full view draws whole, then (a hover) only what changed
+            canvas = self.canvas
+            if canvas is None:
+                log.warning("panel test: full view drawn=False (no canvas)")
+                return
+            canvas.invalidate()
+            canvas.display()
+            whole = canvas.picture is not None
+            canvas.view.mouse_move(120, 140)
+            canvas.invalidate()
+            canvas.display()
+            log.warning("panel test: full view drawn=%s, then %s changed area(s) redrawn", whole,
+                        "all" if canvas.view.changed is None else len(canvas.view.changed))
 
     @objc.python_method
     def trim_regularly(self):

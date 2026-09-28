@@ -44,6 +44,16 @@ class LiveLogin:
     secret: dict    # everything needed to restore this login later
 
 
+def _detail(error):
+    """The error body, short, for app.log: anything token-shaped is masked (it never should be
+    there, but app.log must never hold a secret)."""
+    try:
+        text = error.read(400).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    return re.sub(r"[A-Za-z0-9._~+/=-]{40,}", "[…]", " ".join(text.split()))[:300]
+
+
 def _http(method, url, headers, body=None, attempt=0):
     data = json.dumps(body).encode() if body is not None else None
     request = Request(url, data=data, method=method, headers=dict(headers, **({"Content-Type": "application/json"} if data else {})))
@@ -62,12 +72,16 @@ def _http(method, url, headers, body=None, attempt=0):
             log.warning("rate limited by %s%s (Retry-After: %s) %s", where.netloc, where.path, retry, " ".join(detail.split()))
             raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=wait, rate_limited=True)
         if error.code in (401, 403):
+            where = urlsplit(url)
+            log.warning("%s%s refused the login (%s): %s", where.netloc, where.path, error.code, _detail(error))
             raise ProviderError("Login expired", relogin=True)
         if error.code >= 500:  # the service is briefly unavailable (503 and friends): one quick retry
             if attempt == 0:
                 time.sleep(2)
                 return _http(method, url, headers, body, attempt=1)
             raise ProviderError(f"Usage service unavailable ({error.code})", transient=True)
+        where = urlsplit(url)
+        log.warning("%s%s answered %s: %s", where.netloc, where.path, error.code, _detail(error))
         raise ProviderError(f"Usage API error {error.code}")
     except URLError as error:
         if isinstance(error.reason, ssl.SSLCertVerificationError):
@@ -308,7 +322,7 @@ class Claude:
         oauth = secret["credentials"]["claudeAiOauth"]
         expires = (oauth.get("expiresAt") or 0) / 1000
         if allow_refresh and expires and expires - time.time() < 300:
-            secret = updated = self.refresh(secret)
+            secret = updated = self.refresh(secret, "usage check")
             oauth = secret["credentials"]["claudeAiOauth"]
         try:
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
@@ -317,7 +331,7 @@ class Claude:
         except ProviderError as error:
             if not (error.relogin and allow_refresh and updated is None):
                 raise
-            secret = updated = self.refresh(secret)
+            secret = updated = self.refresh(secret, "usage check")
             oauth = secret["credentials"]["claudeAiOauth"]
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
@@ -326,17 +340,23 @@ class Claude:
         self.last_fields = key_paths(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
 
-    def refresh(self, secret):
+    def refresh(self, secret, why=""):
+        """Renew the saved login's tokens. The refresh token is single-use: whoever else still
+        holds the old one (a Claude Code session, say) can no longer renew with it."""
         oauth = secret["credentials"]["claudeAiOauth"]
+        who = (secret.get("oauthAccount") or {}).get("emailAddress") or "?"
         if not oauth.get("refreshToken"):
+            log.warning("Claude login of %s: no refresh token saved (%s)", who, why)
             raise ProviderError("Login expired; sign in again", relogin=True)
         try:
             _, token = _http("POST", self.TOKEN_URL, {"Accept": "application/json"},
                              {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": self.CLIENT_ID})
         except ProviderError as error:
+            log.warning("Claude login of %s: renewal refused (%s): %s", who, why, error)
             if error.relogin or "error 400" in str(error):
                 raise ProviderError("Login expired; sign in again", relogin=True)
             raise
+        log.warning("Claude login of %s: renewed (%s)", who, why)
         expected = secret["oauthAccount"].get("accountUuid")
         actual = ((token or {}).get("account") or {}).get("uuid")
         if expected and actual and expected != actual:
@@ -454,14 +474,14 @@ class Codex:
         tokens = secret["auth"]["tokens"]
         last = _iso_ts(secret["auth"].get("last_refresh"))
         if allow_refresh and (last is None or time.time() - last > 8 * 86400):
-            secret = updated = self.refresh(secret)
+            secret = updated = self.refresh(secret, "usage check")
             tokens = secret["auth"]["tokens"]
         try:
             body = self._usage(tokens)
         except ProviderError as error:
             if not (error.relogin and allow_refresh and updated is None):
                 raise
-            secret = updated = self.refresh(secret)
+            secret = updated = self.refresh(secret, "usage check")
             tokens = secret["auth"]["tokens"]
             body = self._usage(tokens)
         claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}
@@ -502,16 +522,21 @@ class Codex:
         _, body = _http("GET", self.USAGE_URL, headers)
         return body if isinstance(body, dict) else {}
 
-    def refresh(self, secret):
+    def refresh(self, secret, why=""):
+        """Renew the saved login's tokens (single-use refresh token, as for Claude)."""
         tokens = secret["auth"]["tokens"]
+        who = _jwt_payload(tokens.get("id_token")).get("email") or "?"
         if not tokens.get("refresh_token"):
+            log.warning("Codex login of %s: no refresh token saved (%s)", who, why)
             raise ProviderError("Login expired; sign in again", relogin=True)
         try:
             _, body = _http("POST", self.TOKEN_URL, {"Cache-Control": "no-cache"},
                             {"client_id": self.CLIENT_ID, "grant_type": "refresh_token",
                              "refresh_token": tokens["refresh_token"], "scope": "openid profile email"})
         except ProviderError as error:
+            log.warning("Codex login of %s: renewal refused (%s): %s", who, why, error)
             raise ProviderError("Login expired; sign in again", relogin=True) if error.relogin else error
+        log.warning("Codex login of %s: renewed (%s)", who, why)
         fresh = dict(tokens, access_token=body.get("access_token") or tokens["access_token"],
                      refresh_token=body.get("refresh_token") or tokens["refresh_token"])
         if body.get("id_token"):

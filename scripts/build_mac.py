@@ -101,7 +101,7 @@ def main():
     code = resources / "app"
     shutil.copytree(ROOT / "account_switcher", code / "account_switcher",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    for name in ("LimitSwitcher.pyw", "README.md", "THIRD-PARTY-NOTICES.txt"):
+    for name in ("LimitSwitcher.pyw", "README.md", "LICENSE", "THIRD-PARTY-NOTICES.txt"):
         shutil.copy2(ROOT / name, code / name)
     for folder in (code, stdlib):
         ok = compileall.compile_dir(str(folder), quiet=1, workers=0,

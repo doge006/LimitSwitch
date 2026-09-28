@@ -67,6 +67,26 @@ class TrayTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: not self.controller.snapshot()["busy"]))
         self.tray.refresh()
 
+    def test_windows_shutdown_is_not_blocked_and_settings_are_put_back(self):
+        """pystray answers unknown messages with 0, which for WM_QUERYENDSESSION means "don't shut
+        down". The tray says yes, and cleans up when the session really ends."""
+        from unittest import mock
+
+        class WinIcon(FakeIcon):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self._message_handlers = {}
+        with mock.patch.object(tray.sys, "platform", "win32"):
+            tray_ = tray.Tray(self.controller, self.server, icon_factory=WinIcon)
+        cleaned = []
+        tray_.on_end_session = lambda: cleaned.append(True)
+        handlers = tray_.icon._message_handlers
+        self.assertEqual(handlers[tray.WM_QUERYENDSESSION](0, 0), 1)  # yes, Windows may shut down
+        handlers[tray.WM_ENDSESSION](0, 0)  # the shutdown was cancelled by something else
+        self.assertEqual(cleaned, [])
+        handlers[tray.WM_ENDSESSION](1, 0)  # it is really ending
+        self.assertEqual(cleaned, [True])
+
     def test_tooltip_and_status_dot(self):
         state = self.controller.snapshot()
         text = tray.tooltip(state)
