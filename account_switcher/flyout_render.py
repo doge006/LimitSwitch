@@ -69,17 +69,26 @@ def until(ts):
     return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m}m"
 
 
+def age_text(account):
+    """How old the account's numbers are ("now", "12m ago", "3h ago"), or None before any."""
+    updated = account.get("updated_at") or 0
+    if not updated:
+        return None
+    minutes = int((time.time() - updated) // 60)
+    return "now" if minutes < 1 else f"{minutes}m ago" if minutes < 60 else f"{minutes // 60}h ago"
+
+
+def stale(account):
+    """Numbers 30 minutes old or more: their age is shown as a warning."""
+    updated = account.get("updated_at") or 0
+    return bool(updated) and time.time() - updated >= 1800
+
+
 def status_note(account):
-    """Short text when usage could not be fetched, else None."""
+    """Short warning when usage could not be fetched or is old, else None."""
     status = account.get("status") or ""
     if not status:
-        updated = account.get("updated_at") or 0
-        minutes = int((time.time() - updated) // 60) if updated else 0
-        # How old the numbers are: always for accounts not in use here (they may be in use
-        # elsewhere, and are checked every few minutes), and for any once they are 30 minutes old.
-        if updated and (minutes >= 30 or (minutes >= 1 and not account.get("active"))):
-            return f"{minutes}m ago" if minutes < 60 else f"{minutes // 60}h ago"
-        return None
+        return age_text(account) if stale(account) else None
     if "sign in" in status.lower() or "missing" in status.lower():
         return "Sign in again"
     return "Retrying"  # rate limited or the service is down: last numbers shown, checked again soon
@@ -411,12 +420,16 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
                 right -= 12
             note = status_note(account)
             sub_text, sub_color = subscription_text(account)
+            age = None if note else age_text(account)
             if note:
                 L.text(right, cy, note, 11, WARN, anchor="rm")
                 if note == "Sign in again":  # clickable: the app's own sign-in, other logins untouched
                     L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
                 right -= text_w(note, 11) + 12
-            elif sub_text:
+            if age:  # how old the numbers are, on every account
+                L.text(right, cy, age, 11, FAINT, anchor="rm")
+                right -= text_w(age, 11) + 12
+            if not note and sub_text:
                 L.text(right, cy, sub_text, 11, sub_color, anchor="rm")
                 right -= text_w(sub_text, 11) + 12
             resets = (account.get("credits") or {}).get("resets")
@@ -565,6 +578,9 @@ def _compact_row(L, W, account, fx, top, right):
         if note == "Sign in again":
             L.hit(right - text_w(note, 11) - 4, cy - 10, text_w(note, 11) + 8, 20, "relogin:" + account["id"])
         right -= text_w(note, 11) + 8
+    elif age_text(account):
+        L.text(right, cy, age_text(account), 11, FAINT, anchor="rm")
+        right -= text_w(age_text(account), 11) + 8
     L.text(32, cy, fit(display_name(account), 13, True, right - 32), 13, TEXT, bold=True)
     windows = account["windows"][:3]
     ly = top + 31
@@ -814,10 +830,15 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     resets = (account.get("credits") or {}).get("resets")
     title = " · ".join([dict(PROVIDERS)[provider]] + ([account["plan"]] if account.get("plan") else [])
                        + ([f"{resets} reset" + ("s" if resets != 1 else "")] if resets else []))
-    sub, sub_color = (note, theme["warn"]) if note else (title, theme["accent"][provider])
+    problem = note if account.get("status") else None  # sign in again, retrying: instead of the provider line
+    sub, sub_color = (problem, theme["warn"]) if problem else (title, theme["accent"][provider])
+    age = None if problem else age_text(account)
     tx = x + BLOCK_PAD + 22
     L.text(tx, y1, name, 12, theme["text"], bold=True)
     L.text(tx, y3, sub, 10, sub_color)
+    if age:  # how old the numbers are, after the provider line (amber once 30 minutes old)
+        L.text(tx + text_w(sub, 10), y3, " · " + age, 10, theme["warn"] if stale(account) else theme["faint"])
+        sub += " · " + age
     x = tx + max(text_w(name, 12, True), text_w(sub, 10)) + BLOCK_GAP
     windows = account["windows"][:columns]
     if not windows:

@@ -53,13 +53,37 @@ class Remote:
         return self.request("GET", f"/api/state?after={after}", timeout=40)  # the server answers within 20 s
 
 
+_notes = []
+
+
+def memory_note(step):
+    """Remember this process's footprint (what Activity Monitor shows) at a step; the steps go to
+    app.log together once the window has settled, so a slow or heavy step can be found."""
+    try:
+        import ctypes
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        info = ctypes.create_string_buffer(512)
+        if libproc.proc_pid_rusage(os.getpid(), 2, info) == 0:  # RUSAGE_INFO_V2
+            footprint = int.from_bytes(info.raw[72:80], "little")  # ri_phys_footprint
+            _notes.append(f"{step} {footprint / 2**20:.0f} MB")
+    except (OSError, AttributeError):
+        pass
+
+
+def memory_log():
+    if _notes:
+        log.warning("full view memory: %s", ", ".join(_notes))
+        _notes.clear()
+
+
 def main():
     url = os.environ.pop(ENV)  # not passed on to anything this process starts
+    memory_note("started")
     remote = Remote(url)
     state = remote.state()
 
     import objc
-    from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSColor,
+    from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSBundle, NSColor,
                         NSEventModifierFlagCommand, NSEventModifierFlagOption, NSImage, NSMenu, NSMenuItem,
                         NSWindow, NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable,
                         NSWindowStyleMaskResizable, NSWindowStyleMaskTitled)
@@ -67,6 +91,7 @@ def main():
     from PyObjCTools import AppHelper
 
     from .fullview_mac import FullViewCanvas
+    memory_note("code loaded")
 
     class FullViewApp(NSObject):
         def init(self):
@@ -77,13 +102,20 @@ def main():
         def applicationDidFinishLaunching_(self, _note):
             NSApp.setMainMenu_(self.main_menu())
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)  # a Dock icon while it's open
-            from pathlib import Path
-            icon = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"
-            image = NSImage.alloc().initWithContentsOfFile_(str(icon))
-            if image is not None:
-                NSApp.setApplicationIconImage_(image)  # the Dock would show Python's icon otherwise
+            if not str(NSBundle.mainBundle().bundlePath()).endswith(".app"):  # run from a terminal:
+                from pathlib import Path  # the Dock would show Python's icon (LimitSwitcher.app has its own)
+                icon = Path(__file__).resolve().parent / "static" / "assets" / "appicon-mac.png"
+                image = NSImage.alloc().initWithContentsOfFile_(str(icon))
+                if image is not None:
+                    NSApp.setApplicationIconImage_(image)
+            memory_note("window about to open")
             self.open_window()
+            memory_note("window open")
             threading.Thread(target=self.watch, args=(state["revision"],), daemon=True).start()
+            AppHelper.callLater(0.3, memory_note, "first frames")
+            AppHelper.callLater(3.0, memory_note, "settled")
+            AppHelper.callLater(15.0, memory_note, "15 s later")
+            AppHelper.callLater(15.1, memory_log)
             if os.environ.get("LIMITSWITCH_PANEL_TEST"):  # CI: the smoke test reads this in app.log
                 AppHelper.callLater(1, self.draw_test)
 
