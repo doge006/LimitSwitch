@@ -831,7 +831,8 @@ class Surface:
         sh = shadow(w, h, s, strength)
         self.image.paste(sh, (round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)), sh)
 
-    def fade_begin(self):
+    def fade_begin(self, t):
+        """Start drawing something that shows at opacity t (0..1); fade_end finishes it."""
         return self.image.copy()
 
     def fade_end(self, before, box, t):
@@ -1083,7 +1084,7 @@ def toasts(image, scale, items, vw, vh):
         w = min(380, 42 + max(text_w(line, 13) for line in lines) + 14)
         y -= h
         x = vw - 20 - w
-        before = image.fade_begin() if alpha < 1 else None
+        before = image.fade_begin(alpha) if alpha < 1 else None
         dy = 4 * (1 - alpha)
         c = panel(image, scale, x, y + dy, w, h)
         if kind == "error":

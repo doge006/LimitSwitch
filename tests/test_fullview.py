@@ -329,7 +329,7 @@ class FakePainter:
             def shadow(self, *args):
                 pass
 
-            def fade_begin(self):
+            def fade_begin(self, t):
                 return None
 
             def fade_end(self, before, box, t):

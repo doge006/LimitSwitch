@@ -1,19 +1,23 @@
-"""macOS host for the full view: an NSView that shows frames drawn by fullview.FullView.
+"""macOS host for the full view: an NSView that fullview.FullView draws into with the system's
+own drawing (fullview_cg), every frame, straight into the window.
 
-No WebKit: the window's content is this one view, drawn at the display's backing scale. It runs
-on the main thread with the rest of the menu bar app; timers are one-shot callLater()s, only
-while something is due. The view (and its cached tiles) goes away when the window closes.
+No WebKit and no pictures: cards are kept as their drawing calls (a few KB each), and the only
+pixel buffer is the window's own, so the full view stays light at Retina scale. Timers are
+one-shot callLater()s, only while something is due. It runs in the full view's own process
+(fullview_mac_app.py); the view goes away when the window closes.
 """
 import logging
 
 import objc
-from AppKit import (NSCursor, NSEventModifierFlagCommand, NSGraphicsContext, NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
+from AppKit import (NSCursor, NSEventModifierFlagCommand, NSPasteboard, NSTrackingActiveInKeyWindow, NSTrackingArea, NSTrackingInVisibleRect,
                     NSTrackingMouseEnteredAndExited, NSTrackingMouseMoved, NSView)
-from Foundation import NSData
 from PyObjCTools import AppHelper
 
+from . import fullview_cg as cg
 from . import fullview_render as vr
 from .fullview import FullView
+
+vr.set_measure(cg.text_w)  # the layout measures text as Core Text draws it
 
 log = logging.getLogger("account_switcher.fullview")
 KEYS = {53: "escape", 36: "enter", 76: "enter", 51: "backspace", 117: "delete", 123: "left", 124: "right",
@@ -26,8 +30,8 @@ class FullViewCanvas(NSView):
         if self is None:
             return None
         self.view = FullView(controller, self, state)
-        self.picture = None      # CGBitmapContext holding the window's pixels (updated in place)
-        self.dirty = True
+        self.view.native = True  # tiles are recorded drawing calls, drawn by fullview_cg
+        self.drawn = None        # the last frame's [(device box, signature)]
         self.cursor_kind = "arrow"
         self.timers = {}         # name -> generation (a later set/kill makes an earlier callLater a no-op)
         self.addTrackingArea_(NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
@@ -75,54 +79,10 @@ class FullViewCanvas(NSView):
     def drawRect_(self, _rect):
         if self.view is None or not self.view.width:
             return
-        import Quartz
-        if self.dirty or self.picture is None:
-            self.update_picture(Quartz)
-            self.dirty = False
-        if self.picture is None:
-            return
-        frame = Quartz.CGBitmapContextCreateImage(self.picture)  # shares the pixels until they change
-        context = NSGraphicsContext.currentContext().CGContext()
-        bounds = self.bounds()
-        Quartz.CGContextSaveGState(context)
-        Quartz.CGContextTranslateCTM(context, 0, bounds.size.height)  # this view is flipped; CG draws bottom-up
-        Quartz.CGContextScaleCTM(context, 1, -1)
-        Quartz.CGContextSetInterpolationQuality(context, Quartz.kCGInterpolationNone)
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, bounds.size.height), frame)
-        Quartz.CGContextRestoreGState(context)
-        del frame  # let go now, so the next update writes in place instead of copying the pixels
-
-    @objc.python_method
-    def update_picture(self, Quartz):
-        """The window's pixels live in one Core Graphics bitmap, made once per size. Each frame
-        copies in only the areas that changed (the full view reports them): a hover or a bar
-        animation moves a few KB instead of the whole window (about 5 MB at 2x) every frame."""
-        image = self.view.frame()
-        width, height = image.size
-        boxes = self.view.changed
-        if self.picture is None or (Quartz.CGBitmapContextGetWidth(self.picture),
-                                    Quartz.CGBitmapContextGetHeight(self.picture)) != (width, height):
-            self.picture = Quartz.CGBitmapContextCreate(
-                None, width, height, 8, 0, Quartz.CGColorSpaceCreateDeviceRGB(), Quartz.kCGImageAlphaNoneSkipLast)
-            if self.picture is None:
-                return
-            Quartz.CGContextSetBlendMode(self.picture, Quartz.kCGBlendModeCopy)
-            Quartz.CGContextSetInterpolationQuality(self.picture, Quartz.kCGInterpolationNone)
-            boxes = None
-        if boxes is None:
-            boxes = [(0, 0, width, height)]
-        space = Quartz.CGColorSpaceCreateDeviceRGB()
-        for x0, y0, x1, y1 in boxes:
-            w, h = x1 - x0, y1 - y0
-            if w <= 0 or h <= 0:
-                continue
-            part = image if (w, h) == (width, height) else image.crop((x0, y0, x1, y1))
-            data = NSData.dataWithBytes_length_(part.tobytes("raw", "RGBX"), w * h * 4)
-            piece = Quartz.CGImageCreate(w, h, 8, 32, w * 4, space, Quartz.kCGImageAlphaNoneSkipLast,
-                                         Quartz.CGDataProviderCreateWithCFData(data), None, False,
-                                         Quartz.kCGRenderingIntentDefault)
-            # The bitmap is bottom-up: a box's top row y0 lands at height - y1.
-            Quartz.CGContextDrawImage(self.picture, Quartz.CGRectMake(x0, height - y1, w, h), piece)
+        self.drawn = self.view.draw_native(cg.Painter(self, self.view.scale))
+        if not self.has_timer("anim"):  # still: what drawing freed goes back to macOS
+            from .memory import trim_soon
+            trim_soon(3.0)
 
     # ---------- input ----------
     @objc.python_method
@@ -176,7 +136,6 @@ class FullViewCanvas(NSView):
     # ---------- the host interface FullView uses ----------
     @objc.python_method
     def invalidate(self):
-        self.dirty = True
         self.setNeedsDisplay_(True)
 
     @objc.python_method
@@ -222,4 +181,4 @@ class FullViewCanvas(NSView):
         self.timers = {}
         if self.view is not None:
             self.view.close()
-        self.view = self.picture = None
+        self.view = self.drawn = None

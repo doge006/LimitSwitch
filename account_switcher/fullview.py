@@ -457,7 +457,7 @@ class FullView:
 
         def faded(key, draw):
             t = motion.get(("open", key), 1.0)
-            before = image.fade_begin() if t < 1 else None
+            before = image.fade_begin(t) if t < 1 else None
             box, hits = draw(4 * (1 - t))  # rises 4 px as it fades in, like the web menus
             self.overlay_hits.append((box, hits))
             if before is not None:

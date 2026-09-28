@@ -103,7 +103,9 @@ def main():
             if dark is not None:
                 window.setAppearance_(dark)
             window.setTitlebarAppearsTransparent_(True)
-            window.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.086, 0.086, 0.086, 1.0))
+            from AppKit import NSColorSpace
+            window.setColorSpace_(NSColorSpace.sRGBColorSpace())  # blends as the drawing was designed (sRGB)
+            window.setBackgroundColor_(NSColor.colorWithSRGBRed_green_blue_alpha_(22 / 255, 22 / 255, 22 / 255, 1.0))
             window.setReleasedWhenClosed_(False)
             window.setMinSize_(NSMakeSize(600, 400))
             self.canvas = FullViewCanvas.alloc().initWithFrame_controller_state_(
@@ -188,16 +190,20 @@ def main():
 
         @objc.python_method
         def draw_test(self):
-            """CI only: the full view draws whole, then (a hover) only what changed."""
+            """CI only: the full view draws natively, then again after a hover; app.log gets the result."""
+            import sys
             canvas = self.canvas
             canvas.invalidate()
             canvas.display()
-            whole = canvas.picture is not None
+            first = canvas.drawn
             canvas.view.mouse_move(120, 140)
             canvas.invalidate()
             canvas.display()
-            log.warning("panel test: full view drawn=%s, then %s changed area(s) redrawn (process %s)", whole,
-                        "all" if canvas.view.changed is None else len(canvas.view.changed), os.getpid())
+            log.warning("panel test: full view drawn=%s natively, %d parts, Pillow images kept: %d (process %s)",
+                        bool(first), len(first or ()), sum(1 for t in canvas.view.tiles.values() if t[1].image is not None),
+                        os.getpid())
+            if "PIL.Image" in sys.modules:
+                log.warning("panel test: Pillow is loaded in the full view process (only for shadows)")
 
     app = NSApplication.sharedApplication()
     delegate = FullViewApp.alloc().init()
