@@ -24,6 +24,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import time
 import sys
 import tarfile
 from urllib.request import Request, urlopen
@@ -135,8 +136,18 @@ def main():
     os.symlink("/Applications", work / "dmg" / "Applications")
     dmg = out / f"LimitSwitcher-{'AppleSilicon' if args.arch == 'arm64' else 'Intel'}.dmg"
     dmg.unlink(missing_ok=True)
-    run("hdiutil", "create", "-quiet", "-volname", "LimitSwitcher", "-srcfolder", work / "dmg", "-fs", "HFS+",
-        "-format", "UDZO", "-imagekey", "zlib-level=9", "-ov", dmg)
+    # hdiutil fails now and then when the disk image service is busy ("Resource busy"): a few tries.
+    for attempt in range(1, 5):
+        try:
+            run("hdiutil", "create", "-volname", "LimitSwitcher", "-srcfolder", work / "dmg", "-fs", "HFS+",
+                "-format", "UDZO", "-imagekey", "zlib-level=9", "-ov", dmg)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 4:
+                raise
+            print(f"hdiutil failed (try {attempt}); trying again", flush=True)
+            dmg.unlink(missing_ok=True)
+            time.sleep(5 * attempt)
     size = sum(f.stat().st_size for f in app.rglob("*") if f.is_file() and not f.is_symlink())
     print(f"Built {dmg.name} ({dmg.stat().st_size / 2**20:.1f} MB; the app {size / 2**20:.0f} MB), "
           f"LimitSwitcher {VERSION}", flush=True)
