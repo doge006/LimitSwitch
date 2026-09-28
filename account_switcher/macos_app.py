@@ -386,6 +386,7 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         self.panel_material.addSubview_positioned_relativeTo_(view, -1, self.panel_edge)  # under the edge
         self.panel_view = view
         self.page_ready = False
+        self.page_started = time.monotonic()
 
     @objc.python_method
     def drop_page(self, generation):
@@ -403,6 +404,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     @objc.python_method
     def page_shown(self):
         """The page has drawn (it sent its height): a panel waiting for it opens now."""
+        if not self.page_ready and os.environ.get("LIMITSWITCH_PANEL_TEST"):
+            log.warning("panel test: page drew in %.2f s", time.monotonic() - self.page_started)
         self.page_ready = True
         if self.show_pending:
             self.show_pending = False
@@ -476,6 +479,14 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
                         self.panel.isVisible())
             self.hide_panel()
             self.showFullView_(None)
+            AppHelper.callLater(3, self.panel_test, 4)
+        elif step == 4:  # the page let go (as PAGE_KEEP after closing) and loaded again: a second load
+            self.drop_page(self.page_generation)
+            self.show_panel()
+            AppHelper.callLater(3, self.panel_test, 5)
+        elif step == 5:
+            log.warning("panel test: opened again after its page was let go, visible=%s", self.panel.isVisible())
+            self.hide_panel()
 
     @objc.python_method
     def trim_regularly(self):
