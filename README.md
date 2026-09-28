@@ -54,6 +54,18 @@ Built to be barely noticeable:
 - **Windows exist only while they're open.** The panel, the menus and the full view are created when you open them and freed when you close them, and animation frames are drawn only while something moves.
 - **Checking usage doesn't touch your limits:** the usage endpoints it reads don't count against them.
 
+### Measured
+
+On the author's Windows PC, over 60 seconds each, with real accounts and Claude Code and Codex in use:
+
+| | Memory (working set) | Private memory | CPU (one core) |
+|---|---|---|---|
+| In the tray, windows closed | 23.6 MB | 33.5 MB | 0.21% |
+| Tray panel open | 36.9 MB | 35.9 MB | 1.64% |
+| Full view open | 14.3 MB | 41.3 MB | 1.02% |
+
+(The working set is what Task Manager shows. It can be lower than the private memory, because pages the app isn't using are handed back to Windows until they're needed again.)
+
 ### Measure it on Windows
 
 In PowerShell, with LimitSwitcher running. This samples it over 60 seconds:
@@ -70,19 +82,19 @@ Try it idle in the tray, with the panel open, and with the full view open. Task 
 In Terminal, with LimitSwitcher running. This samples it over 60 seconds:
 
 ```sh
-pids=$(pgrep -f 'LimitSwitcher[.]pyw|MacOS/LimitSwitcher' | paste -sd, -)
-cpu() { ps -o time= -p "$pids" | awk -F: '{s=0; for (i=1; i<=NF; i++) s=s*60+$i; t+=s} END {print t}'; }
+pids=$(pgrep -f 'MacOS/LimitSwitcher' | head -1)
+cpu() { ps -o time= -p "$pids" | awk -F: '{s=0; for (i=1; i<=NF; i++) s=s*60+$i; print s}'; }
 a=$(cpu); sleep 60; b=$(cpu)
-ps -o rss= -p "$pids" | awk -v a="$a" -v b="$b" '{m+=$1} END {printf "%.1f MB memory, %.2f%% of one CPU core\n", m/1024, (b-a)/60*100}'
+footprint -p "$pids" | awk -v a="$a" -v b="$b" '/Footprint:/ {printf "%s %s memory, %.2f%% of one CPU core\n", $(NF-5), $(NF-4), (b-a)/60*100; exit}'
 ```
 
-Try it idle in the menu bar, with the panel open, and with the full view open. Activity Monitor shows it too: search for **LimitSwitcher**.
+The memory is the app's footprint, the same number as Activity Monitor's Memory column (search for **LimitSwitcher**). It leaves out the system libraries every app shares. Try it idle in the menu bar, with the panel open, and with the full view open. macOS hands memory an app has freed back to the system gradually, so a reading taken right after closing the full view is higher than one a few minutes later.
 
 ## macOS
 
 - **Menu bar:** the tray becomes a menu bar icon.
-  - Click it for the panel, a native popover that follows light and dark mode.
-  - Drag the panel by its header or background: away from the menu bar it stays open where you leave it, and you can move it again any time. Its dock button (an arrow up to a bar) slides it back under the menu bar icon. Docked, clicking elsewhere or Esc closes it.
+  - Click it for the panel: it opens under the icon, with an arrow pointing at it, on the system's frosted popover material.
+  - Drag the panel by its header or background: away from the menu bar it stays open where you leave it (the arrow goes), and you can move it again any time. Its dock button (an arrow up to a bar) slides it back under the menu bar icon. Docked, clicking elsewhere or Esc closes it.
   - Right-click (or Control-click) for the menu; **Full View…** opens the full view in its own native window.
   - There's no Dock icon.
 - **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
@@ -155,6 +167,21 @@ Check the providers' terms for using several subscriptions this way; that's your
 - **The icon's dot:** green, amber or red for the tightest limit in use.
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
 - **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); Settings → **Launch with Windows** turns that off.
+
+## Settings
+
+![Settings](docs/media/settings.gif)
+
+In the full view, the gear opens Settings:
+
+- **Auto swap:** move to the account with the most room when a limit hits.
+- **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
+- **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
+- **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
+- **Claude Code status line:** show LimitSwitcher and the account in use there (see below).
+- **Launch with Windows / macOS:** start in the tray when you sign in.
+- **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
+- **Check for updates / Update to …**
 
 ## Claude Code status line
 

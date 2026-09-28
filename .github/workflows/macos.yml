@@ -171,6 +171,7 @@ jobs:
           assert moved[:2] == (docked[0] - 300, docked[1] - 200) and "detached=True" in text, "it didn't move"
           assert moved[3] == docked[3] - 10, "detached, the panel should lose just the arrow: %s %s" % (docked, moved)
           assert again[:2] == docked[:2] and "detached=False visible=True" in text, "it didn't dock back"
+          assert "full view drawn=True" in text, "the full view didn't draw"
           assert "Traceback" not in text, "errors in app.log"
           print("PASS panel: docked", docked, "moved", moved, "docked again", again)
           PY

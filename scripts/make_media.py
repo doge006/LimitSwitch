@@ -8,6 +8,7 @@ it (the Media workflow does):
   panel.png      the tray panel
   taskbar.png    the taskbar view (both providers)
   demo.gif       the full view at work: usage going down, scrolling, switching accounts
+  settings.gif   Settings: Auto resume and Name mode switched on
 """
 from pathlib import Path
 import sys
@@ -136,6 +137,55 @@ def full_view_frames(controller, width, height, scale, clock):
     return frames, view
 
 
+def settings_frames(controller, width, height, scale, clock):
+    """Frames of Settings: the menu opens, Auto resume and Name mode are switched on (emails
+    become names everywhere), Name mode goes off again, and the menu closes."""
+    view = fullview.FullView(controller, Host(), settled(controller))
+    view.resize(width, height, scale)
+    view.frame()
+    view.motion.settle()
+    frames = []
+
+    def run(seconds):
+        for _ in range(max(1, round(seconds * FPS))):
+            clock.now += 1 / FPS
+            view.set_state(settled(controller))
+            frames.append(view.frame().convert("RGB"))
+
+    def click(action):
+        hits = [(box, name) for box, name, *_ in view.page_hits]
+        overlay = [(box, name) for _, found in view.overlay_hits for box, name, *_ in found]
+        box = next((b for b, name in overlay if name == action), None)
+        if box is None:  # on the page: page coordinates, scrolled
+            box = next(b for b, name in hits if name == action)
+            box = (box[0], box[1] - view.scroll, box[2], box[3])
+        x, y = box[0] + box[2] / 2, box[1] + box[3] / 2
+        view.mouse_move(x, y)
+        run(0.35)  # the pointer rests on it: hover shows
+        view.mouse_down(x, y)
+        view.mouse_up(x, y)
+
+    run(0.8)
+    click("settings")
+    run(0.9)
+    click("set:afk")
+    run(0.9)
+    click("set:nameMode")
+    run(1.6)  # the cards show names
+    click("set:nameMode")
+    run(1.0)
+    view.key("escape")  # the menu closes
+    run(0.8)
+    return frames
+
+
+def save_gif(frames, path):
+    palette = frames[len(frames) // 2].quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    gif = [frame.quantize(palette=palette, dither=Image.Dither.NONE) for frame in frames]
+    gif[0].save(path, save_all=True, append_images=gif[1:], duration=round(1000 / FPS), loop=0,
+                optimize=True, disposal=1)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     clock = Clock()
@@ -175,10 +225,12 @@ def main():
         controller.close()
         controller = Controller()
         frames, _ = full_view_frames(controller, 1000, 640, GIF_SCALE, clock)
-        palette = frames[len(frames) // 2].quantize(colors=255, method=Image.Quantize.MEDIANCUT)
-        gif = [frame.quantize(palette=palette, dither=Image.Dither.NONE) for frame in frames]
-        gif[0].save(OUT / "demo.gif", save_all=True, append_images=gif[1:], duration=round(1000 / FPS), loop=0,
-                    optimize=True, disposal=1)
+        save_gif(frames, OUT / "demo.gif")
+
+        # Settings, from a fresh demo so the accounts look as they do at start.
+        controller.close()
+        controller = Controller()
+        save_gif(settings_frames(controller, 1000, 640, GIF_SCALE, clock), OUT / "settings.gif")
     finally:
         controller.close()
     for path in sorted(OUT.iterdir()):

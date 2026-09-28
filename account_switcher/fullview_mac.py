@@ -26,7 +26,7 @@ class FullViewCanvas(NSView):
         if self is None:
             return None
         self.view = FullView(controller, self, state)
-        self.picture = None      # CGImage of the last frame
+        self.picture = None      # CGBitmapContext holding the window's pixels (updated in place)
         self.dirty = True
         self.cursor_kind = "arrow"
         self.timers = {}         # name -> generation (a later set/kill makes an earlier callLater a no-op)
@@ -77,24 +77,52 @@ class FullViewCanvas(NSView):
             return
         import Quartz
         if self.dirty or self.picture is None:
-            # The frame's pixels straight to Core Graphics: one copy, no encoding, nothing kept
-            # but this one image (TIFF round trips cost ~4 copies of the frame per animation step).
-            image = self.view.frame()
-            width, height = image.size
-            data = NSData.dataWithBytes_length_(image.tobytes("raw", "RGBX"), width * height * 4)
-            provider = Quartz.CGDataProviderCreateWithCFData(data)
-            self.picture = Quartz.CGImageCreate(
-                width, height, 8, 32, width * 4, Quartz.CGColorSpaceCreateDeviceRGB(),
-                Quartz.kCGImageAlphaNoneSkipLast, provider, None, False, Quartz.kCGRenderingIntentDefault)
+            self.update_picture(Quartz)
             self.dirty = False
+        if self.picture is None:
+            return
+        frame = Quartz.CGBitmapContextCreateImage(self.picture)  # shares the pixels until they change
         context = NSGraphicsContext.currentContext().CGContext()
         bounds = self.bounds()
         Quartz.CGContextSaveGState(context)
         Quartz.CGContextTranslateCTM(context, 0, bounds.size.height)  # this view is flipped; CG draws bottom-up
         Quartz.CGContextScaleCTM(context, 1, -1)
         Quartz.CGContextSetInterpolationQuality(context, Quartz.kCGInterpolationNone)
-        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, bounds.size.height), self.picture)
+        Quartz.CGContextDrawImage(context, Quartz.CGRectMake(0, 0, bounds.size.width, bounds.size.height), frame)
         Quartz.CGContextRestoreGState(context)
+        del frame  # let go now, so the next update writes in place instead of copying the pixels
+
+    @objc.python_method
+    def update_picture(self, Quartz):
+        """The window's pixels live in one Core Graphics bitmap, made once per size. Each frame
+        copies in only the areas that changed (the full view reports them): a hover or a bar
+        animation moves a few KB instead of the whole window (about 5 MB at 2x) every frame."""
+        image = self.view.frame()
+        width, height = image.size
+        boxes = self.view.changed
+        if self.picture is None or (Quartz.CGBitmapContextGetWidth(self.picture),
+                                    Quartz.CGBitmapContextGetHeight(self.picture)) != (width, height):
+            self.picture = Quartz.CGBitmapContextCreate(
+                None, width, height, 8, 0, Quartz.CGColorSpaceCreateDeviceRGB(), Quartz.kCGImageAlphaNoneSkipLast)
+            if self.picture is None:
+                return
+            Quartz.CGContextSetBlendMode(self.picture, Quartz.kCGBlendModeCopy)
+            Quartz.CGContextSetInterpolationQuality(self.picture, Quartz.kCGInterpolationNone)
+            boxes = None
+        if boxes is None:
+            boxes = [(0, 0, width, height)]
+        space = Quartz.CGColorSpaceCreateDeviceRGB()
+        for x0, y0, x1, y1 in boxes:
+            w, h = x1 - x0, y1 - y0
+            if w <= 0 or h <= 0:
+                continue
+            part = image if (w, h) == (width, height) else image.crop((x0, y0, x1, y1))
+            data = NSData.dataWithBytes_length_(part.tobytes("raw", "RGBX"), w * h * 4)
+            piece = Quartz.CGImageCreate(w, h, 8, 32, w * 4, space, Quartz.kCGImageAlphaNoneSkipLast,
+                                         Quartz.CGDataProviderCreateWithCFData(data), None, False,
+                                         Quartz.kCGRenderingIntentDefault)
+            # The bitmap is bottom-up: a box's top row y0 lands at height - y1.
+            Quartz.CGContextDrawImage(self.picture, Quartz.CGRectMake(x0, height - y1, w, h), piece)
 
     # ---------- input ----------
     @objc.python_method

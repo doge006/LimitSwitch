@@ -45,6 +45,14 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 
 Measure the tray alone, with the panel open, and with the full view open, a few times each, and quote the typical number with the machine it ran on.
 
+On macOS, `scripts/mac_memory.py` shows where the memory goes, step by step (PyObjC, the app's code, fonts, the full view drawn at 2x, and after it's released), running with the installed app's own Python in demo mode:
+
+```sh
+/Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B scripts/mac_memory.py
+```
+
+The **macOS app** workflow (job `dmg`) runs it too, and prints the running app's footprint with the full view open and closed.
+
 ## Publishing a release
 
 Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitcher-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
@@ -71,4 +79,5 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `scripts/build_windows.ps1` + `LimitSwitcher.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitcher.exe`).
 - `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitcher.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
-- `docs/media/`: the README's screenshots and GIF.
+- `docs/media/`: the README's screenshots and GIFs (`demo.gif`, `settings.gif`).
+- `scripts/mac_memory.py`: where the Mac app's memory goes (see Measuring performance).
