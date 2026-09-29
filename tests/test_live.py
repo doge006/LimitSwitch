@@ -68,6 +68,8 @@ class FakeAPI:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 api.refreshes.append((self.path, body["refresh_token"]))
+                if body["refresh_token"] in api.dead:  # used up elsewhere: single-use tokens
+                    return self.reply(400, {"error": "invalid_grant"})
                 new = body["refresh_token"] + "+"
                 if self.path == "/claude/token":
                     self.reply(200, {"access_token": "at-" + new, "refresh_token": new, "expires_in": 28800,
@@ -76,6 +78,7 @@ class FakeAPI:
                     self.reply(200, {"access_token": "at-" + new, "refresh_token": new})
 
         self.uuid_for = {}
+        self.dead = set()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -504,6 +507,43 @@ class LiveTests(unittest.TestCase):
         self.assertIn(("/claude/token", "rt-b"), self.api.refreshes)
         self.assertEqual(m.meta["accounts"][b.id].get("backoffUntil", 0.0), 0.0)
         self.assertNotIn(("/claude/token", "rt-a"), self.api.refreshes)  # the login in use here is never renewed
+
+    def test_two_checks_at_once_renew_a_login_only_once(self):
+        """Single-use refresh tokens: a second renewal with the same token kills the login."""
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b", expires_in=-60)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        self.api.uuid_for["rt-b"] = "uuid-b"
+        self.api.claude_usage["at-rt-b+"] = claude_usage(20, 5)
+        b = self.by_email(m, "b@example.com").id
+        threads = [threading.Thread(target=m.refresh, kwargs={"only": b}) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual([r for r in self.api.refreshes if r[1] == "rt-b"], [("/claude/token", "rt-b")])
+        self.assertEqual(self.by_email(m, "b@example.com").status, "")
+
+    def test_a_refused_saved_login_is_not_tried_again_until_it_is_replaced(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b", expires_in=-60)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()  # b is saved, not in use, and its token was renewed elsewhere
+        self.api.dead.add("rt-b")
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertIn("sign in again", b.status.lower())
+        tries = len(self.api.refreshes)
+        for _ in range(3):  # the scheduled checks leave it alone
+            m.meta["accounts"][b.id]["attemptedAt"] = m.meta["accounts"][b.id]["updatedAt"] = 0.0
+            m.refresh()
+        self.assertEqual(len(self.api.refreshes), tries)
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b2", "rt-b2")  # signed in again
+        m.sync_live()
+        self.assertNotIn("deadLogin", m.meta["accounts"][b.id])
 
     def test_a_429_for_a_token_of_unknown_age_renews_it_once(self):
         from account_switcher.providers import ProviderError
