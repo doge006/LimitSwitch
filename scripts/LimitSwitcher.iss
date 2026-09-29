@@ -99,14 +99,33 @@ begin
   end;
 end;
 
+{ Claude Code runs the app's status line script and Auto resume hook with this copy's own
+  runtime\python.exe; a hook waiting for a limit to reset can run for hours and holds the
+  runtime's files. End those: only processes started from this copy's runtime folder. }
+procedure StopScriptsFromThisCopy();
+var
+  Runtime, Command: String;
+  Code: Integer;
+begin
+  Runtime := ExpandConstant('{app}\runtime\');
+  StringChangeEx(Runtime, '''', '''''', True); { a quote inside PowerShell's '...' }
+  Command := '-NoProfile -NonInteractive -Command "Get-Process python,pythonw -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -and $_.Path.StartsWith(''' + Runtime + ''', [StringComparison]::OrdinalIgnoreCase) } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"';
+  Exec('powershell.exe', Command, '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   QuitRunningCopy();
+  StopScriptsFromThisCopy();
   Result := '';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if CurUninstallStep = usUninstall then
+    StopScriptsFromThisCopy();
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', '{#AppName}');

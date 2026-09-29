@@ -60,7 +60,18 @@ jobs:
           foreach ($i in 1..80) { if (Test-Path $url) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url)) { throw 'the app did not start' }
           $before = (Get-Content $url -Raw).Trim()
-          (Start-Process -PassThru -FilePath build\LimitSwitcher-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"").WaitForExit()
+          # Claude Code runs the status line script and the Auto resume hook with the app's own Python;
+          # a waiting hook holds the runtime's files. The installer ends those, and no other Python.
+          $hook = Start-Process -PassThru -WindowStyle Hidden -FilePath "$dir\runtime\python.exe" -ArgumentList '-c', 'import time; time.sleep(600)'
+          $other = Start-Process -PassThru -WindowStyle Hidden -FilePath (Get-Command python).Source -ArgumentList '-c', 'import time; time.sleep(600)'
+          Start-Sleep -Seconds 1
+          $setup = Start-Process -PassThru -FilePath build\LimitSwitcher-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\update-install.log`""
+          $setup.WaitForExit()
+          if ($setup.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\update-install.log" -Tail 40; throw "the update failed (exit code $($setup.ExitCode))" }
+          if (Get-Process -Id $hook.Id -ErrorAction SilentlyContinue) { throw "the app's own Python (a hook) was left running" }
+          if (-not (Get-Process -Id $other.Id -ErrorAction SilentlyContinue)) { throw 'another Python was ended too' }
+          Stop-Process -Id $other.Id -Force
+          Write-Host "PASS the installer ended the app's own Python only"
           foreach ($i in 1..80) { if ((Test-Path $url) -and (Get-Content $url -Raw).Trim() -ne $before) { break }; Start-Sleep -Milliseconds 250 }
           if (-not (Test-Path $url) -or (Get-Content $url -Raw).Trim() -eq $before) { throw 'the app was not restarted after the update' }
           $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'LimitSwitcher.exe' })
