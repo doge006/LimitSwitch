@@ -189,8 +189,11 @@ class FullViewTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
-    def test_redact_keeps_first_letter_and_domain(self):
-        self.assertEqual(vr.redact("dogebuns5@gmail.com"), "d********@gmail.com")
+    def test_redact_hides_the_whole_email(self):
+        shown = vr.redact("someone@example.com")
+        self.assertNotIn("@", shown)
+        self.assertNotIn("example", shown)
+        self.assertEqual(vr.redact(""), "")
 
     def test_columns_follow_the_width(self):
         self.assertEqual(vr.columns_for(960)[0], 2)

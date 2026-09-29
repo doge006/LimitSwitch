@@ -65,11 +65,8 @@ def over(bg, rgba):
 
 
 def redact(email):
-    """d**********@gmail.com: the first letter and the domain stay."""
-    user, _, domain = (email or "").partition("@")
-    if not user:
-        return ""
-    return user[0] + "*" * max(1, len(user) - 1) + ("@" + domain if domain else "")
+    """Name mode hides the email whole (not even its first letter or domain); a click shows it."""
+    return "Show email" if email else ""
 
 
 CLOCK_24 = None  # the Settings switch: True / False, or None to follow the system
@@ -880,6 +877,9 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
             ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
 
 
+SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
+
+
 def settings_menu(image, scale, state, ui, x, y, prefs):
     w = 320
     rows = list(SETTINGS)
@@ -890,9 +890,10 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     if taskbar:
         rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
     displays = state.get("taskbarDisplays") or []
-    chooser = taskbar and state.get("taskbar") and len(displays) > 1
+    chooser = taskbar and state.get("taskbar") and bool(displays)
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) + (38 if chooser else 0) + 52
+    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
+        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52
     c = panel(image, scale, x, y, w, h)
     hits = []
     ry = y + 8
@@ -911,27 +912,26 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
         ry += row_h
-    if chooser:  # which display: a row of buttons, the chosen one marked like a switch that is on
-        c.text(x + 66, ry + 15, "Show on", 13, MUTED, anchor="lm")
-        cx = x + 66 + text_w("Show on", 13) + 10
-        current = state.get("taskbarDisplay") or "main"
+    if chooser:  # per display, what its taskbar shows: two slots (left, right); a click cycles each
+        from . import taskbar_layout
+        layout = taskbar_layout.layout(state)
+        bw = (w - 66 - 14 - 6) / 2
         for d in displays:
-            label = d["label"].replace(" display", "")
-            bw = text_w(label, 12) + 22
-            chosen = d["id"] == current
-            hot = ui.hover == "display:" + d["id"]
-            if chosen:
-                fill = (76, 195, 138, 40)
-                c.rect(cx, ry + 2, bw, 26, 7, fill)
-                c.outline(cx, ry + 2, bw, 26, 7, GOOD + (150,))
-                c.text(cx + bw / 2, ry + 15, label, 12, GOOD, True, anchor="mm", bg=over(SURFACE_3, fill))
-            else:
+            c.text(x + 66, ry + 12, "On " + d["label"][0].lower() + d["label"][1:], 12, MUTED, anchor="lm")
+            slots = layout.get(d["id"]) or [None, None]
+            for index in (0, 1):
+                bx, by = x + 66 + index * (bw + 6), ry + 22
+                action = f"slot:{d['id']}:{index}"
+                hot = ui.hover == action
+                on = slots[index] is not None
                 base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
-                c.rect(cx, ry + 2, bw, 26, 7, base + (255,))
-                c.outline(cx, ry + 2, bw, 26, 7, LINE_STRONG)
-                c.text(cx + bw / 2, ry + 15, label, 12, TEXT if hot else MUTED, anchor="mm", bg=base)
-            hits.append(((cx, ry + 2, bw, 26), "display:" + d["id"], "hand"))
-            cx += bw + 6
+                c.rect(bx, by, bw, 26, 7, base + (255,))
+                c.outline(bx, by, bw, 26, 7, (GOOD + (150,)) if on else LINE_STRONG)
+                label = fit(taskbar_layout.label(state, slots[index]), 12, on, bw - 14)
+                c.text(bx + bw / 2, by + 13, label, 12, (TEXT if on else MUTED) if not hot else TEXT, on,
+                       anchor="mm", bg=base)
+                hits.append(((bx, by, bw, 26), action, "hand"))
+            ry += SLOT_ROW_H
     # Version and updates
     ry = y + h - 52
     c.line(x + 14, ry + 2, w - 28, LINE)

@@ -320,6 +320,28 @@ if views:
     time.sleep(1)
     check(not full_views(), "closing the full view closes it")
     print("app memory once closed:", memory(user32.FindWindowW("AccountSwitcherFlyout", None) or views[0]), flush=True)
+# ---- Taskbar layout (Settings: per display, two slots): any account, either side, or off ----
+def settle(count):
+    now = blocks()
+    for _ in range(24):
+        now = blocks()
+        if len(now) == count:
+            break
+        time.sleep(0.25)
+    time.sleep(0.6)  # widths glide to their new size
+    return blocks()
+
+
+if found:
+    shown = settle(len(found)) if api("/api/taskbar", {"layout": {"main": ["codex", "acct:claude-b"]}}) is not None else []
+    ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / "11-taskbar-codex-then-claude-b.png")
+    check(len(shown) == 2, "a layout of Codex in use, then one Claude account, shows two blocks")
+    alone = settle(1) if api("/api/taskbar", {"layout": {"main": [None, "codex"]}}) is not None else []
+    check(len(alone) == 1 and alone[0][2] > screen.width // 2, "a right slot alone sits on the right")
+    api("/api/taskbar", {"layout": {}})
+    check(not settle(0), "a layout with every slot off shows nothing")
+    back = settle(2) if api("/api/taskbar", {"layout": {"main": ["claude", "codex"]}}) is not None else []
+    check(len(back) == 2, "the default layout brings both blocks back")
 api("/api/taskbar", {"on": False})  # the menu's "Taskbar view" switch
 gone = found
 for _ in range(20):

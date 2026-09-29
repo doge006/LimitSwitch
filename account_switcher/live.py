@@ -21,6 +21,7 @@ How it works
   here. Other saved accounts are refreshed here when needed (for usage checks, and by the
   Codex router just before their access token expires).
 """
+import contextlib
 import json
 import logging
 import math
@@ -67,6 +68,16 @@ WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200:
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
+
+
+def login_mark(secret):
+    """A short fingerprint of a saved login's refresh token (never the token itself), to tell
+    one saved login from the next: a login the provider refused is not tried again."""
+    import hashlib
+    secret = secret or {}
+    token = (((secret.get("credentials") or {}).get("claudeAiOauth") or {}).get("refreshToken")
+             or (((secret.get("auth") or {}).get("tokens") or {}).get("refresh_token")) or "")
+    return hashlib.sha256(token.encode()).hexdigest()[:16] if token else ""
 
 class LiveAccounts:
     def __init__(self, notify=lambda *_: None, vault=None, providers=None):
@@ -160,17 +171,25 @@ class LiveAccounts:
                 self.save()
         return changed
 
-    def adopt(self, provider, login):
+    def adopt(self, provider, login, source="the official client (signed in or renewed there)"):
         """Store (or update) a login; returns its account id."""
         account_id = self.find(provider, login.identity)
         if account_id is None:
             account_id = uuid.uuid4().hex[:12]
             self.meta["accounts"][account_id] = {"provider": provider, "identity": login.identity,
                                                  "addedAt": time.time(), "usage": []}
-            self.notify("log", f"Added {provider.title()} account {login.email or login.identity}")
+            self.notify("log", f"Added {provider.title()} account {self.shown_name(account_id)}")
             self.on_new_account()  # fetch its usage now rather than at the next scheduled check
         entry = self.meta["accounts"][account_id]
         entry.update(email=login.email or entry.get("email", ""), plan=login.plan or entry.get("plan", ""))
+        try:
+            before = login_mark(self.vault.read_secret(account_id))
+        except (OSError, ValueError):
+            before = ""
+        if login_mark(login.secret) != before:  # where each saved login came from, for "sign in again" puzzles
+            logging.getLogger("account_switcher").warning(
+                "%s login of %s saved from %s", provider.title(), login.email or login.identity, source)
+            entry.pop("deadLogin", None)
         self.vault.write_secret(account_id, login.secret)
         if entry.get("status", "").startswith("Login expired"):
             entry["status"] = ""
@@ -226,59 +245,67 @@ class LiveAccounts:
         subscriptions = []
         for account_id, meta, is_active, is_live in targets:
             provider = self.providers.get(meta["provider"])
-            try:
-                secret = self.vault.read_secret(account_id)
-            except (OSError, ValueError):
-                secret = None
-            if provider is None or secret is None:
-                self._set(account_id, status="Saved login missing; sign in again")
-                continue
-            if fetched:
-                time.sleep(self.spacing)
-            fetched = True
-            self._set(account_id, attemptedAt=time.time())
-            try:
-                # Never rotate the tokens in the official login file: the client owns those.
-                windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live))
-            except ProviderError as error:
-                if error.rate_limited:
-                    # Wait what the provider asks (Retry-After), else back off exponentially;
-                    # a little jitter, and a slower pace from now on. Kept across restarts.
-                    failures = meta.get("backoffFailures", 0)
-                    wait = error.retry_after or min(MAX_BACKOFF, 60 * 2 ** failures)
-                    wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
-                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
-                              backoffKind="rate", pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
-                    logging.getLogger("account_switcher").warning(
-                        "%s usage check for %s (%s) rate limited: next try in %d min",
-                        meta["provider"], meta.get("email") or account_id, "in use" if is_active else "not in use", wait / 60)
-                if error.transient:
-                    # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
-                    # 1, 2, 4... min. Only a problem that lasts gets shown.
-                    failures = meta.get("backoffFailures", 0)
-                    wait = min(900, 60 * 2 ** failures) * random.uniform(1.0, 1.15)
-                    self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
-                              backoffKind="transient")
-                    if failures + 1 < 3:
-                        continue
-                    self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
+            # One renewal at a time per login, reading the saved login inside the lock: a renewal
+            # that ran just before (Auto resume's check, the Codex router) leaves its new tokens here,
+            # and renewing again with the old single-use token would kill the login.
+            with self.token_locks.setdefault(account_id, threading.Lock()):
+                try:
+                    secret = self.vault.read_secret(account_id)
+                except (OSError, ValueError):
+                    secret = None
+                if provider is None or secret is None:
+                    self._set(account_id, status="Saved login missing; sign in again")
                     continue
-                message = str(error)
-                if error.rate_limited:  # temporary: say until when
-                    message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
-                        clock_text(time.time() + wait, self.meta.get("clock24"))
-                if error.relogin and (is_active or is_live):
-                    message = f"Waiting for {meta['provider'].title()} to refresh its login"
-                self._set(account_id, status=message)
-                continue
-            except Exception as error:  # a malformed response must not stop the loop
-                self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
-                continue
-            eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.5)} if meta.get("pace", 1.0) > 1 else {}
-            self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
-            if updated is not None:
-                self.vault.write_secret(account_id, updated)
-                secret = updated
+                if meta.get("deadLogin") and meta["deadLogin"] == login_mark(secret) and not force:
+                    continue  # refused before, and nothing has replaced it: only a new sign-in (or Refresh) tries again
+                if fetched:
+                    time.sleep(self.spacing)
+                fetched = True
+                self._set(account_id, attemptedAt=time.time())
+                try:
+                    # Never rotate the tokens in the official login file: the client owns those.
+                    windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live))
+                except ProviderError as error:
+                    if error.rate_limited:
+                        # Wait what the provider asks (Retry-After), else back off exponentially;
+                        # a little jitter, and a slower pace from now on. Kept across restarts.
+                        failures = meta.get("backoffFailures", 0)
+                        wait = error.retry_after or min(MAX_BACKOFF, 60 * 2 ** failures)
+                        wait = min(MAX_BACKOFF, max(30, wait)) * random.uniform(1.0, 1.15)
+                        self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
+                                  backoffKind="rate", pace=min(MAX_PACE, meta.get("pace", 1.0) * 2))
+                        logging.getLogger("account_switcher").warning(
+                            "%s usage check for %s (%s) rate limited: next try in %d min",
+                            meta["provider"], meta.get("email") or account_id, "in use" if is_active else "not in use", wait / 60)
+                    if error.transient:
+                        # A hiccup (503, timeout, offline): keep the numbers and say nothing; retry after
+                        # 1, 2, 4... min. Only a problem that lasts gets shown.
+                        failures = meta.get("backoffFailures", 0)
+                        wait = min(900, 60 * 2 ** failures) * random.uniform(1.0, 1.15)
+                        self._set(account_id, backoffUntil=time.time() + wait, backoffFailures=failures + 1,
+                                  backoffKind="transient")
+                        if failures + 1 < 3:
+                            continue
+                        self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
+                        continue
+                    message = str(error)
+                    if error.rate_limited:  # temporary: say until when
+                        message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
+                            clock_text(time.time() + wait, self.meta.get("clock24"))
+                    if error.relogin and (is_active or is_live):
+                        message = f"Waiting for {meta['provider'].title()} to refresh its login"
+                    elif error.relogin:
+                        self._set(account_id, deadLogin=login_mark(secret))
+                    self._set(account_id, status=message)
+                    continue
+                except Exception as error:  # a malformed response must not stop the loop
+                    self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
+                    continue
+                eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.5)} if meta.get("pace", 1.0) > 1 else {}
+                self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
+                if updated is not None:
+                    self.vault.write_secret(account_id, updated)
+                    secret = updated
             windows = self.keep_live(account_id, windows)
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
@@ -369,20 +396,23 @@ class LiveAccounts:
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("This account's saved login is missing; sign in again")
-            self.sync_live(force=True)  # saves the outgoing account's newest tokens first
-            # Write the login file too: new sessions (and Codex's own /status) then show the
-            # chosen account even without the router; the router covers sessions already open.
-            if self.live_ids.get(name) != account_id:
-                before = provider.read_live()
-                provider.write_live(secret)
-                after = provider.read_live()
-                if after is None or after.identity != target["identity"]:
-                    if before is not None:
-                        provider.write_live(before.secret)  # put things back exactly as they were
-                    raise RuntimeError("Switch could not be verified; your previous login was restored")
-                self.signatures[name] = provider.signature()
-                self.live_ids[name] = account_id
-                self.live_since[name] = time.time()
+            # Claude Code's own locks: a renewal of the outgoing login finishes first (and is
+            # saved below), and none starts in the middle of the switch (claude_locks.py).
+            with (provider.locked() if hasattr(provider, "locked") else contextlib.nullcontext()):
+                self.sync_live(force=True)  # saves the outgoing account's newest tokens first
+                # Write the login file too: new sessions (and Codex's own /status) then show the
+                # chosen account even without the router; the router covers sessions already open.
+                if self.live_ids.get(name) != account_id:
+                    before = provider.read_live()
+                    provider.write_live(secret)
+                    after = provider.read_live()
+                    if after is None or after.identity != target["identity"]:
+                        if before is not None:
+                            provider.write_live(before.secret)  # put things back exactly as they were
+                        raise RuntimeError("Switch could not be verified; your previous login was restored")
+                    self.signatures[name] = provider.signature()
+                    self.live_ids[name] = account_id
+                    self.live_since[name] = time.time()
             self.active[name] = account_id
             if name in self.routed:
                 self.meta["selected"][name] = account_id
@@ -390,7 +420,7 @@ class LiveAccounts:
         self.on_swap(name)
         if reason == "quiet":
             return
-        who = target.get("email") or target["identity"]
+        who = self.shown_name(account_id)  # its name in name mode, never the email
         self.notify("log", f"{name.title()} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
         self.notify("accounts", None)
 
@@ -839,15 +869,15 @@ class LiveAccounts:
                 time.sleep(1.5)
             if login:
                 with self.lock:
-                    account_id = self.adopt(name, login)
+                    account_id = self.adopt(name, login, source="a sign-in in LimitSwitcher")
                     self.save()
                 if hasattr(isolated, "forget"):
                     isolated.forget()
                 self._set(account_id, backoffUntil=0.0, backoffFailures=0, pace=1.0, status="")
                 wanted = self.meta["accounts"].get(expect) if expect else None
                 if wanted and account_id != expect:  # the browser was signed in to another account
-                    self.notify("log", f"Signed in as {login.email or login.identity}, not "
-                                       f"{wanted.get('email') or wanted.get('identity')}. To fix that account, sign out of "
+                    self.notify("log", f"Signed in as {self.shown_name(account_id)}, not "
+                                       f"{self.shown_name(expect)}. To fix that account, sign out of "
                                        f"claude.ai in the browser (or switch accounts there), then click Sign in again.")
                 self.refresh(only=account_id)
             else:
