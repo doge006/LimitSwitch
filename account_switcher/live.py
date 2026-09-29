@@ -167,7 +167,7 @@ class LiveAccounts:
             account_id = uuid.uuid4().hex[:12]
             self.meta["accounts"][account_id] = {"provider": provider, "identity": login.identity,
                                                  "addedAt": time.time(), "usage": []}
-            self.notify("log", f"Added {provider.title()} account {login.email or login.identity}")
+            self.notify("log", f"Added {provider.title()} account {self.shown_name(account_id)}")
             self.on_new_account()  # fetch its usage now rather than at the next scheduled check
         entry = self.meta["accounts"][account_id]
         entry.update(email=login.email or entry.get("email", ""), plan=login.plan or entry.get("plan", ""))
@@ -390,7 +390,7 @@ class LiveAccounts:
         self.on_swap(name)
         if reason == "quiet":
             return
-        who = target.get("email") or target["identity"]
+        who = self.shown_name(account_id)  # its name in name mode, never the email
         self.notify("log", f"{name.title()} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
         self.notify("accounts", None)
 
@@ -846,8 +846,8 @@ class LiveAccounts:
                 self._set(account_id, backoffUntil=0.0, backoffFailures=0, pace=1.0, status="")
                 wanted = self.meta["accounts"].get(expect) if expect else None
                 if wanted and account_id != expect:  # the browser was signed in to another account
-                    self.notify("log", f"Signed in as {login.email or login.identity}, not "
-                                       f"{wanted.get('email') or wanted.get('identity')}. To fix that account, sign out of "
+                    self.notify("log", f"Signed in as {self.shown_name(account_id)}, not "
+                                       f"{self.shown_name(expect)}. To fix that account, sign out of "
                                        f"claude.ai in the browser (or switch accounts there), then click Sign in again.")
                 self.refresh(only=account_id)
             else:

@@ -65,11 +65,8 @@ def over(bg, rgba):
 
 
 def redact(email):
-    """d**********@gmail.com: the first letter and the domain stay."""
-    user, _, domain = (email or "").partition("@")
-    if not user:
-        return ""
-    return user[0] + "*" * max(1, len(user) - 1) + ("@" + domain if domain else "")
+    """Name mode hides the email whole (not even its first letter or domain); a click shows it."""
+    return "Show email" if email else ""
 
 
 CLOCK_24 = None  # the Settings switch: True / False, or None to follow the system

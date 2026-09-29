@@ -212,6 +212,21 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(b.status, "")
         self.assertEqual(self.vault.read_secret(b.id)["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b+")
 
+    def test_name_mode_never_puts_an_email_in_a_notification(self):
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b", expires_in=36000)
+        m.sync_live()
+        m.meta["nameMode"] = True
+        m.meta["accounts"][self.by_email(m, "b@example.com").id]["label"] = "Work"
+        self.logs.clear()
+        m.swap(self.by_email(m, "a@example.com").id)
+        m.swap(self.by_email(m, "b@example.com").id)
+        messages = [text for kind, text in self.logs if kind == "log"]
+        self.assertIn("Claude now uses Work", messages)
+        self.assertTrue(any(text.startswith("Claude now uses Claude ") for text in messages))  # no name: "Claude 1"
+        self.assertFalse([text for text in messages if "@" in text])
+
     def test_auto_swap_moves_to_most_headroom(self):
         m = self.manager()
         m.sync_live()
