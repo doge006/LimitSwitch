@@ -804,11 +804,10 @@ class TrayMenu(Popup):
             rows += ["-", {"action": "toggle:taskbar", "label": "Taskbar view", "checked": state.get("taskbar", True)}]
             displays = state.get("taskbarDisplays") or []
             if len(displays) > 1 and state.get("taskbar", True):  # which display's taskbar
-                chosen = state.get("taskbarDisplay") or "main"
-                if chosen not in {d["id"] for d in displays}:
-                    chosen = "main"
+                from . import taskbar_layout
+                shown = {key for key, slots in taskbar_layout.layout(state).items() if any(slots)}
                 rows += [{"action": "display:" + d["id"], "label": "On " + d["label"][0].lower() + d["label"][1:],
-                          "checked": d["id"] == chosen} for d in displays]
+                          "checked": d["id"] in shown} for d in displays]
         return rows + ["-", {"action": "quit", "label": "Quit"}]
 
     opener = "right"

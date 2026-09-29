@@ -607,6 +607,14 @@ class FullView:
             self.act("installUpdate" if arg == "install" else "checkUpdate")
         elif kind == "display":
             self.act("taskbar", {"display": arg})
+        elif kind == "slot":  # Settings: a display's taskbar slot, cycled to its next choice
+            from . import taskbar_layout
+            display, _, index = arg.rpartition(":")
+            if index in ("0", "1") and display:
+                layout = taskbar_layout.layout(state)
+                current = (layout.get(display) or [None, None])[int(index)]
+                self.act("taskbar", {"layout": taskbar_layout.with_slot(
+                    layout, display, int(index), taskbar_layout.next_slot(state, current))})
         elif kind == "swap":
             if ui.pending or state.get("busy"):
                 return

@@ -27,6 +27,7 @@ class Controller:
         self.compact = False  # the tray / menu bar panel shows only the accounts in use
         self.taskbar = True   # Windows: the accounts in use shown on the taskbar
         self.taskbar_display = "main"  # which display's taskbar
+        self.taskbar_layout = None     # what each display's taskbar shows (taskbar_layout.py)
         self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
         self.taskbar_available = False  # set by the Windows tray
         self.name_mode = False   # show names instead of emails (screen sharing)
@@ -129,6 +130,7 @@ class Controller:
                 "taskbar": bool(self.gateway.manager.meta.get("taskbarView", True)) if self.live else self.taskbar,
                 "taskbarDisplay": (self.gateway.manager.meta.get("taskbarDisplay") or "main") if self.live else self.taskbar_display,
                 "taskbarDisplays": list(self.taskbar_displays),
+                "taskbarLayout": (self.gateway.manager.meta.get("taskbarLayout") if self.live else self.taskbar_layout),
                 "taskbarAvailable": self.taskbar_available,
                 "nameMode": name_mode,
                 "update": dict(self.update),
@@ -205,10 +207,19 @@ class Controller:
                 on = bool(body["on"])
                 setattr(self, action, on)
                 changes["compactPanel" if action == "compact" else "taskbarView"] = on
-            if action == "taskbar" and "display" in body:
-                if not isinstance(body["display"], str) or len(body["display"]) > 40:
-                    raise ValueError("Unknown display")
-                self.taskbar_display = changes["taskbarDisplay"] = body["display"]
+            if action == "taskbar" and ("display" in body or "layout" in body):
+                from . import taskbar_layout
+                current = taskbar_layout.layout(self.snapshot_taskbar())
+                if "display" in body:  # the tray menu's "On <display>": everything there
+                    if not isinstance(body["display"], str) or not body["display"] or len(body["display"]) > 40:
+                        raise ValueError("Unknown display")
+                    self.taskbar_display = changes["taskbarDisplay"] = body["display"]
+                    new = taskbar_layout.moved(current, body["display"])
+                else:  # the settings' slots; {} shows nothing anywhere
+                    new = taskbar_layout.clean(body["layout"]) if body["layout"] else {}
+                    if new is None:
+                        raise ValueError("Invalid taskbar layout")
+                self.taskbar_layout = changes["taskbarLayout"] = new
             if self.live and changes:
                 with self.gateway.manager.lock:
                     self.gateway.manager.meta.update(changes)
@@ -280,6 +291,12 @@ class Controller:
             from .clock import clock_12h
             return not clock_12h()
         return bool(saved)
+
+    def snapshot_taskbar(self):
+        """The saved taskbar settings (what taskbar_layout.layout() reads)."""
+        meta = self.gateway.manager.meta if self.live else {}
+        return {"taskbarLayout": meta.get("taskbarLayout") if self.live else self.taskbar_layout,
+                "taskbarDisplay": (meta.get("taskbarDisplay") if self.live else self.taskbar_display) or "main"}
 
     def statusline_on(self):
         """Show LimitSwitcher in Claude Code's status line (off unless turned on in Settings)."""

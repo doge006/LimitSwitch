@@ -877,20 +877,33 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     return math.ceil(x + BLOCK_COL + BLOCK_PAD_R)
 
 
-def block_accounts(state, provider, fx):
-    """The accounts a provider's block draws: the one in use, plus one sliding out mid-swap."""
-    return [a for a in state["accounts"] if a["provider"] == provider
+# A taskbar block shows a slot: a provider's account in use ("claude", "codex"), or one account
+# whatever is in use ("acct:<id>").
+def slot_account(state, slot):
+    """The account a slot shows now, or None."""
+    if isinstance(slot, str) and slot.startswith("acct:"):
+        return next((a for a in state["accounts"] if a["id"] == slot[5:]), None)
+    return next((a for a in state["accounts"] if a["provider"] == slot and a["active"]), None)
+
+
+def block_accounts(state, slot, fx):
+    """The accounts a block draws: the one in use, plus one sliding out mid-swap (one account's
+    block: just that account)."""
+    if isinstance(slot, str) and slot.startswith("acct:"):
+        account = slot_account(state, slot)
+        return [account] if account else []
+    return [a for a in state["accounts"] if a["provider"] == slot
             and (a["active"] or fx.get(("active", a["id"]), 0.0) > 0.01)]
 
 
-def block_width(state, provider, height=44, light=False, columns=3):
-    """Resting width of a provider's block (the account in use), or 0 when none is in use."""
-    account = next((a for a in state["accounts"] if a["provider"] == provider and a["active"]), None)
+def block_width(state, slot, height=44, light=False, columns=3):
+    """Resting width of a slot's block, or 0 when it has no account to show."""
+    account = slot_account(state, slot)
     return block_row(Layout(), account, {}, height, THEMES[light], columns=columns) if account else 0
 
 
 def build_block(state, provider, fx=None, hover=None, height=44, light=False, width=None, columns=3):
-    """Lay out one provider's taskbar block. Returns (layout, width).
+    """Lay out one taskbar block (`provider`: its slot, see slot_account). Returns (layout, width).
 
     Swapping works like the compact panel: the old account slides out to the left and fades,
     then the new one slides in from the right; `width` (animated by the host) glides between
@@ -900,8 +913,9 @@ def build_block(state, provider, fx=None, hover=None, height=44, light=False, wi
     width = width or block_width(state, provider, height, light, columns) or 120
     hov = fx.get(("hover", "open"), 1.0 if hover == "open" else 0.0)
     L.rect(0, 0, width, height, 6, mix(theme["plate"], theme["plate_hover"], hov))
+    pinned = isinstance(provider, str) and provider.startswith("acct:")  # one account: no swap slide
     for account in block_accounts(state, provider, fx):
-        t = fx.get(("active", account["id"]), 1.0 if account["active"] else 0.0)
+        t = 1.0 if pinned else fx.get(("active", account["id"]), 1.0 if account["active"] else 0.0)
         alpha = max(0.0, 2 * t - 1)
         if alpha <= 0.01:
             continue

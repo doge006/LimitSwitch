@@ -20,6 +20,7 @@ import winreg
 
 from . import flyout as fl
 from . import flyout_render as fr
+from . import taskbar_layout
 from .placement import free_gaps, place_blocks
 from .profiler import event
 
@@ -384,18 +385,24 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
 
 
 class TaskbarBlock(fl.Popup):
-    """One provider's block on the taskbar."""
+    """One block on a display's taskbar: a slot (taskbar_layout.py), left or right."""
     modal = False            # other popups ignore it; it never closes on outside clicks
     take_focus = False
     dismiss_on_deactivate = False
     ex_style = WS_EX_NOACTIVATE
     FX_SECONDS = {**fl.Popup.FX_SECONDS, "width": 0.32}
 
-    def __init__(self, view, provider):
+    def __init__(self, view, slot):
         super().__init__(view.tray)
-        self.view, self.provider = view, provider
+        self.view, self.slot = view, slot
         self.spot = None  # (edge x, "left" | "right", columns) in physical px
         self.bar = None
+
+    @property
+    def provider(self):
+        """The provider of the account it shows (the panel it opens lists that provider)."""
+        account = fr.slot_account(self.tray.state, self.slot)
+        return account["provider"] if account else (self.slot if self.slot in PROVIDER_ORDER else None)
 
     def on_panel(self, x, y):
         return True  # no shadow margin: the whole image is the block
@@ -408,12 +415,12 @@ class TaskbarBlock(fl.Popup):
         fx = {key: value for key, value in fr.targets(state).items() if key[0] in ("active", "bar")}
         if self.hover:
             fx[("hover", self.hover)] = 1.0
-        fx[("width",)] = fr.block_width(state, self.provider, bar.height, bar.light, self.spot[2]) or 120
+        fx[("width",)] = fr.block_width(state, self.slot, bar.height, bar.light, self.spot[2]) or 120
         return fx
 
     def render(self, hover):
         bar = self.bar
-        return fr.render_block(self.tray.state, self.provider, hover, self.scale, self.fx, bar.height, bar.light,
+        return fr.render_block(self.tray.state, self.slot, hover, self.scale, self.fx, bar.height, bar.light,
                                self.fx.get(("width",)), self.spot[2])
 
     def place(self, bar, spot):
@@ -462,17 +469,17 @@ class TaskbarBlock(fl.Popup):
 
 
 class TaskbarView:
-    """Keeps a block per provider in use on the taskbar. Everything here runs on the tray thread;
-    other threads call post()."""
+    """Keeps the chosen blocks on each chosen display's taskbar (taskbar_layout.py). Everything
+    here runs on the tray thread; other threads call post()."""
 
     def __init__(self, tray):
         self.tray = tray
-        self.blocks = {}
-        self.bar = None
-        self.stale = True        # re-read the taskbar's layout on the next sync
+        self.blocks = {}         # (display id, slot index) -> TaskbarBlock
+        self.bars = {}           # display id -> Bar (the taskbar the display's slots go on)
+        self.stale = True        # re-read the taskbars' layout on the next sync
         self.hwnd = None
         self.hooked = False
-        self.covered = False     # a full-screen app is in front: the taskbar, and so the blocks, are down
+        self.covered = {}        # display id -> a full-screen app is in front there: its blocks are down
         self.shell_message = None
 
     # ---------- wiring into pystray's hidden window ----------
@@ -537,7 +544,7 @@ class TaskbarView:
             self.stale = True
             self.sync()
         elif wparam == TIMER_COVER:
-            if not self.covered:
+            if not any(self.covered.values()):
                 user32.KillTimer(self.hwnd, TIMER_COVER)
             self.follow_taskbar()
 
@@ -548,28 +555,31 @@ class TaskbarView:
             self.later()  # a taskbar button came or went: the free space moved
         elif code == HSHELL_WINDOWACTIVATED:  # includes full-screen ("rude") apps
             self.follow_taskbar()
-            if not self.covered:
+            if not any(self.covered.values()):
                 user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
 
     def follow_taskbar(self):
-        """Hide when an app is full screen on the taskbar's display, and come back after.
+        """Hide a display's blocks when an app is full screen there, and bring them back after.
 
         Explorer takes the taskbar out of the always-on-top band for most full-screen apps; for
         the rest (borderless games, video, a browser's F11) the foreground window covering the
         display counts too. Screenshot tools and overlays are tool windows, so they never make
-        the blocks hide. Instant, with no fade: the taskbar does not fade."""
-        bar = self.bar
-        covered = bool(bar and user32.IsWindow(bar.hwnd)
-                       and (not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST or full_screen_app(bar.rect)))
-        if covered == self.covered:
-            return
-        self.covered = covered
-        if covered:  # the full-screen app may leave without activating anything: look again each second
+        the blocks hide. Instant, with no fade: the taskbar does not fade. Each display on its
+        own: a game on one screen leaves the other screen's blocks up."""
+        uncovered = False
+        for key, bar in self.bars.items():
+            covered = bool(user32.IsWindow(bar.hwnd)
+                           and (not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST or full_screen_app(bar.rect)))
+            if covered == self.covered.get(key, False):
+                continue
+            self.covered[key] = covered
+            uncovered |= not covered
+            for (display, _), block in self.blocks.items():
+                if display == key and block.hwnd and not block.closing:
+                    user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
+        if any(self.covered.values()):  # the full-screen app may leave without activating anything
             user32.SetTimer(self.hwnd, TIMER_COVER, 1000, None)
-        for block in self.blocks.values():
-            if block.hwnd and not block.closing:
-                user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
-        if not covered:
+        if uncovered:
             self.sync()  # blocks that were due while it was down
 
     # ---------- layout ----------
@@ -589,50 +599,59 @@ class TaskbarView:
             return
         self.hook()
         state = self.tray.state
-        wanted_key = state.get("taskbarDisplay") or "main"
-        if wanted_key != getattr(self, "wanted_key", None):  # moved to another display in the settings
-            self.wanted_key, self.stale = wanted_key, True
-        if self.stale or self.bar is None:
+        wanted = taskbar_layout.layout(state)
+        if wanted != getattr(self, "wanted", None):  # changed in the settings
+            self.wanted, self.stale = wanted, True
+        if self.stale:
             found = taskbars()
             displays = [{"id": key, "label": label} for _, key, label in found]
             if displays != getattr(self.tray.controller, "taskbar_displays", None):
                 self.tray.controller.taskbar_displays = displays  # the settings list them
                 self.tray.controller.notify("changed", None)
-            # The chosen display's taskbar, else the main one; never some other display by accident.
-            chosen = next((t for t in found if t[1] == wanted_key), None) or next((t for t in found if t[1] == "main"), None)
-            self.bar, self.stale = (read_bar(*chosen, previous=self.bar) if chosen else None), False
-        bar = self.bar
-        in_use = [p for p in PROVIDER_ORDER if any(a["provider"] == p and a["active"] for a in state["accounts"])]
+            bars = {}
+            for key in wanted:
+                # A display that isn't connected now: its slots go to the main one, unless the
+                # main one has its own; never some other display by accident.
+                entry = next((t for t in found if t[1] == key), None)
+                if entry is None and "main" not in wanted and "main" not in bars:
+                    entry = next((t for t in found if t[1] == "main"), None)
+                if entry is not None:
+                    bars[key] = read_bar(*entry, previous=self.bars.get(key))
+            self.bars, self.stale = bars, False
+            self.covered = {key: value for key, value in self.covered.items() if key in bars}
         self.follow_taskbar()
-        if bar is None or not in_use:
-            self.close_all()
-            return
-        wanted = []
-        for provider in in_use:
-            account = next(a for a in state["accounts"] if a["provider"] == provider and a["active"])
-            wanted.append((provider, {c: math.ceil(fr.block_width(state, provider, bar.height, bar.light, c) * bar.scale)
-                                      for c in range(min(3, max(1, len(account["windows"]))), 0, -1)},
-                           "left" if provider == "claude" else "right"))  # Claude from the left, Codex from the right
-        spots = place_blocks(free_gaps(bar.left, bar.right, bar.occupied, round(12 * bar.scale)), wanted,
-                             round(12 * bar.scale))
-        for provider in PROVIDER_ORDER:
-            block = self.blocks.get(provider)
-            if provider not in spots:
-                if block:
-                    block.close()
-                continue
-            x, width, columns = spots[provider]
-            side = "left" if provider == "claude" else "right"
-            spot = (x if side == "left" else x + width, side, columns)
-            if block is None:
-                block = self.blocks[provider] = TaskbarBlock(self, provider)
-            if block.hwnd and block.bar is not None and block.bar.hwnd != bar.hwnd:
-                block._destroy()  # moving to another display's taskbar: a new window owned by it
-            block.place(bar, spot)
-            if block.hwnd and not block.closing:
-                block.redraw()
-            elif not self.covered:
-                block.open()
+        shown = set()
+        for key, bar in self.bars.items():
+            slots = wanted.get(key) or [None, None]
+            asked = []
+            for index, slot in enumerate(slots):
+                account = fr.slot_account(state, slot) if slot else None
+                if account is None:
+                    continue
+                columns = range(min(3, max(1, len(account["windows"]))), 0, -1)
+                asked.append((index, {c: math.ceil(fr.block_width(state, slot, bar.height, bar.light, c) * bar.scale)
+                                      for c in columns}, "left" if index == 0 else "right"))
+            spots = place_blocks(free_gaps(bar.left, bar.right, bar.occupied, round(12 * bar.scale)), asked,
+                                 round(12 * bar.scale))
+            for index, (x, width, columns) in spots.items():
+                side = "left" if index == 0 else "right"
+                spot = (x if side == "left" else x + width, side, columns)
+                block = self.blocks.get((key, index))
+                if block is not None and block.slot != slots[index]:
+                    block.slot = slots[index]  # another account in this slot: redrawn below
+                if block is None:
+                    block = self.blocks[(key, index)] = TaskbarBlock(self, slots[index])
+                if block.hwnd and block.bar is not None and block.bar.hwnd != bar.hwnd:
+                    block._destroy()  # moving to another display's taskbar: a new window owned by it
+                block.place(bar, spot)
+                shown.add((key, index))
+                if block.hwnd and not block.closing:
+                    block.redraw()
+                elif not self.covered.get(key):
+                    block.open()
+        for place, block in self.blocks.items():
+            if place not in shown:
+                block.close()
 
     def close_all(self):
         for block in self.blocks.values():
@@ -654,14 +673,15 @@ class TaskbarView:
             # instead of closing it and opening it again as this block's panel.
             fl.force_foreground(flyout.hwnd)
             return
-        same = flyout.only == block.provider
+        same = flyout.only == block.provider and getattr(flyout, "origin_block", None) is block
         if same and flyout.hwnd and not flyout.closing:
             flyout.close()
             return
         if same and time.monotonic() < flyout.suppress_until:
             flyout.suppress_until = 0.0  # the press on this block already closed it
             return
-        flyout.origin = ((block.x, self.bar.rect[1], block.x + block.size[0], self.bar.rect[3]), block.provider)
+        flyout.origin = ((block.x, block.bar.rect[1], block.x + block.size[0], block.bar.rect[3]), block.provider)
+        flyout.origin_block = block
         flyout.open()
 
     def open_menu(self):
