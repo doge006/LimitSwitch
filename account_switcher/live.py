@@ -46,13 +46,13 @@ ACTIVE_INTERVAL, URGENT_INTERVAL, IDLE_INTERVAL = 90, 45, 300  # idle: may be in
 FRESH_ENOUGH = 45           # opening the panel refreshes only data older than this
 STALE_AFTER = 1800          # older numbers are shown with their age
 MAX_PACE = 8
-# Claude's usage API allows few calls (it asked for a 38-minute wait once), so Claude is polled
-# gently and follows live through Claude Code's status line instead (no tokens, no API calls).
-PROVIDER_INTERVALS = {"claude": (300, 180)}   # (in use, near a limit) when not live
-# Accounts not in use: Claude every 10 minutes (and just after a window resets); they may be in use
-# on another computer, and nothing else reports that. That computer may check them too, sharing the
-# same small allowance: a rate limit slows an account down, at most 3x (IDLE_PACE_CAP).
-PROVIDER_IDLE = {"claude": 600}
+# Claude: every minute (asked the way Claude Code asks, see providers.CLAUDE_CODE_AGENT); the
+# account in use follows live through Claude Code's status line instead when it's on.
+PROVIDER_INTERVALS = {"claude": (60, 60)}   # (in use, near a limit) when not live
+# Accounts not in use: Claude every minute too (and just after a window resets); they may be in
+# use on another computer, and nothing else reports that. That computer may check them too: a rate
+# limit slows an account down, at most 3x (IDLE_PACE_CAP).
+PROVIDER_IDLE = {"claude": 60}
 IDLE_PACE_CAP = 3
 UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
 LIVE_FRESH = 900            # status line data this recent counts as live

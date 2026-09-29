@@ -327,8 +327,8 @@ class LiveTests(unittest.TestCase):
         b_id = self.by_email(m, "b@example.com").id
         a_id = m.active["claude"]
         now = time.time()
-        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 300, delta=5)  # Claude in use, not live: gently
-        self.assertGreater(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 250)  # not in use here: 5 min (cloud sessions)
+        self.assertAlmostEqual(m.due(a_id, m.meta["accounts"][a_id], True, now) - now, 60, delta=5)  # Claude in use, not live: every minute
+        self.assertAlmostEqual(m.due(b_id, m.meta["accounts"][b_id], False, now) - now, 60, delta=5)  # not in use here (cloud sessions, other PCs)
         # A passed reset is applied locally without asking the API.
         m.meta["accounts"][b_id]["usage"][0]["resetsAt"] = now - 5
         b = self.by_email(m, "b@example.com")

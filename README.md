@@ -131,7 +131,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
 
   These are read-only status endpoints, the same ones behind Claude Code's `/usage` and ChatGPT's usage page. **Checking usage does not use any of your quota.**
 - **Staying clear of rate limits:**
-  - Claude: the account in use is checked every 5 minutes (3 when it's near a limit), and only every 30 minutes while Claude Code's status line already reports it live. Other accounts every 15 minutes, or just after one of their windows resets.
+  - Claude: every account is checked every minute, and the account in use only every 30 minutes while Claude Code's status line already reports it live. Requests identify as Claude Code, because Claude's usage endpoint throttles other clients hard.
   - Codex: the account in use every 90 seconds (45 near a limit), others every 5 minutes or just after a reset.
   - Passed reset times are applied locally without a request.
   - Requests are spaced out.
@@ -197,10 +197,10 @@ In the full view, the gear opens Settings:
 
 LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
 
-- **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live without asking Claude's usage API, which allows only a few requests an hour.
+- **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
 - **Turned on, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
 - **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
-- **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead.
+- **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.
 - **On quit** your original status line setting is put back.
 

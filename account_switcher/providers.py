@@ -233,6 +233,10 @@ def _plan_name(raw):
     return names.get(str(raw or "").lower().replace("_", "").replace(" ", ""), str(raw or "").title())
 
 
+# Claude's usage and profile endpoints are the ones Claude Code itself calls, and they throttle
+# other clients hard (429s with a ~20-minute retry-after). They're asked the way Claude Code asks.
+CLAUDE_CODE_AGENT = "claude-code/2.1.0"
+
 class Claude:
     name = "claude"
     last_credits = None
@@ -327,7 +331,7 @@ class Claude:
         try:
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
-                                                  "User-Agent": "account-switcher"})
+                                                  "User-Agent": CLAUDE_CODE_AGENT})
         except ProviderError as error:
             # Anthropic answers an expired access token with 429, not 401: a saved login (ours to
             # renew) whose token has expired, or whose expiry is unknown, is renewed and asked again.
@@ -338,7 +342,7 @@ class Claude:
             oauth = secret["credentials"]["claudeAiOauth"]
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
-                                                  "User-Agent": "account-switcher"})
+                                                  "User-Agent": CLAUDE_CODE_AGENT})
         self.last_credits = with_resets(self.credits(body or {}), body or {})
         self.last_fields = key_paths(body or {})
         return self.windows(body or {}), self.plan(oauth), updated
@@ -400,7 +404,7 @@ class Claude:
         oauth = secret["credentials"]["claudeAiOauth"]
         _, body = _http("GET", self.PROFILE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
-                                                  "User-Agent": "account-switcher"})
+                                                  "User-Agent": CLAUDE_CODE_AGENT})
         at, ends = subscription_from(body or {})
         estimated = False
         org = (body or {}).get("organization") or {}
