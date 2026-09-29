@@ -1,10 +1,13 @@
-A fix release. The app offers it in Settings → **Update to 1.0.3** (or download below).
+The app offers it in Settings → **Update to 1.0.4** (or download below).
 
-## What's fixed
+## New
 
-- **Windows: installing or updating while Claude Code is open.** Claude Code runs LimitSwitcher's status line script and Auto resume hook with the app's own Python, and those kept files the installer needs to replace ("The following applications are using files… Python"). The installer now ends them first: only processes started from LimitSwitcher's own folder, never another Python. A pending auto-continue is cancelled by the update; the status line comes back on its next refresh.
+- **Customizable taskbar (Windows):** Settings (full view, Taskbar view on) list each display with a left and a right slot. A click cycles a slot through Claude in use, Codex in use, each of your accounts, and Off: Claude and Claude, Codex then Claude, one fixed account, or different accounts on each display. Without changes it looks as before. A full-screen game now hides only the blocks on its own display.
 
-Everything from [1.0.2](https://github.com/doge006/LimitSwitcher/releases/tag/v1.0.2) and [1.0.1](https://github.com/doge006/LimitSwitcher/releases/tag/v1.0.1) is included.
+## Fixed
+
+- **Fewer "sign in again":** Claude's refresh tokens are single-use. A switch (manual or Auto swap) could land while Claude Code was renewing its login, and the saved copy of that account ended up with a token Claude Code had already used. Switches now hold Claude Code's own login locks, so Claude Code finishes its renewal first and the app keeps the fresh tokens. Two of the app's own usage checks can also no longer renew the same saved login at once, and a login Claude refused is no longer retried every minute.
+- **Name mode:** the "now uses …" notification (and "Added …" / "Signed in as …") showed the email; it now shows the account's name. The full view no longer shows part of the email under the name: just "Show email" until clicked.
 
 ## Download
 
