@@ -71,8 +71,10 @@ def install(release):
         return "Update from the Releases page"
     if not release.get("setup"):
         return "This release has no Windows installer"
+    from .vault import data_dir
     try:
-        target = Path(tempfile.gettempdir()) / f"LimitSwitcher-Setup-{release['latest']}.exe"
+        # Its own name each time: an installer from an earlier try may still have its file open.
+        target = Path(tempfile.gettempdir()) / f"LimitSwitcher-Setup-{release['latest']}-{int(time.time())}.exe"
         request = Request(release["setup"], headers={"User-Agent": "LimitSwitcher/" + VERSION})
         with urlopen(request, timeout=120, context=tls.context()) as response, open(target, "wb") as out:
             while True:
@@ -83,8 +85,16 @@ def install(release):
     except OSError as error:
         log.warning("update download: %s", error)
         return "The download failed"
-    subprocess.Popen([str(target), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", f"/DIR={ROOT}"],
-                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0), close_fds=True)
+    # The installer runs silently; its log says what happened if the update doesn't come back.
+    setup_log = data_dir() / "update-install.log"
+    try:
+        subprocess.Popen([str(target), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", f"/DIR={ROOT}",
+                          f"/LOG={setup_log}"],
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0), close_fds=True)
+    except OSError as error:
+        log.warning("update installer: %s", error)
+        return "The installer couldn't start"
+    log.warning("update: installer %s started (its log: %s)", target.name, setup_log)
     return None
 
 
