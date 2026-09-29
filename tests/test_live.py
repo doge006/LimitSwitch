@@ -155,6 +155,32 @@ class LiveTests(unittest.TestCase):
     def live_claude(self):
         return self.providers["claude"].read_live()
 
+    def test_a_switch_waits_for_claude_codes_renewal_and_keeps_its_new_tokens(self):
+        """Claude Code renews under its lock: read, renew, save. A switch in that window used to be
+        overwritten, and the saved copy of the old account kept a used-up refresh token."""
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        m.swap(self.by_email(m, "a@example.com").id)  # a in use, b saved
+        lock = self.home / ".claude" / ".oauth_refresh.lock"
+        lock.mkdir()  # Claude Code starts renewing a's login
+
+        def claude_code_renews():
+            time.sleep(0.6)
+            claude_login(self.home, "uuid-a", "a@example.com", "at-a2", "rt-a2")  # its renewed tokens
+            lock.rmdir()
+
+        renewal = threading.Thread(target=claude_code_renews)
+        renewal.start()
+        m.swap(self.by_email(m, "b@example.com").id)
+        renewal.join()
+        self.assertEqual(self.live_claude().email, "b@example.com")  # the switch stands
+        a = self.by_email(m, "a@example.com")
+        saved = self.vault.read_secret(a.id)["credentials"]["claudeAiOauth"]["refreshToken"]
+        self.assertEqual(saved, "rt-a2")  # a's newest tokens, not the used-up ones
+        self.assertFalse(lock.exists())
+
     def test_imports_live_logins_and_reads_usage(self):
         m = self.manager()
         m.sync_live()

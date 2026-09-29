@@ -258,6 +258,11 @@ class Claude:
         user = os.environ.get("USER") or ""
         self.keychain_account = user if re.fullmatch(r"[a-zA-Z0-9._-]+", user) else "claude-code-user"
 
+    def locked(self):
+        """Claude Code's own locks on its login (claude_locks.py), for the app's writes to it."""
+        from . import claude_locks
+        return claude_locks.held(self.config_dir, self.config_file)
+
     def _credentials_text(self):
         if self.keychain:
             from . import keychain

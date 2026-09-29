@@ -21,6 +21,7 @@ How it works
   here. Other saved accounts are refreshed here when needed (for usage checks, and by the
   Codex router just before their access token expires).
 """
+import contextlib
 import json
 import logging
 import math
@@ -395,20 +396,23 @@ class LiveAccounts:
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("This account's saved login is missing; sign in again")
-            self.sync_live(force=True)  # saves the outgoing account's newest tokens first
-            # Write the login file too: new sessions (and Codex's own /status) then show the
-            # chosen account even without the router; the router covers sessions already open.
-            if self.live_ids.get(name) != account_id:
-                before = provider.read_live()
-                provider.write_live(secret)
-                after = provider.read_live()
-                if after is None or after.identity != target["identity"]:
-                    if before is not None:
-                        provider.write_live(before.secret)  # put things back exactly as they were
-                    raise RuntimeError("Switch could not be verified; your previous login was restored")
-                self.signatures[name] = provider.signature()
-                self.live_ids[name] = account_id
-                self.live_since[name] = time.time()
+            # Claude Code's own locks: a renewal of the outgoing login finishes first (and is
+            # saved below), and none starts in the middle of the switch (claude_locks.py).
+            with (provider.locked() if hasattr(provider, "locked") else contextlib.nullcontext()):
+                self.sync_live(force=True)  # saves the outgoing account's newest tokens first
+                # Write the login file too: new sessions (and Codex's own /status) then show the
+                # chosen account even without the router; the router covers sessions already open.
+                if self.live_ids.get(name) != account_id:
+                    before = provider.read_live()
+                    provider.write_live(secret)
+                    after = provider.read_live()
+                    if after is None or after.identity != target["identity"]:
+                        if before is not None:
+                            provider.write_live(before.secret)  # put things back exactly as they were
+                        raise RuntimeError("Switch could not be verified; your previous login was restored")
+                    self.signatures[name] = provider.signature()
+                    self.live_ids[name] = account_id
+                    self.live_since[name] = time.time()
             self.active[name] = account_id
             if name in self.routed:
                 self.meta["selected"][name] = account_id
