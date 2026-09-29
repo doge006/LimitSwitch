@@ -41,7 +41,8 @@ ACCENT = {"claude": (224, 138, 104, 255), "codex": (162, 149, 247, 255)}
 
 # ---------- data helpers ----------
 def remaining(used):
-    return max(0, min(100, 100 - used))
+    """What's left, rounded down: never more room than there is (93.4% used shows 6% left)."""
+    return max(0, min(100, math.floor(100 - used + 1e-6)))
 
 
 def level_rgb(left):

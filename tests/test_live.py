@@ -365,7 +365,7 @@ class LiveTests(unittest.TestCase):
         a = self.by_email(m, "a@example.com")
         five = next(w for w in a.windows() if w["key"] == "five_hour")
         self.assertEqual((five["used"], five["resetsAt"]), (77.0, reset))
-        self.assertEqual(line, "⇄ LimitSwitcher · a@example.com · 5h 23% left · 1w 80% left")
+        self.assertEqual(line, "⇄ LimitSwitcher · a@example.com · 5h 23% left · 1w 79% left")  # 79.6 left: rounded down
         meta = m.meta["accounts"][a.id]
         now = time.time()
         self.assertGreater(m.due(a.id, meta, True, now) - now, 1700)  # while live, the API only every 30 min
@@ -373,6 +373,21 @@ class LiveTests(unittest.TestCase):
         m.statusline({"five_hour": {"used_percentage": 5, "resets_at": reset}})
         five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
         self.assertEqual(five["used"], 77.0)
+
+    def test_a_lagging_api_answer_never_undoes_live_numbers(self):
+        m = self.manager()
+        m.sync_live()
+        m.refresh(force=True)
+        m.live_since["claude"] = 0
+        m.statusline({"five_hour": {"used_percentage": 77, "resets_at": time.time() + 3600}})
+        self.api.claude_usage["at-a"] = claude_usage(70, 20)  # the usage API, a little behind
+        m.refresh(force=True)
+        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 77.0)
+        self.api.claude_usage["at-a"] = claude_usage(80, 20)  # and once it's ahead, it counts
+        m.refresh(force=True)
+        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 80.0)
 
     def test_stale_status_line_numbers_never_undo_newer_ones(self):
         """After a limit, Claude Code keeps sending its last numbers with every reply: they must not

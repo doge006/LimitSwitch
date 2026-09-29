@@ -10,6 +10,7 @@ menu are rebuilt only when what they show actually changes.
 """
 import argparse
 import json
+import math
 import logging
 from pathlib import Path
 import sys
@@ -35,7 +36,8 @@ _local = build_opener(ProxyHandler({}))  # loopback only; never through a system
 
 # ---------- pure presentation helpers (unit-tested) ----------
 def remaining(used):
-    return max(0, min(100, 100 - used))
+    """What's left, rounded down: never more room than there is (93.4% used shows 6% left)."""
+    return max(0, min(100, math.floor(100 - used + 1e-6)))
 
 
 def headroom(account):

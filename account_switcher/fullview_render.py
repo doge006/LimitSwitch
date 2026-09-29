@@ -8,6 +8,7 @@ instead of drawing the whole window at 2x. Everything is laid out in logical pix
 """
 from functools import lru_cache
 import json
+import math
 import sys
 import time
 
@@ -46,7 +47,8 @@ SCROLL_STEP = 64
 
 # ---------- small helpers ----------
 def remaining(used):
-    return max(0, min(100, 100 - used))
+    """What's left, rounded down: never more room than there is (93.4% used shows 6% left)."""
+    return max(0, min(100, math.floor(100 - used + 1e-6)))
 
 
 def level(left):
