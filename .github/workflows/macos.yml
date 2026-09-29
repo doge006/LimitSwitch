@@ -53,7 +53,22 @@ jobs:
           sleep 8
           python3 - <<'PY'
           import json, os, subprocess, time
-          settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+          # Off by default: turn it on as the Settings switch does (the app installs it at once).
+          import urllib.request
+          url = open(os.path.expanduser("~/Library/Application Support/AccountSwitcher/running.url")).read().strip()
+          base, token = url.split("/#token=")
+          request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
+                                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+          urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10).read()
+          settings = {}
+          for _ in range(40):
+              try:
+                  settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+              except (OSError, ValueError):
+                  settings = {}
+              if "statusLine" in settings:
+                  break
+              time.sleep(0.25)
           command = settings["statusLine"]["command"]
           print("command:", command)
           sample = json.dumps({"session_id": "ci", "rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": time.time() + 3600}}})
@@ -126,7 +141,22 @@ jobs:
           sleep 8
           python3 - <<'PY'
           import json, os, subprocess, time
-          settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+          # Off by default: turn it on as the Settings switch does (the app installs it at once).
+          import urllib.request
+          url = open(os.path.expanduser("~/Library/Application Support/AccountSwitcher/running.url")).read().strip()
+          base, token = url.split("/#token=")
+          request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
+                                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+          urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10).read()
+          settings = {}
+          for _ in range(40):
+              try:
+                  settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+              except (OSError, ValueError):
+                  settings = {}
+              if "statusLine" in settings:
+                  break
+              time.sleep(0.25)
           command = settings["statusLine"]["command"]
           print("command:", command)
           assert "/Applications/LimitSwitcher.app/" in command, "not the bundle's Python"
