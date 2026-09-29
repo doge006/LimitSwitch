@@ -62,9 +62,11 @@ jobs:
           $before = (Get-Content $url -Raw).Trim()
           # Claude Code runs the status line script and the Auto resume hook with the app's own Python;
           # a waiting hook holds the runtime's files. The installer ends those, and no other Python.
-          $hook = Start-Process -PassThru -WindowStyle Hidden -FilePath "$dir\runtime\python.exe" -ArgumentList '-c', 'import time; time.sleep(600)'
-          $other = Start-Process -PassThru -WindowStyle Hidden -FilePath (Get-Command python).Source -ArgumentList '-c', 'import time; time.sleep(600)'
-          Start-Sleep -Seconds 1
+          # (one argument string: Start-Process joins a list without quoting it)
+          $hook = Start-Process -PassThru -WindowStyle Hidden -FilePath "$dir\runtime\python.exe" -ArgumentList '-c "import time; time.sleep(600)"'
+          $other = Start-Process -PassThru -WindowStyle Hidden -FilePath (Get-Command python).Source -ArgumentList '-c "import time; time.sleep(600)"'
+          Start-Sleep -Seconds 2
+          if (-not (Get-Process -Id $hook.Id -ErrorAction SilentlyContinue) -or -not (Get-Process -Id $other.Id -ErrorAction SilentlyContinue)) { throw 'the test Pythons did not start' }
           $setup = Start-Process -PassThru -FilePath build\LimitSwitcher-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\update-install.log`""
           $setup.WaitForExit()
           if ($setup.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\update-install.log" -Tail 40; throw "the update failed (exit code $($setup.ExitCode))" }
