@@ -11,7 +11,7 @@ const $ = id => document.getElementById(id);
 const PROVIDERS = [['claude', 'Claude'], ['codex', 'Codex']];
 let state = null, pending = null, armed = null, armedTimer = null;
 
-const remaining = used => Math.max(0, Math.min(100, 100 - used));
+const remaining = used => Math.max(0, Math.min(100, Math.floor(100 - used + 1e-6)));  // rounded down
 const level = left => left > 30 ? 'good' : left > 10 ? 'warn' : 'bad';
 function until(ts) {
   const m = Math.max(0, Math.round((ts * 1000 - Date.now()) / 60000));

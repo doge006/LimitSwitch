@@ -501,6 +501,21 @@ class AfkTests(unittest.TestCase):
         self.assertFalse(account.eligible)
         self.assertEqual(max(w["used"] for w in account.windows()), 100.0)
 
+    def test_continues_on_an_account_whose_limit_reset_while_the_api_is_rate_limited(self):
+        # a ran out while b was already used up; b's window has reset since, but the usage API
+        # answers 429 now: the reset alone says b has room again.
+        self.gateway.set_afk(True)
+        m = self.manager
+        b = next(a.id for a in m.accounts() if a.email == "b@example.com")
+        now = time.time()
+        with m.lock:
+            m.meta["accounts"][b].update(
+                usage=[{"key": "five_hour", "label": "5-hour", "used": 100.0, "resetsAt": now - 60, "scope": "account"},
+                       {"key": "weekly", "label": "Weekly", "used": 40.0, "resetsAt": now + 86400, "scope": "account"}],
+                updatedAt=now - 3600, backoffUntil=now + 600, status="Rate limited by Claude · retrying at 18:37")
+        self.assertEqual(m.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.claude.read_live().email, "b@example.com")
+
     def test_waits_for_a_reset_when_no_account_has_room(self):
         self.gateway.set_afk(True)
         self.api.claude_usage["at-b"] = claude_usage(100, 10, reset_in=1800)

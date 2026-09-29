@@ -23,6 +23,7 @@ How it works
 """
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -278,6 +279,7 @@ class LiveAccounts:
             if updated is not None:
                 self.vault.write_secret(account_id, updated)
                 secret = updated
+            windows = self.keep_live(account_id, windows)
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
@@ -510,6 +512,25 @@ class LiveAccounts:
         self.swap(best.id, reason="auto")
         return best.id
 
+    def keep_live(self, account_id, windows):
+        """The API's windows, except where Claude Code's status line reported more use of the same
+        window since: usage never goes down within a window, and the usage API can lag behind the
+        live numbers, which would otherwise step back for a while."""
+        with self.lock:
+            entry = self.meta["accounts"].get(account_id) or {}
+            if time.time() - entry.get("liveAt", 0) > LIVE_FRESH:
+                return windows
+            ours = {w["key"]: w for w in entry.get("usage") or []}
+        merged = []
+        for window in windows:
+            live = ours.get(window.get("key"))
+            if live and window.get("resetsAt") is not None and live.get("resetsAt") is not None \
+                    and abs(live["resetsAt"] - window["resetsAt"]) < 120 \
+                    and window.get("used", 0) < live.get("used", 0) < 100:
+                window = dict(window, used=live["used"])
+            merged.append(window)
+        return merged
+
     def observe(self, account_id, windows, add=False):
         """Live usage the service reported with a response: [(window minutes, used %, reset)].
         add: also windows the account doesn't show yet (the source is certain of them)."""
@@ -592,7 +613,7 @@ class LiveAccounts:
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"
-                parts.append(f"{label} {max(0, 100 - window['used']):.0f}% left")
+                parts.append(f"{label} {max(0, math.floor(100 - window['used'] + 1e-6))}% left")  # rounded down
         return " · ".join(parts)
 
     def shown_name(self, account_id):
@@ -695,7 +716,7 @@ class LiveAccounts:
         tried = set()
         for _ in range(2):  # the best, and if that turns out used up, the next best
             candidates = [a for a in self.accounts() if a.provider == name and a.id != current and a.id not in tried
-                          and a.eligible and not a.status]
+                          and a.eligible and (not a.status or a.status.startswith("Rate limited"))]
             if not candidates:
                 return None
             best = max(candidates, key=lambda a: a.headroom)
@@ -704,11 +725,20 @@ class LiveAccounts:
             if time.time() - entry.get("updatedAt", 0.0) > 300:
                 self.refresh(only=best.id)
                 entry = self.meta["accounts"].get(best.id) or {}
-            fresh = time.time() - entry.get("updatedAt", 0.0) <= 300
+            fresh = time.time() - entry.get("updatedAt", 0.0) <= 300 or self.reset_since(entry)
             account = next((a for a in self.accounts() if a.id == best.id), None)
             if fresh and account is not None and account.eligible and account.headroom > 0:
                 return account
         return None
+
+    @staticmethod
+    def reset_since(entry):
+        """The account was used up and that window has reset since its numbers were read: it has
+        room again, also when the API can't be asked right now (a 429 after a limit is common)."""
+        now = time.time()
+        windows = [w for w in entry.get("usage") or [] if w.get("scope", "account") == "account"]
+        spent = [w for w in windows if w.get("used", 0) >= 100]
+        return bool(spent) and all(w.get("resetsAt") and w["resetsAt"] <= now for w in spent)
 
     def auto_swap(self):
         """Move off an account that has used up a limit, to the one with the most headroom."""
