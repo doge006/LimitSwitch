@@ -602,6 +602,33 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)  # the old refresh token is spent: the new one must not be lost
         self.assertEqual(saved[0]["credentials"]["claudeAiOauth"]["accessToken"], "at-rt-r+")
 
+    def test_cloudflare_blocking_the_client_is_not_an_expired_login(self):
+        import io
+        from unittest import mock
+        from urllib.error import HTTPError
+        from account_switcher import providers
+        body = b'{"title":"Error 1010: Access denied","error_code":1010,"error_name":"browser_signature_banned"}'
+        blocked = HTTPError("https://platform.claude.com/v1/oauth/token", 403, "Forbidden", {}, io.BytesIO(body))
+        with mock.patch.object(providers, "urlopen", side_effect=blocked):
+            with self.assertRaises(providers.ProviderError) as caught:
+                providers._http("POST", "https://platform.claude.com/v1/oauth/token", {}, {})
+        self.assertTrue(caught.exception.transient)
+        self.assertFalse(caught.exception.relogin)
+
+    def test_the_token_request_is_sent_with_claude_codes_user_agent(self):
+        from unittest import mock
+        from account_switcher import providers
+        sent = []
+
+        def fake(method, url, headers, body=None, attempt=0):
+            sent.append(headers)
+            return 200, {"access_token": "at-new", "refresh_token": "rt-new", "expires_in": 3600}
+        secret = {"credentials": {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r"}},
+                  "oauthAccount": {"accountUuid": "u", "emailAddress": "x@example.com"}}
+        with mock.patch.object(providers, "_http", fake):
+            providers.Claude.refresh(self.providers["claude"], secret)
+        self.assertTrue(sent[0]["User-Agent"].startswith("claude-cli/"))
+
     def test_accounts_not_in_use_are_checked_every_few_minutes_even_after_rate_limits(self):
         from account_switcher.live import IDLE_PACE_CAP, PROVIDER_IDLE
         m = self.manager()
