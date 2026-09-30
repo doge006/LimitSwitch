@@ -264,7 +264,10 @@ class LiveAccounts:
                 self._set(account_id, attemptedAt=time.time())
                 try:
                     # Never rotate the tokens in the official login file: the client owns those.
-                    windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live))
+                    # A renewed login is saved at once: the old refresh token is spent, and the usage
+                    # call after it may still fail.
+                    windows, plan, updated = provider.fetch(secret, allow_refresh=not (is_active or is_live),
+                                                            save=lambda renewed, i=account_id: self.vault.write_secret(i, renewed))
                 except ProviderError as error:
                     if error.rate_limited:
                         # Wait what the provider asks (Retry-After), else back off exponentially;

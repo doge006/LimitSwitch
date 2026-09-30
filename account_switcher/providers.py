@@ -325,13 +325,16 @@ class Claude:
             atomic_write(self.credentials_file, json.dumps(credentials, indent=2).encode(), private=True)
         atomic_write(self.config_file, json.dumps(config, indent=2).encode())
 
-    def fetch(self, secret, allow_refresh):
-        """Return (windows, plan, updated_secret_or_None)."""
+    def fetch(self, secret, allow_refresh, save=None):
+        """Return (windows, plan, updated_secret_or_None). `save` gets a renewed login the moment
+        it exists: the old refresh token is spent by then, so a usage call failing afterwards
+        (Anthropic throttles it hard) must not lose the new one."""
         updated = None
         oauth = secret["credentials"]["claudeAiOauth"]
         expires = (oauth.get("expiresAt") or 0) / 1000
         if allow_refresh and expires and expires - time.time() < 300:
             secret = updated = self.refresh(secret, "usage check")
+            save and save(secret)
             oauth = secret["credentials"]["claudeAiOauth"]
         try:
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
@@ -344,6 +347,7 @@ class Claude:
             if not ((error.relogin or (error.rate_limited and expired)) and allow_refresh and updated is None):
                 raise
             secret = updated = self.refresh(secret, "usage check" if error.relogin else "usage check, expired token")
+            save and save(secret)
             oauth = secret["credentials"]["claudeAiOauth"]
             _, body = _http("GET", self.USAGE_URL, {"Authorization": "Bearer " + oauth["accessToken"],
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
@@ -481,12 +485,13 @@ class Codex:
     def write_live(self, secret):
         atomic_write(self.auth_file, json.dumps(secret["auth"], indent=2).encode(), private=True)
 
-    def fetch(self, secret, allow_refresh):
+    def fetch(self, secret, allow_refresh, save=None):
         updated = None
         tokens = secret["auth"]["tokens"]
         last = _iso_ts(secret["auth"].get("last_refresh"))
         if allow_refresh and (last is None or time.time() - last > 8 * 86400):
             secret = updated = self.refresh(secret, "usage check")
+            save and save(secret)
             tokens = secret["auth"]["tokens"]
         try:
             body = self._usage(tokens)
@@ -494,6 +499,7 @@ class Codex:
             if not (error.relogin and allow_refresh and updated is None):
                 raise
             secret = updated = self.refresh(secret, "usage check")
+            save and save(secret)
             tokens = secret["auth"]["tokens"]
             body = self._usage(tokens)
         claims = _jwt_payload(tokens.get("id_token")).get("https://api.openai.com/auth") or {}

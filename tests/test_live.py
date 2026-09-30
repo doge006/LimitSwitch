@@ -503,7 +503,7 @@ class LiveTests(unittest.TestCase):
         m.refresh(force=True)
         a = self.by_email(m, "a@example.com")
         before = a.windows()
-        self.providers["claude"].fetch = lambda secret, allow_refresh: (_ for _ in ()).throw(
+        self.providers["claude"].fetch = lambda secret, allow_refresh, **_: (_ for _ in ()).throw(
             ProviderError("Usage service unavailable (503)", transient=True))
         for attempt in range(3):
             m.meta["accounts"][a.id]["backoffUntil"] = 0.0
@@ -589,6 +589,19 @@ class LiveTests(unittest.TestCase):
         with self.assertRaises(ProviderError):  # a token that is still valid: a real rate limit, no renewal
             claude.fetch(fresh, allow_refresh=True)
 
+    def test_a_renewed_login_is_saved_even_when_the_usage_call_after_it_fails(self):
+        from account_switcher.providers import ProviderError
+        claude = self.providers["claude"]
+        self.api.uuid_for["rt-r"] = "uuid-r"
+        self.api.limited.add("at-rt-r+")  # the usage API throttles the new token too
+        secret = {"credentials": {"claudeAiOauth": {"accessToken": "at-r", "refreshToken": "rt-r", "expiresAt": 1}},
+                  "oauthAccount": {"accountUuid": "uuid-r", "emailAddress": "r@example.com"}}
+        saved = []
+        with self.assertRaises(ProviderError):
+            claude.fetch(secret, allow_refresh=True, save=saved.append)
+        self.assertEqual(len(saved), 1)  # the old refresh token is spent: the new one must not be lost
+        self.assertEqual(saved[0]["credentials"]["claudeAiOauth"]["accessToken"], "at-rt-r+")
+
     def test_accounts_not_in_use_are_checked_every_few_minutes_even_after_rate_limits(self):
         from account_switcher.live import IDLE_PACE_CAP, PROVIDER_IDLE
         m = self.manager()
@@ -605,7 +618,7 @@ class LiveTests(unittest.TestCase):
         m = self.manager()
         m.sync_live()
         calls = []
-        def limited(secret, allow_refresh):
+        def limited(secret, allow_refresh, **_):
             calls.append(1)
             raise ProviderError("Rate limited by the usage API; retrying automatically", retry_after=60, rate_limited=True)
         self.providers["claude"].fetch = limited
@@ -630,7 +643,7 @@ class LiveTests(unittest.TestCase):
         m.sync_live()
         real = self.providers["claude"].fetch
         calls = []
-        def offline(secret, allow_refresh):
+        def offline(secret, allow_refresh, **_):
             calls.append(1)
             raise ProviderError("offline", transient=True)
         self.providers["claude"].fetch = offline
@@ -652,7 +665,7 @@ class LiveTests(unittest.TestCase):
         m = self.manager()
         m.sync_live()
         real = self.providers["claude"].fetch
-        self.providers["claude"].fetch = lambda secret, allow_refresh: (_ for _ in ()).throw(
+        self.providers["claude"].fetch = lambda secret, allow_refresh, **_: (_ for _ in ()).throw(
             ProviderError("Rate limited", rate_limited=True))
         m.refresh(force=True)
         a = self.by_email(m, "a@example.com")
