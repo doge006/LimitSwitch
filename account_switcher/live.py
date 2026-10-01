@@ -64,6 +64,7 @@ SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
+WAITING_LOOK = 20           # while the client renews the login in use: how often its login file is looked at
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
@@ -90,6 +91,7 @@ class LiveAccounts:
         for entry in (meta.get("accounts") or {}).values():  # a hiccup's back-off doesn't outlive the app
             if entry.get("backoffKind") == "transient":
                 entry.update(backoffUntil=0.0, backoffFailures=0, backoffKind=None)
+            entry.pop("waitingMark", None)  # the first check after a restart asks again
             entry["pace"] = 1.0  # a slower pace from rate limits starts over (a real Retry-After still holds)
         self.meta = {**meta, "accounts": meta.get("accounts", {}), "autoSwap": meta.get("autoSwap", True),
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
@@ -190,6 +192,9 @@ class LiveAccounts:
             logging.getLogger("account_switcher").warning(
                 "%s login of %s saved from %s", provider.title(), login.email or login.identity, source)
             entry.pop("deadLogin", None)
+            entry.pop("waitingMark", None)
+            if entry.get("status", "").startswith("Waiting for"):
+                entry.update(status="", attemptedAt=0.0)  # the client renewed it: check it now
         self.vault.write_secret(account_id, login.secret)
         if entry.get("status", "").startswith("Login expired"):
             entry["status"] = ""
@@ -204,6 +209,8 @@ class LiveAccounts:
         pace = meta.get("pace", 1.0)
         if not last:
             return held                     # never fetched: now
+        if meta.get("waitingMark"):
+            return last + WAITING_LOOK  # only the login file is looked at (refresh skips the API call)
         if meta.get("status") or not updated:
             return max(held, last + max(ACTIVE_INTERVAL * pace, 300))   # failing: retry gently, never in a loop
         if is_active:
@@ -258,6 +265,8 @@ class LiveAccounts:
                     continue
                 if meta.get("deadLogin") and meta["deadLogin"] == login_mark(secret) and not force:
                     continue  # refused before, and nothing has replaced it: only a new sign-in (or Refresh) tries again
+                if meta.get("waitingMark") and meta["waitingMark"] == login_mark(secret) and not force:
+                    continue  # the client hasn't renewed it yet: nothing to ask the API
                 if fetched:
                     time.sleep(self.spacing)
                 fetched = True
@@ -296,7 +305,8 @@ class LiveAccounts:
                         message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
                             clock_text(time.time() + wait, self.meta.get("clock24"))
                     if error.relogin and (is_active or is_live):
-                        message = f"Waiting for {meta['provider'].title()} to refresh its login"
+                        message = "Waiting for Claude Code" if meta["provider"] == "claude" else f"Waiting for {meta['provider'].title()}"  # short: it must fit a card's hint line
+                        self._set(account_id, waitingMark=login_mark(secret))
                     elif error.relogin:
                         self._set(account_id, deadLogin=login_mark(secret))
                     self._set(account_id, status=message)
@@ -305,7 +315,7 @@ class LiveAccounts:
                     self._set(account_id, status=f"Usage unavailable ({type(error).__name__})")
                     continue
                 eased = {"pace": max(1.0, meta.get("pace", 1.0) * 0.5)} if meta.get("pace", 1.0) > 1 else {}
-                self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, **eased)
+                self._set(account_id, backoffUntil=0.0, backoffFailures=0, backoffKind=None, waitingMark=None, **eased)
                 if updated is not None:
                     self.vault.write_secret(account_id, updated)
                     secret = updated
