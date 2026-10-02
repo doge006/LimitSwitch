@@ -68,6 +68,7 @@ SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is r
 MAX_BACKOFF = 3600
 WAITING_LOOK = 20           # while the client renews the login in use: how often its login file is looked at
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
+LARGE_CONTEXT = 100_000  # tokens: a session this big costs a lot to load on an account that hasn't cached it
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
@@ -698,21 +699,28 @@ class LiveAccounts:
         return max(candidates, key=lambda a: a.headroom) if candidates else None
 
     # ---------- AFK (Claude Code) ----------
-    def claude_limit(self, session):
+    def claude_limit(self, session, tokens=None):
         """Called by the StopFailure hook when a Claude turn ended on a usage limit.
         Auto swap moves to another account now; AFK also continues the session (or waits
         for a reset when no account has room). One report at a time: hooks that ask together
         (several waits ending at once) must not all get "continue"."""
         with self.afk_lock:
-            answer = self._claude_limit(session)
+            answer = self._claude_limit(session, tokens)
         logging.getLogger("account_switcher").warning("auto resume: a limit in session %s -> %s",
                                                       (session or "?")[:8], answer.get("action"))
         return answer
 
-    def _claude_limit(self, session):
+    def _claude_limit(self, session, tokens=None):
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
         if not (afk or auto):
             return {"action": "stop"}
+        if afk and self.meta.get("afkSkipLarge", True) and isinstance(tokens, int) and tokens >= LARGE_CONTEXT:
+            # Continuing would load the whole session uncached on the new account (or after the
+            # wait): leave that to the user. Auto swap still moves the account.
+            afk = False
+            self.notify("log", f"Auto resume skipped: this session is large (~{tokens // 1000}k tokens)")
+            if not auto:
+                return {"action": "stop"}
         current = self.active.get("claude")
         if current is None:
             return {"action": "stop"}

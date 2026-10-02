@@ -455,6 +455,20 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(answer["action"], "continue")
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # Claude Code reloads this file
 
+    def test_large_session_switches_but_does_not_continue(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1", 250_000), {"action": "stop"})
+        self.assertEqual(self.claude.read_live().email, "b@example.com")  # Auto swap still moves
+
+    def test_unknown_size_still_continues(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1", None)["action"], "continue")
+
+    def test_large_session_continues_when_the_setting_is_off(self):
+        self.gateway.set_afk(True)
+        self.manager.meta["afkSkipLarge"] = False
+        self.assertEqual(self.manager.claude_limit("s1", 250_000)["action"], "continue")
+
     def test_one_limit_continues_once(self):
         self.gateway.set_afk(True)
         self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")

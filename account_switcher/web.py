@@ -31,6 +31,7 @@ class Controller:
         self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
         self.taskbar_available = False  # set by the Windows tray
         self.name_mode = False   # show names instead of emails (screen sharing)
+        self.afk_skip_large = True
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
@@ -136,6 +137,7 @@ class Controller:
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
                 "statusline": self.statusline_on(),
+                "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -145,7 +147,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline"}:
+        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -160,6 +162,15 @@ class Controller:
                 if getattr(self.gateway, "integrations", None):
                     self.gateway.integrations.apply_afk()
             self.statusline_shown = on
+            self.notify("changed", None)
+            return
+        if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["afkSkipLarge"] = on
+                    self.gateway.manager.save()
+            self.afk_skip_large = on
             self.notify("changed", None)
             return
         if action == "clock":  # 24-hour clock in the full view; instant
@@ -323,7 +334,8 @@ class Controller:
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
         if not self.live or body.get("provider") != "claude":
             return {"action": "stop"}
-        answer = self.gateway.manager.claude_limit(str(body.get("session") or "")[:100])
+        answer = self.gateway.manager.claude_limit(
+            str(body.get("session") or "")[:100], body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
         self.notify("changed", None)
         return answer
 

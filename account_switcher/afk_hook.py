@@ -57,6 +57,31 @@ def wait(seconds, running):
     return running is None or running()
 
 
+TAIL = 512 * 1024   # the end of the transcript is enough to find the last reply's usage
+
+
+def context_tokens(path):
+    """The size of the session's context: what the last reply read (input + cached). A new account
+    has none of it cached, so the next turn pays for all of it. None when it can't be told."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - TAIL))
+            lines = handle.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(lines):
+            try:
+                usage = json.loads(line)["message"]["usage"]
+                total = sum(int(usage.get(key) or 0) for key in
+                            ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+            if total > 0:  # the limit's own error reply reports none
+                return total
+    except OSError:
+        pass
+    return None
+
+
 def main(argv):
     if len(argv) < 2:
         return 0
@@ -69,13 +94,15 @@ def main(argv):
     opener = build_opener(ProxyHandler({}))  # the app is on loopback: never via a proxy
     deadline = time.time() + LIMIT
     _, running = owner()
+    tokens = context_tokens(event["transcript_path"]) if isinstance(event.get("transcript_path"), str) else None
     while time.time() < deadline:
         if running is not None and not running():
             return 0  # Claude Code was closed: nothing to continue
         try:
             with open(argv[1], encoding="utf-8") as handle:
                 state = json.load(handle)
-            body = json.dumps({"provider": "claude", "session": str(event.get("session_id") or "")}).encode()
+            body = json.dumps({"provider": "claude", "session": str(event.get("session_id") or ""),
+                               "contextTokens": tokens}).encode()
             request = Request(state["url"], data=body, method="POST",
                               headers={"Authorization": "Bearer " + state["token"], "Content-Type": "application/json"})
             with opener.open(request, timeout=180) as response:

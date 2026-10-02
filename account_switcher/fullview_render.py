@@ -872,6 +872,7 @@ def toggle(c, x, y, pos, hot, bg):
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
+            ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone: loading one on another account can use a lot of usage"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"),
             ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
