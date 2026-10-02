@@ -455,10 +455,47 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(answer["action"], "continue")
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # Claude Code reloads this file
 
-    def test_large_session_switches_but_does_not_continue(self):
+    def test_large_session_switches_then_asks_before_continuing(self):
         self.gateway.set_afk(True)
-        self.assertEqual(self.manager.claude_limit("s1", 250_000), {"action": "stop"})
+        self.assertEqual(self.manager.claude_limit("s1", 250_000), {"action": "wait", "seconds": 5})
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # Auto swap still moves
+        self.assertEqual([p["session"] for p in self.manager.pending_list()], ["s1"])
+        self.assertEqual(self.manager.claude_limit("s1", 250_000), {"action": "wait", "seconds": 5})  # still asking
+        self.manager.resume_decision("s1", True)
+        self.assertEqual(self.manager.claude_limit("s1", 250_000)["action"], "continue")
+        self.assertEqual(self.manager.pending_list(), [])
+
+    def test_declined_large_session_is_left_alone(self):
+        self.gateway.set_afk(True)
+        self.manager.claude_limit("s1", 250_000)
+        self.manager.resume_decision("s1", False)
+        self.assertEqual(self.manager.claude_limit("s1", 250_000), {"action": "stop"})
+        self.assertEqual(self.manager.pending_list(), [])
+
+    def test_a_question_nobody_polls_any_more_is_not_shown(self):
+        self.gateway.set_afk(True)
+        self.manager.claude_limit("s1", 250_000)
+        self.manager.pending_resumes["s1"]["seen"] -= 120  # its Claude Code was closed
+        self.assertEqual(self.manager.pending_list(), [])
+
+    def test_near_reset_waits_instead_of_switching(self):
+        self.gateway.set_afk(True)
+        self.api.claude_usage["at-a"] = claude_usage(100, 50, reset_in=600)
+        answer = self.manager.claude_limit("s1")
+        self.assertEqual(answer["action"], "wait")
+        self.assertEqual(self.claude.read_live().email, "a@example.com")  # no switch
+        self.assertEqual(self.manager.auto_swap(), [])  # nor from the background check
+
+    def test_far_reset_still_switches(self):
+        self.gateway.set_afk(True)
+        self.api.claude_usage["at-a"] = claude_usage(100, 50, reset_in=3600)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+
+    def test_near_reset_switches_when_the_setting_is_off(self):
+        self.gateway.set_afk(True)
+        self.manager.meta["waitNearReset"] = False
+        self.api.claude_usage["at-a"] = claude_usage(100, 50, reset_in=600)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
 
     def test_unknown_size_still_continues(self):
         self.gateway.set_afk(True)

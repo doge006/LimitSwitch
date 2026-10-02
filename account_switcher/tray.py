@@ -80,7 +80,8 @@ def tooltip(state):
 
 def menu_signature(state):
     """Everything the menu shows; the menu is rebuilt only when this changes."""
-    return state["autoSwap"], state["afk"], state["busy"]
+    return (state["autoSwap"], state["afk"], state["busy"],
+            tuple((p["session"], p["tokens"]) for p in state.get("pendingResumes") or []))
 
 
 # ---------- icon ----------
@@ -237,6 +238,11 @@ class Tray:
         else:
             yield pystray.MenuItem("Full view", self.open_full_view, default=True)
         yield pystray.Menu.SEPARATOR
+        for item in state.get("pendingResumes") or []:  # a large session waiting for an OK to continue
+            yield pystray.MenuItem(f"Continue large session (~{item['tokens'] // 1000}k tokens)",
+                                   self.resume(item["session"], True))
+            yield pystray.MenuItem("Don't continue it", self.resume(item["session"], False))
+            yield pystray.Menu.SEPARATOR
         yield pystray.MenuItem("Auto swap", self.toggle("autoSwap"),
                                checked=lambda _: state["autoSwap"], enabled=not state["busy"])
         yield pystray.MenuItem("Auto resume", self.toggle("afk"),
@@ -275,6 +281,9 @@ class Tray:
             prefs[key] = not prefs[key]
             self.act("preferences", prefs)
         return flip
+
+    def resume(self, session, approve):
+        return lambda: self.act("resumeSession", {"session": session, "approve": approve})
 
     def act(self, action, body):
         try:

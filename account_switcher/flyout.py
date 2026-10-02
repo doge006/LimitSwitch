@@ -797,7 +797,11 @@ class TrayMenu(Popup):
         state = self.tray.state
         rows = [{"action": "panel", "label": "Open panel", "bold": True},
                 {"action": "full", "label": "Full view"},
-                "-",
+                "-"]
+        for item in state.get("pendingResumes") or []:  # a large session waiting for an OK to continue
+            rows += [{"action": "resume:yes:" + item["session"], "label": f"Continue large session (~{item['tokens'] // 1000}k tokens)", "bold": True},
+                     {"action": "resume:no:" + item["session"], "label": "Don't continue it"}, "-"]
+        rows += [
                 {"action": "toggle:autoSwap", "label": "Auto swap", "checked": state["autoSwap"], "enabled": not state["busy"]},
                 {"action": "toggle:afk", "label": "Auto resume", "checked": state["afk"], "enabled": not state["busy"]}]
         if getattr(self.tray, "taskbar", None):
@@ -842,6 +846,10 @@ class TrayMenu(Popup):
             self.redraw()
             return
         self.close()
+        if action.startswith("resume:"):
+            _, answer, session = action.split(":", 2)
+            tray.act("resumeSession", {"session": session, "approve": answer == "yes"})
+            return
         if action == "panel":
             tray.flyout.open()
         elif action == "full":

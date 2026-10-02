@@ -116,7 +116,7 @@ def main(argv):
         if action == "wait":
             seconds = answer.get("seconds")
             seconds = seconds if isinstance(seconds, (int, float)) else 600
-            if not wait(max(30.0, min(float(seconds), deadline - time.time())), running):
+            if not wait(max(5.0, min(float(seconds), deadline - time.time())), running):
                 return 0
             continue
         return 0

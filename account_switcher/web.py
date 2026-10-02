@@ -32,6 +32,7 @@ class Controller:
         self.taskbar_available = False  # set by the Windows tray
         self.name_mode = False   # show names instead of emails (screen sharing)
         self.afk_skip_large = True
+        self.wait_near_reset = True
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
@@ -137,6 +138,8 @@ class Controller:
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
                 "statusline": self.statusline_on(),
+                "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
+                "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
@@ -147,7 +150,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge"}:
+        if action not in {"resumeSession", "waitNearReset", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -162,6 +165,20 @@ class Controller:
                 if getattr(self.gateway, "integrations", None):
                     self.gateway.integrations.apply_afk()
             self.statusline_shown = on
+            self.notify("changed", None)
+            return
+        if action == "resumeSession":  # answer to "continue this large session?"; instant
+            if self.live and isinstance(body.get("session"), str):
+                self.gateway.manager.resume_decision(body["session"], bool(body.get("approve")))
+            self.notify("changed", None)
+            return
+        if action == "waitNearReset":  # don't switch away from a 5-hour limit that resets within 15 minutes
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["waitNearReset"] = on
+                    self.gateway.manager.save()
+            self.wait_near_reset = on
             self.notify("changed", None)
             return
         if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
