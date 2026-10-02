@@ -457,24 +457,24 @@ class AfkTests(unittest.TestCase):
 
     def test_large_session_switches_then_asks_before_continuing(self):
         self.gateway.set_afk(True)
-        self.assertEqual(self.manager.claude_limit("s1", 500_000), {"action": "wait", "seconds": 5})
+        self.assertEqual(self.manager.claude_limit("s1", 600_000), {"action": "wait", "seconds": 5})
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # Auto swap still moves
         self.assertEqual([p["session"] for p in self.manager.pending_list()], ["s1"])
-        self.assertEqual(self.manager.claude_limit("s1", 500_000), {"action": "wait", "seconds": 5})  # still asking
+        self.assertEqual(self.manager.claude_limit("s1", 600_000), {"action": "wait", "seconds": 5})  # still asking
         self.manager.resume_decision("s1", True)
-        self.assertEqual(self.manager.claude_limit("s1", 500_000)["action"], "continue")
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
         self.assertEqual(self.manager.pending_list(), [])
 
     def test_declined_large_session_is_left_alone(self):
         self.gateway.set_afk(True)
-        self.manager.claude_limit("s1", 500_000)
+        self.manager.claude_limit("s1", 600_000)
         self.manager.resume_decision("s1", False)
-        self.assertEqual(self.manager.claude_limit("s1", 500_000), {"action": "stop"})
+        self.assertEqual(self.manager.claude_limit("s1", 600_000), {"action": "stop"})
         self.assertEqual(self.manager.pending_list(), [])
 
     def test_a_question_nobody_polls_any_more_is_not_shown(self):
         self.gateway.set_afk(True)
-        self.manager.claude_limit("s1", 500_000)
+        self.manager.claude_limit("s1", 600_000)
         self.manager.pending_resumes["s1"]["seen"] -= 120  # its Claude Code was closed
         self.assertEqual(self.manager.pending_list(), [])
 
@@ -504,7 +504,7 @@ class AfkTests(unittest.TestCase):
     def test_large_session_continues_when_the_setting_is_off(self):
         self.gateway.set_afk(True)
         self.manager.meta["afkSkipLarge"] = False
-        self.assertEqual(self.manager.claude_limit("s1", 500_000)["action"], "continue")
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
 
     def test_one_limit_continues_once(self):
         self.gateway.set_afk(True)

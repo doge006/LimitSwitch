@@ -70,7 +70,7 @@ WAITING_LOOK = 20           # while the client renews the login in use: how ofte
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 NEAR_RESET = 15 * 60     # seconds: a 5-hour limit that resets this soon is waited out, not swapped away from
 PENDING_TTL = 6 * 3600   # a continue nobody answered is forgotten (the hook gives up after this too)
-LARGE_CONTEXT = 350_000  # tokens (about 5% of a plan's 5-hour usage at ~10% per 700k): costly to load on an account that hasn't cached it
+LARGE_CONTEXT = 400_000  # tokens (about 6% of a plan's 5-hour usage at ~10% per 700k): costly to load on an account that hasn't cached it
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
