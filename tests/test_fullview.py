@@ -101,6 +101,15 @@ class FullViewTests(unittest.TestCase):
         self.click("set:nameMode")
         self.assertIn(("names", {"on": True}), self.controller.calls)
 
+    def test_mod_row_shows_its_whole_state(self):
+        for status in ("installed", "active", "missing", "installing"):
+            lines, _, height = vr.mod_row({"mod": {"status": status}})
+            self.assertEqual(" ".join(lines), vr.MOD_TEXT[status][0])  # nothing cut off
+            self.assertEqual(height, 42 + 16 * len(lines))
+        lines, _, _ = vr.mod_row({"mod": {"status": "error", "text": "Claude Code not found"}})
+        self.assertEqual(" ".join(lines), "Claude Code not found")
+        self.assertEqual(vr.MOD_NAME, "Claude Code Status mod")
+
     def test_settings_installs_the_claude_code_mod(self):
         self.view.set_state(state(mod={"status": "missing"}))
         self.click("settings")

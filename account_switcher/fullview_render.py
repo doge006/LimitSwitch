@@ -881,10 +881,19 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
 
 
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
-MOD_ROW_H = 58   # the Claude Code mod's line: its name and state, and its button
-
-MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "installed": ("Installed · /reload-plugins in a session", WARN),
+MOD_NAME = "Claude Code Status mod"
+MOD_TEXT_W = 190  # beside the button
+MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "installed": ("Installed · run /reload-plugins in an open session", WARN),
             "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
+
+
+def mod_row(state):
+    """(text lines, color, height) of the Claude Code mod's line in Settings: its name, its state (wrapped,
+    never cut off) and its button beside them."""
+    mod = state.get("mod") or {}
+    text, color = MOD_TEXT.get(mod.get("status") or "unknown") or (mod.get("text") or "Couldn't install", BAD)
+    lines = wrap(text, 12, MOD_TEXT_W)[:3]
+    return lines, color, 42 + 16 * len(lines)
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
@@ -901,7 +910,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
     h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
-        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (MOD_ROW_H if live_mod else 0)
+        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
     ry = y + 8
@@ -941,13 +950,13 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                 hits.append(((bx, by, bw, 26), action, "hand"))
             ry += SLOT_ROW_H
     if live_mod:  # the optional Claude Code mod: live usage from Claude Code, shown in a spot of its own
-        ry = y + h - 52 - MOD_ROW_H
+        lines, color, mod_h = mod_row(state)
+        ry = y + h - 52 - mod_h
         c.line(x + 14, ry + 2, w - 28, LINE)
-        mod = state.get("mod") or {}
-        status = mod.get("status") or "unknown"
-        text, color = MOD_TEXT.get(status) or (mod.get("text") or "Couldn't install", BAD)
-        c.text(x + 16, ry + 20, "Claude Code mod", 14, TEXT, True, anchor="lm")
-        c.text(x + 16, ry + 40, fit(text, 12, False, w - 150), 12, color, anchor="lm")
+        status = (state.get("mod") or {}).get("status") or "unknown"
+        c.text(x + 16, ry + 20, MOD_NAME, 14, TEXT, True, anchor="lm")
+        for i, line in enumerate(lines):
+            c.text(x + 16, ry + 40 + 16 * i, line, 12, color, anchor="lm")
         if status != "installing":
             label = "Reinstall" if status in ("active", "installed") else "Install"
             primary = status not in ("active", "installed")

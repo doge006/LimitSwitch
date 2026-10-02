@@ -609,7 +609,9 @@ class AfkTests(unittest.TestCase):
             with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
                     mock.patch.object(sys, "stdout", out):
                 self.assertEqual(statusline.main(["statusline", str(state)]), 0)
-            self.assertIn("a@example.com · 5h 60% left", out.getvalue())
+            import re
+            self.assertIn("a@example.com · 5h 60% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # coloured
+            self.assertIn("\x1b[94m5h\x1b[0m \x1b[92m60% left\x1b[0m", out.getvalue())  # 5h blue, plenty left green
             five = next(w for w in self.manager.accounts() if w.email == "a@example.com").windows()[0]
             self.assertEqual(five["used"], 40.0)
             state.write_text(json.dumps({"url": server.hook_url, "token": "wrong", "statusline": None}))
@@ -837,6 +839,35 @@ if __name__ == "__main__":
 
 
 class StatusLineMarkerTests(unittest.TestCase):
+    def test_the_line_is_coloured_by_how_much_is_left(self):
+        from account_switcher import statusline
+        from account_switcher.live import StatusLine, level_color
+        self.assertEqual([level_color(v) for v in (100, 31, 30, 11, 10, 0)], ["good", "good", "warn", "warn", "bad", "bad"])
+        line = StatusLine([[("⇄", "icon"), (" ", None), ("LimitSwitcher", "dim")], [("a@x.com", None)],
+                           [("5h", "label"), (" ", None), ("12% left", "warn")]])
+        self.assertEqual(str(line), "⇄ LimitSwitcher · a@x.com · 5h 12% left")  # plain text stays plain
+        painted = statusline.paint(line.parts)
+        self.assertIn("\x1b[93m⇄\x1b[0m", painted)         # the icon, yellow
+        self.assertIn("\x1b[90mLimitSwitcher\x1b[0m", painted)  # grey
+        self.assertIn("\x1b[94m5h\x1b[0m", painted)         # the label, blue
+        self.assertIn("\x1b[93m12% left\x1b[0m", painted)   # a little left: yellow
+        self.assertIn("a@x.com", painted)
+        painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
+        self.assertEqual(painted, "ctx 900k · \x1b[91m8% left\x1b[0m")
+
+    def test_the_last_line_stands_in_while_the_app_is_busy(self):
+        from account_switcher import statusline
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = str(Path(tmp) / "statusline-cache.json")
+            state = {"url": "http://127.0.0.1:9/api/statusline", "token": "t"}
+            self.assertIsNone(statusline.report(state, {}, cache)[0])  # nothing yet, and nobody answering
+            statusline.remember(cache, "the line")
+            self.assertEqual(statusline.report(state, {}, cache)[0], "the line")  # a blank would blink
+            old = json.loads(Path(cache).read_text())
+            old["at"] -= statusline.CACHE_FOR + 5
+            Path(cache).write_text(json.dumps(old))
+            self.assertIsNone(statusline.report(state, {}, cache)[0])  # not for long
+
     def test_context_part(self):
         from account_switcher import statusline
         window = {"total_input_tokens": 183400, "remaining_percentage": 82.4}

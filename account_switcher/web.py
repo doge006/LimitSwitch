@@ -512,7 +512,8 @@ def make_server(controller, port=0):
                     size = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 8192 else {}
                     line = controller.statusline(body if isinstance(body, dict) else {})
-                    self.respond(200, {"line": line, "rate_limits": controller.statusline_limits()})
+                    self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
+                                       "rate_limits": controller.statusline_limits()})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return
