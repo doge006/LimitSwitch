@@ -101,6 +101,12 @@ class FullViewTests(unittest.TestCase):
         self.click("set:nameMode")
         self.assertIn(("names", {"on": True}), self.controller.calls)
 
+    def test_settings_installs_the_claude_code_mod(self):
+        self.view.set_state(state(mod={"status": "missing"}))
+        self.click("settings")
+        self.click("mod:install")
+        self.assertIn(("installMod", {}), self.controller.calls)
+
     def test_remove_asks_first(self):
         self.view.mouse_move(700, 200)  # over the second Claude card: its Remove button fades in
         self.view.frame()

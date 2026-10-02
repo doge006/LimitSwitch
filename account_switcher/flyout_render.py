@@ -708,6 +708,8 @@ def paint(layout, width, height, scale):
                 d.rectangle(box, fill=fill)
         elif kind == "ellipse":
             _, x1, y1, x2, y2, fill = op
+            if x2 < x1 or y2 < y1:
+                continue
             d.ellipse((P(M + x1), P(M + y1), P(M + x2), P(M + y2)), fill=fill)
         else:
             _, cx, cy, r, fill = op
@@ -956,9 +958,13 @@ def paint_clear(layout, width, height, scale):
             continue
         if kind == "rect":
             _, x, y, w, h, r, _ = op
+            if w <= 0 or h <= 0:
+                continue  # an animated bar at (or eased just past) zero size: nothing to draw
             box = (x, y, x + w, y + h)
         elif kind == "ellipse":
             _, x1, y1, x2, y2, _ = op
+            if x2 < x1 or y2 < y1:
+                continue
             box = (x1, y1, x2, y2)
         else:  # clock
             _, cx, cy, r, _ = op
@@ -970,6 +976,8 @@ def paint_clear(layout, width, height, scale):
         P = lambda v, o: v * big - o * SS
         if kind == "rect":
             coords = (P(x, left), P(y, top), P(x + w, left) - 1, P(y + h, top) - 1)
+            if coords[2] < coords[0] or coords[3] < coords[1]:
+                continue  # smaller than a pixel once scaled
             d.rounded_rectangle(coords, r * big, fill=255) if r else d.rectangle(coords, fill=255)
         elif kind == "ellipse":
             d.ellipse((P(x1, left), P(y1, top), P(x2, left), P(y2, top)), fill=255)

@@ -69,6 +69,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `account_switcher/providers.py`: Claude Code / Codex login files and usage APIs.
 - `account_switcher/codex_proxy.py` + `codex_config.py`: the Codex router and the config lines that point Codex at it.
 - `account_switcher/claude_hooks.py`, `afk_hook.py`, `statusline.py`: the Claude Code hook (Auto resume) and status line.
+- `mods/limit-status` + `.claude-plugin/marketplace.json` + `account_switcher/mod.py`: the optional Claude Code mod (live usage and its own status line spot), and the app's install/status of it.
 - `account_switcher/integrations.py`: sets all of that up while the app runs and undoes it on quit.
 - `account_switcher/web.py`: the controller and the local API (status line, hook, the macOS panel, a second launch).
 - `account_switcher/core.py` + `demo.py`: the account model and routing; sample accounts for `--demo`.

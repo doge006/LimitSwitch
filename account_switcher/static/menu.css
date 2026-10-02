@@ -74,6 +74,10 @@ header { display: flex; align-items: center; gap: 9px; padding: 13px 12px 8px 14
 .good-text { color: var(--good); } .warn-text { color: var(--warn); } .bad-text { color: var(--bad); }
 .loading { font-size: 11px; color: var(--faint); margin-top: 6px; }
 .empty { color: var(--muted); padding: 18px 10px; text-align: center; }
+.ask { padding: 10px 12px; margin: 6px 8px; border-radius: 10px; background: var(--footer); border: 1px solid var(--border);
+  color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.ask b { flex: 1 0 100%; color: var(--text); }
+.ask .pill { margin-left: 0; }
 .empty b { display: block; color: var(--text); margin-bottom: 4px; }
 
 footer { display: flex; align-items: center; gap: 18px; padding: 11px 12px 11px 16px; background: var(--footer);

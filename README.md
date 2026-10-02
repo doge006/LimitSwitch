@@ -152,7 +152,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
     - *Compaction checkpoints* (the summary Codex keeps instead of old history): the thread stays on the checkpoint's account while that account has quota. Once it's used up, the thread moves on without that older summary; the recent conversation is kept.
 - **Auto resume:** while it's on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
   - The app adds a `StopFailure` hook to `~/.claude/settings.json` while Auto swap or Auto resume is on. Only its own entry is added, and it's removed when both are off.
-  - While Auto resume is on, it also turns off Claude Code's own "continuing automatically at …" wait (`autoContinueAtUsageLimit`): LimitSwitcher already continues the session, and Claude Code's wait would otherwise stay on screen and continue it a second time at the reset. Your own setting is put back when Auto resume is off or the app quits.
+  - While Auto resume is on, it also turns Claude Code's own wait (`autoContinueAtUsageLimit`) **on**. With it off, a usage limit opens a "What do you want to do?" dialog that holds the session until you answer it, and the app's continue waits behind it. With it on there is only a one-line wait, which Claude Code cancels by itself when the account is switched or a new turn starts. The hook also skips its continue if the session has already gone on by itself while it waited. Your own setting is put back when Auto resume is off or the app quits.
   - When the hook fires, the app switches to an account with room (Auto swap) and Claude Code is told to continue where it left off.
   - If no account has room, it waits for the earliest reset (up to 6 hours) and then continues.
   - Codex needs no hook: its requests are retried on the next account automatically.
@@ -193,12 +193,18 @@ In the full view, the gear opens Settings:
 - **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
 - **Check for updates / Update to …**
 
+## Claude Code mod (optional)
+
+Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The **limit-status** mod in `mods/limit-status` gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, and shows the app's status line in a spot of its own, so your own status line is never touched or wrapped. It works wherever mods run (the terminal, the Desktop app's Code tab, and the VS Code extension for the usage; only the terminal and Desktop draw the line).
+
+Install it from **Settings → Claude Code mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the mod where the app's local address file is. The row then shows **Active** while a session is reporting, **Installed** until one is, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below.
+
 ## Claude Code status line
 
 LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
 
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
-- **Turned on, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use and what's left of its limits.
+- **Turned on, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
 - **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
 - **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.

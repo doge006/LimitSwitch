@@ -31,6 +31,12 @@ class Controller:
         self.taskbar_displays = []     # [{id, label}], filled in by the Windows tray
         self.taskbar_available = False  # set by the Windows tray
         self.name_mode = False   # show names instead of emails (screen sharing)
+        self.afk_skip_large = True
+        self.mod_seen = 0.0      # when the Claude Code mod last reported
+        self.mod_installed = None  # True / False, None until looked up (or when it can't be told)
+        self.mod_busy = None     # "installing" while that runs, else an error to show
+        self.mod_checked = 0.0
+        self.wait_near_reset = True
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
@@ -136,6 +142,10 @@ class Controller:
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
                 "statusline": self.statusline_on(),
+                "mod": self.mod_state(),
+                "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
+                "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
+                "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -145,7 +155,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -160,6 +170,32 @@ class Controller:
                 if getattr(self.gateway, "integrations", None):
                     self.gateway.integrations.apply_afk()
             self.statusline_shown = on
+            self.notify("changed", None)
+            return
+        if action in ("installMod", "checkMod"):  # the optional Claude Code mod (Settings)
+            self.mod_action(action)
+            return
+        if action == "resumeSession":  # answer to "continue this large session?"; instant
+            if self.live and isinstance(body.get("session"), str):
+                self.gateway.manager.resume_decision(body["session"], bool(body.get("approve")))
+            self.notify("changed", None)
+            return
+        if action == "waitNearReset":  # don't switch away from a 5-hour limit that resets within 15 minutes
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["waitNearReset"] = on
+                    self.gateway.manager.save()
+            self.wait_near_reset = on
+            self.notify("changed", None)
+            return
+        if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["afkSkipLarge"] = on
+                    self.gateway.manager.save()
+            self.afk_skip_large = on
             self.notify("changed", None)
             return
         if action == "clock":  # 24-hour clock in the full view; instant
@@ -298,6 +334,54 @@ class Controller:
         return {"taskbarLayout": meta.get("taskbarLayout") if self.live else self.taskbar_layout,
                 "taskbarDisplay": (meta.get("taskbarDisplay") if self.live else self.taskbar_display) or "main"}
 
+    # ---------- the optional Claude Code mod (mod.py) ----------
+    def mod_state(self):
+        """{"status": ..., "text": ...} for Settings: missing, installing, installed (no session
+        has reported yet), active (a session reported lately), or an error to show."""
+        if not self.live:
+            return {"status": "unavailable"}
+        if self.mod_busy == "installing":
+            return {"status": "installing"}
+        if self.mod_busy:
+            return {"status": "error", "text": self.mod_busy}
+        if time.time() - self.mod_seen < 120:
+            return {"status": "active"}
+        if self.mod_installed:
+            return {"status": "installed"}
+        if self.mod_installed is None and time.time() - self.mod_checked > 60:
+            threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
+        return {"status": "missing" if self.mod_installed is False else "unknown"}
+
+    def mod_check(self):
+        from . import mod
+        self.mod_checked = time.time()
+        self.mod_installed = mod.installed()
+        self.notify("changed", None)
+
+    def mod_action(self, action):
+        from . import mod
+        if action == "checkMod":
+            threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
+            return
+        if not self.live or self.mod_busy == "installing":
+            return
+        self.mod_busy = "installing"
+        self.notify("changed", None)
+
+        def work():
+            state_file = self.gateway.integrations.state_file if getattr(self.gateway, "integrations", None) else None
+            error = mod.install(state_file) if state_file else "LimitSwitcher isn't ready yet; try again in a moment"
+            # Settings has room for a few words; the reason goes to the log (shown as a note)
+            self.mod_busy = ("Claude Code not found" if error and "isn't installed" in error else "Install failed · see log") if error else None
+            if error:
+                self.notify("log", "Claude Code mod: " + error)
+            self.mod_checked = 0.0
+            self.mod_installed = mod.installed() if not error else self.mod_installed
+            if not error:
+                self.notify("log", "Claude Code mod installed: open sessions pick it up after /reload-plugins")
+            self.notify("changed", None)
+        threading.Thread(target=work, daemon=True, name="mod-install").start()
+
     def statusline_on(self):
         """Show LimitSwitcher in Claude Code's status line (off unless turned on in Settings)."""
         if self.live:
@@ -314,16 +398,24 @@ class Controller:
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
             return None
+        if body.get("source") == "mod":  # the Claude Code mod reports the same numbers as the status line script
+            self.mod_seen = time.time()
+            self.mod_installed = True
         line = self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
         # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
         # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
-        return line if self.statusline_on() else None
+        if not self.statusline_on():
+            return None
+        if body.get("source") != "mod" and time.time() - self.mod_seen < 120:
+            return None  # the mod shows it in a spot of its own: not twice
+        return line
 
     def afk_limit(self, body):
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
         if not self.live or body.get("provider") != "claude":
             return {"action": "stop"}
-        answer = self.gateway.manager.claude_limit(str(body.get("session") or "")[:100])
+        answer = self.gateway.manager.claude_limit(
+            str(body.get("session") or "")[:100], body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
         self.notify("changed", None)
         return answer
 

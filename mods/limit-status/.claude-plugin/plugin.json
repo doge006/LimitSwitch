@@ -1,0 +1,13 @@
+{
+  "name": "limit-status",
+  "version": "0.1.0",
+  "description": "Feeds Claude Code's live usage to LimitSwitcher and shows its status line in its own spot, without touching your own status line.",
+  "userConfig": {
+    "statePath": {
+      "type": "string",
+      "title": "LimitSwitcher state file",
+      "description": "The file LimitSwitcher keeps its local address and token in (set when it installs this mod).",
+      "default": ""
+    }
+  }
+}

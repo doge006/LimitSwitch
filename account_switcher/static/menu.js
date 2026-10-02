@@ -206,6 +206,22 @@ function renderCompact(list) {
   }
 }
 
+// A large session waiting for an OK before it continues on the new account (loading it costs usage).
+function addAsks(list) {
+  for (const item of (state.pendingResumes || []).slice().reverse()) {
+    const ask = el('div', 'ask');
+    ask.append(el('b', '', `Large session (~${Math.round(item.tokens / 1000)}k tokens)`),
+      document.createTextNode('Continuing loads all of it on the new account, which can use a lot of usage.'));
+    const yes = el('button', 'pill', 'Continue');
+    const no = el('button', 'pill', "Don't");
+    yes.type = no.type = 'button';
+    yes.addEventListener('click', () => act('resumeSession', { session: item.session, approve: true }));
+    no.addEventListener('click', () => act('resumeSession', { session: item.session, approve: false }));
+    ask.append(yes, no);
+    list.prepend(ask);
+  }
+}
+
 function render() {
   const list = $('list');
   const compact = !!state.compact;
@@ -216,6 +232,7 @@ function render() {
   post({ type: 'width', value: compact ? 320 : 392 });
   if (compact) {
     renderCompact(list);
+    addAsks(list);
     return;
   }
   list.dataset.mode = 'full';
@@ -236,6 +253,7 @@ function render() {
     empty.append(el('b', '', 'No accounts yet'), document.createTextNode('Sign in to Claude Code or Codex and it shows up here.'));
     list.append(empty);
   }
+  addAsks(list);
   $('auto').checked = state.autoSwap;
   $('afk').checked = state.afk;
   $('auto').disabled = $('afk').disabled = !!state.busy;

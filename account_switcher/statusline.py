@@ -37,6 +37,25 @@ def report(state, data):
 MARKER = "\x1b[2m⇄ LimitSwitcher\x1b[0m"  # dim: shown at the end of the user's own line while the app runs
 
 
+def tokens_text(count):
+    return f"{count / 1_000_000:.1f}M" if count >= 1_000_000 else f"{round(count / 1000)}k" if count >= 1000 else str(count)
+
+
+def context_part(data):
+    """The session's context: how much is used and what's left of the window ("ctx 183k · 82% left").
+    None until Claude Code reports it (before the first reply)."""
+    window = data.get("context_window")
+    if not isinstance(window, dict):
+        return None
+    used, left = window.get("total_input_tokens"), window.get("remaining_percentage")
+    if not isinstance(used, (int, float)) or isinstance(used, bool) or used <= 0:
+        return None
+    text = "ctx " + tokens_text(int(used))
+    if isinstance(left, (int, float)) and not isinstance(left, bool):
+        text += f" · {max(0, min(100, int(left)))}% left"
+    return text
+
+
 def run_previous(command, raw):
     """The user's own status line command: its output, unchanged."""
     try:
@@ -77,7 +96,8 @@ def main(argv):
         output = run_previous(previous, raw)
         write(with_marker(output) if line else output)  # the marker only while the app answers
     elif line:
-        write((line + "\n").encode("utf-8"))
+        extra = context_part(data) if isinstance(data, dict) else None
+        write((line + (" · " + extra if extra else "") + "\n").encode("utf-8"))
     return 0
 
 

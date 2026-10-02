@@ -390,10 +390,10 @@ class Integrations:
             log.warning("could not update Claude Code's hook: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's settings for AFK: {error}")
         try:
-            # Auto resume continues the session itself: Claude Code's own wait would linger
-            # ("continuing automatically at 9pm") and continue it a second time at the reset.
+            # Claude Code's own wait is turned ON (see claude_hooks.AUTO_CONTINUE): off, a limit opens a
+            # dialog that blocks the hook's continue until someone answers it.
             if self.manager.meta.get("afk"):
-                claude_hooks.pause_auto_continue(self.state_file, self.claude_root)
+                claude_hooks.enable_auto_continue(self.state_file, self.claude_root)
             else:
                 claude_hooks.restore_auto_continue(self.state_file, self.claude_root)
         except (OSError, ValueError) as error:
