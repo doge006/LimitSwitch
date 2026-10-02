@@ -20,7 +20,7 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 # Bright colours, so they read on dark and light terminals alike.
-ANSI = {"icon": "93", "dim": "90", "label": "94", "good": "92", "warn": "93", "bad": "91"}
+ANSI = {"dim": "90", "label": "94", "good": "92", "warn": "93", "bad": "91"}
 CACHE_FOR = 180  # seconds: the last line stands in while the app is busy (so the line doesn't blink out)
 
 
@@ -97,12 +97,17 @@ def context_part(data):
 
 
 def context_painted(data):
-    """The same, coloured: "ctx 183k" plain, its "% left" by how much is left."""
+    """The same, coloured by how much is left: "ctx 183k · 82% left" with the count and the
+    percentage in that colour and the rest grey (the count alone when the percentage is unknown)."""
     text = context_part(data)
-    if text is None or " · " not in text:
-        return text
-    count, left = text.split(" · ", 1)
-    return f"{count} · " + paint([{"t": left, "c": left_color(int(left.split("%")[0]))}])
+    if text is None:
+        return None
+    count, _, left = text.partition(" · ")
+    if not left:
+        return count
+    color = left_color(int(left.split("%")[0]))
+    return paint([{"t": count, "c": color}, {"t": " · ", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
+                  {"t": " left", "c": "dim"}])
 
 
 def run_previous(command, raw):

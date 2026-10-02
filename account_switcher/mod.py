@@ -45,9 +45,12 @@ def install(state_file, source=REPO):
         added = _run(["marketplace", "add", source], TIMEOUT)
         if added.returncode != 0 and "already" not in (added.stdout + added.stderr).lower():
             return _why(added)
-        _run(["marketplace", "update", MARKETPLACE], TIMEOUT)  # a copy from before the mod existed
+        _run(["marketplace", "update", MARKETPLACE], TIMEOUT)  # the catalog as it is now
         done = _run(["install", PLUGIN_ID, "--config", f"statePath={state_file}"], TIMEOUT)
-        if done.returncode != 0 and "already" not in (done.stdout + done.stderr).lower():
+        there = done.returncode == 0 or "already" in (done.stdout + done.stderr).lower()
+        # Installing again changes nothing once it is there: an update is what brings in a newer version.
+        updated = _run(["update", PLUGIN_ID], TIMEOUT)
+        if not there and updated.returncode != 0:
             return _why(done)
         return None
     except FileNotFoundError as error:

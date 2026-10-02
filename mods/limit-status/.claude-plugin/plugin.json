@@ -1,6 +1,6 @@
 {
   "name": "limit-status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Feeds Claude Code's live usage to LimitSwitcher and shows its colored status line above the prompt, without touching your own status line.",
   "userConfig": {
     "statePath": {

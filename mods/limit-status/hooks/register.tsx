@@ -15,9 +15,9 @@ let lastPollAt = 0 // when the band last asked for one itself
 
 const line = atom({ plugin: 'limit-status', key: 'line' } as const, null)
 
-// icon yellow, "LimitSwitcher" grey, 5h / 1w blue, plenty left green, some yellow, little red
+// icon green, "LimitSwitcher" and the account grey, 5h / 1w blue, the numbers green with plenty
+// left, yellow in the middle, red when low
 const COLORS: Record<string, string> = {
-  icon: '#e5b54a',
   dim: '#8b9098',
   label: '#5aa9ff',
   good: '#4cc38a',
@@ -34,11 +34,10 @@ function tokensText(n: number): string {
 
 function contextPieces(context: Context): Piece[] {
   if (!context.tokens) return []
-  const pieces: Piece[] = [{ t: ' · ', c: 'dim' }, { t: `ctx ${tokensText(context.tokens)}`, c: null }]
-  if (context.percent !== undefined) {
-    const left = Math.max(0, 100 - context.percent)
-    pieces.push({ t: ' · ', c: 'dim' }, { t: `${left}% left`, c: left > 30 ? 'good' : left > 10 ? 'warn' : 'bad' })
-  }
+  const left = context.percent !== undefined ? Math.max(0, 100 - context.percent) : undefined
+  const color = left === undefined ? null : left > 30 ? 'good' : left > 10 ? 'warn' : 'bad'
+  const pieces: Piece[] = [{ t: ' · ', c: 'dim' }, { t: `ctx ${tokensText(context.tokens)}`, c: color }]
+  if (left !== undefined) pieces.push({ t: ' · ', c: 'dim' }, { t: `${left}%`, c: color }, { t: ' left', c: 'dim' })
   return pieces
 }
 

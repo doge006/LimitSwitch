@@ -24,6 +24,8 @@ from . import claude_hooks, codex_config
 from .codex_proxy import DEFAULT_PORT, CodexProxy, ThreadState
 from .vault import atomic_write
 
+MOD_FRESH = 14 * 24 * 3600  # the mod counts as in use this long after it last reported
+
 log = logging.getLogger("account_switcher.integrations")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "LimitSwitcher"
@@ -229,6 +231,16 @@ class CodexServerWatch:
         return False
 
 
+def stamp_of(path):
+    """A change marker for a file: its time and its size (two writes within one clock tick, such as
+    a truncate and the rewrite, share a time but not a size)."""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
 class Integrations:
     SETTINGS_EVERY = 20  # seconds between checks that Claude Code's settings still have our status line
     def __init__(self, gateway, hook_url, hook_token, codex_home=None, claude_root=None, upstream=None):
@@ -305,20 +317,14 @@ class Integrations:
         def loop():
             seen = None
             while not self.settings_stop.wait(self.SETTINGS_EVERY):
-                try:
-                    stamp = os.stat(path).st_mtime_ns
-                except OSError:
-                    stamp = None
+                stamp = stamp_of(path)
                 if stamp == seen:
                     continue
                 seen = stamp
                 if not claude_hooks.statusline_installed(self.claude_root) and self.statusline_wanted():
                     log.warning("Claude Code's status line was not ours any more (settings.json rewritten); restoring it")
                     self.apply_afk()
-                    try:
-                        seen = os.stat(path).st_mtime_ns
-                    except OSError:
-                        pass
+                    seen = stamp_of(path)
 
         threading.Thread(target=loop, daemon=True, name="claude-settings-watch").start()
 
@@ -361,10 +367,18 @@ class Integrations:
         atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
                                                    "statusline": statusline}).encode())
 
+    def mod_in_use(self):
+        """The Claude Code Status mod has reported lately (it feeds the usage and draws the line)."""
+        return time.time() - float(self.manager.meta.get("modSeenAt") or 0) < MOD_FRESH
+
     def statusline_wanted(self):
         """Ours in Claude Code's status line: when it's turned on in Settings, or around the
         user's own one (which stays unchanged). Otherwise Claude Code's status line is left alone:
-        ours would show an empty line there."""
+        ours would show an empty line there. Never while the mod is in use: it feeds the usage and
+        draws the line itself, so a status line command of ours would only add an empty line (and
+        wrap the user's own for nothing)."""
+        if self.mod_in_use():
+            return False
         return bool(self.manager.meta.get("statuslineShown", False)) or \
             claude_hooks.own_statusline(self.state_file, self.claude_root) is not None
 

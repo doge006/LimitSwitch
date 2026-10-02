@@ -356,7 +356,29 @@ class Controller:
         from . import mod
         self.mod_checked = time.time()
         self.mod_installed = mod.installed()
+        if self.mod_installed is False:  # uninstalled: the status line command is wanted again
+            self.set_mod_seen(0.0)
         self.notify("changed", None)
+
+    def note_mod(self):
+        """The mod reported: remember it (the status line command is then not needed)."""
+        now = time.time()
+        self.mod_seen = now
+        self.mod_installed = True
+        manager = getattr(self.gateway, "manager", None)
+        if manager is not None and now - float(manager.meta.get("modSeenAt") or 0) > 60:
+            self.set_mod_seen(now)
+
+    def set_mod_seen(self, when):
+        manager = getattr(self.gateway, "manager", None)
+        if manager is None:
+            return
+        with manager.lock:
+            was = float(manager.meta.get("modSeenAt") or 0) > 0
+            manager.meta["modSeenAt"] = when
+            manager.save()
+        if was != (when > 0) and getattr(self.gateway, "integrations", None):
+            self.gateway.integrations.apply_afk()  # puts the user's own status line back, or ours
 
     def mod_action(self, action):
         from . import mod
@@ -398,13 +420,11 @@ class Controller:
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
             return None
-        if body.get("source") == "mod":  # the Claude Code mod reports the same numbers as the status line script
-            self.mod_seen = time.time()
-            self.mod_installed = True
         line = self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
         # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
         # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
         if body.get("source") == "mod":
+            self.note_mod()
             return line  # installing the mod is the person's own choice to see the line: no second switch
         if not self.statusline_on():
             return None

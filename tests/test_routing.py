@@ -611,7 +611,7 @@ class AfkTests(unittest.TestCase):
                 self.assertEqual(statusline.main(["statusline", str(state)]), 0)
             import re
             self.assertIn("a@example.com · 5h 60% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # coloured
-            self.assertIn("\x1b[94m5h\x1b[0m \x1b[92m60% left\x1b[0m", out.getvalue())  # 5h blue, plenty left green
+            self.assertIn("\x1b[94m5h\x1b[0m \x1b[92m60%\x1b[0m\x1b[90m left\x1b[0m", out.getvalue())  # 5h blue, plenty left green
             five = next(w for w in self.manager.accounts() if w.email == "a@example.com").windows()[0]
             self.assertEqual(five["used"], 40.0)
             state.write_text(json.dumps({"url": server.hook_url, "token": "wrong", "statusline": None}))
@@ -806,6 +806,33 @@ class IntegrationTests(unittest.TestCase):
                 integrations.stop()
             self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
 
+    def test_status_line_command_is_not_installed_while_the_mod_is_in_use(self):
+        """The mod feeds the usage and draws the line: a status line command of ours would only
+        show an empty line, and wrap the user's own for nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_root = root / "claude"
+            claude_root.mkdir()
+            (claude_root / "settings.json").write_text('{"statusLine": {"type": "command", "command": "mine.sh"}}')
+            gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
+                                  background=False)
+            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
+            integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
+                                        claude_root=claude_root)
+            with mock.patch("account_switcher.integrations.codex_present", return_value=False):
+                integrations.start()
+            try:
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))  # wrapped around theirs
+                gateway.manager.meta["modSeenAt"] = time.time()
+                integrations.apply_afk()
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))
+                self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
+                gateway.manager.meta["modSeenAt"] = time.time() - 15 * 24 * 3600  # long gone
+                integrations.apply_afk()
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+            finally:
+                integrations.stop()
+
     def test_status_line_comes_back_when_settings_are_rewritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -843,17 +870,18 @@ class StatusLineMarkerTests(unittest.TestCase):
         from account_switcher import statusline
         from account_switcher.live import StatusLine, level_color
         self.assertEqual([level_color(v) for v in (100, 31, 30, 11, 10, 0)], ["good", "good", "warn", "warn", "bad", "bad"])
-        line = StatusLine([[("⇄", "icon"), (" ", None), ("LimitSwitcher", "dim")], [("a@x.com", None)],
-                           [("5h", "label"), (" ", None), ("12% left", "warn")]])
-        self.assertEqual(str(line), "⇄ LimitSwitcher · a@x.com · 5h 12% left")  # plain text stays plain
+        line = StatusLine([[("⇄", "good"), (" ", None), ("LimitSwitcher", "dim")], [("doge", "dim")],
+                           [("5h", "label"), (" ", None), ("12%", "warn"), (" left", "dim")]])
+        self.assertEqual(str(line), "⇄ LimitSwitcher · doge · 5h 12% left")  # plain text stays plain
         painted = statusline.paint(line.parts)
-        self.assertIn("\x1b[93m⇄\x1b[0m", painted)         # the icon, yellow
+        self.assertIn("\x1b[92m⇄\x1b[0m", painted)              # the icon, green
         self.assertIn("\x1b[90mLimitSwitcher\x1b[0m", painted)  # grey
-        self.assertIn("\x1b[94m5h\x1b[0m", painted)         # the label, blue
-        self.assertIn("\x1b[93m12% left\x1b[0m", painted)   # a little left: yellow
-        self.assertIn("a@x.com", painted)
+        self.assertIn("\x1b[90mdoge\x1b[0m", painted)           # the account, grey
+        self.assertIn("\x1b[94m5h\x1b[0m", painted)             # the label, blue
+        self.assertIn("\x1b[93m12%\x1b[0m\x1b[90m left\x1b[0m", painted)  # a little left: yellow number, grey word
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
-        self.assertEqual(painted, "ctx 900k · \x1b[91m8% left\x1b[0m")
+        self.assertEqual(painted, "\x1b[91mctx 900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
+        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "ctx 1.2M")
 
     def test_the_last_line_stands_in_while_the_app_is_busy(self):
         from account_switcher import statusline

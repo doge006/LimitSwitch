@@ -92,7 +92,7 @@ def level_color(left):
 
 class StatusLine(str):
     """The line for Claude Code's status line, as plain text, with its coloured pieces in `parts`:
-    [{"t": text, "c": colour name or None}] (icon, dim, label, good, warn, bad)."""
+    [{"t": text, "c": colour name or None}] (dim, label, good, warn, bad)."""
 
     def __new__(cls, groups):
         parts = []
@@ -678,12 +678,12 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        groups = [[("⇄", "icon"), (" ", None), ("LimitSwitcher", "dim")], [(self.shown_name(account_id), None)]]
+        groups = [[("⇄", "good"), (" ", None), ("LimitSwitcher", "dim")], [(self.shown_name(account_id), "dim")]]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"
                 left = max(0, math.floor(100 - window["used"] + 1e-6))  # rounded down
-                groups.append([(label, "label"), (" ", None), (f"{left}% left", level_color(left))])
+                groups.append([(label, "label"), (" ", None), (f"{left}%", level_color(left)), (" left", "dim")])
         return StatusLine(groups)
 
     def shown_name(self, account_id):

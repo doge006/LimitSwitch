@@ -1,6 +1,7 @@
 import json
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -33,7 +34,8 @@ class ModCommandTests(unittest.TestCase):
         with mock.patch.object(mod, "_run", side_effect=lambda args, timeout: calls.append(args) or done()):
             self.assertIsNone(mod.install("/data/afk-hook.json"))
         self.assertEqual(calls[0][:2], ["marketplace", "add"])
-        self.assertEqual(calls[-1], ["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"])
+        self.assertIn(["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"], calls)
+        self.assertEqual(calls[-1], ["update", "limit-status@limitswitcher"])  # a newer version, when there is one
 
     def test_install_is_fine_when_already_there_and_says_why_when_not(self):
         with mock.patch.object(mod, "_run", return_value=done(code=1, err="Marketplace already exists")):
@@ -76,6 +78,8 @@ class ModStateTests(unittest.TestCase):
         c = self.controller
         c.live = True
         c.gateway = mock.Mock()
+        c.gateway.manager.meta = {}
+        c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.statusline.return_value = "line"
         c.statusline({"rate_limits": None, "session": "s1"})  # the status line script
         self.assertEqual(c.mod_seen, 0.0)
@@ -88,6 +92,7 @@ class ModStateTests(unittest.TestCase):
         c.live = True
         c.gateway = mock.Mock()
         c.gateway.manager.statusline.return_value = "line"
+        c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.meta = {"statuslineShown": True}
         self.assertEqual(c.statusline({"session": "s"}), "line")  # no mod yet: the status line script shows it
         c.statusline({"session": "s", "source": "mod"})
@@ -99,9 +104,28 @@ class ModStateTests(unittest.TestCase):
         c.live = True
         c.gateway = mock.Mock()
         c.gateway.manager.statusline.return_value = "line"
+        c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.meta = {"statuslineShown": False}  # the script's own switch
         self.assertIsNone(c.statusline({"session": "s"}))
         self.assertEqual(c.statusline({"session": "s", "source": "mod"}), "line")
+
+    def test_the_first_report_of_the_mod_takes_the_status_line_command_away(self):
+        c = self.controller
+        c.live = True
+        c.gateway = mock.Mock()
+        c.gateway.manager.meta = {}
+        c.gateway.manager.lock = threading.RLock()
+        c.gateway.manager.statusline.return_value = "line"
+        c.statusline({"session": "s", "source": "mod"})
+        self.assertGreater(c.gateway.manager.meta["modSeenAt"], 0)
+        c.gateway.integrations.apply_afk.assert_called_once()  # its command would only add an empty line
+        c.statusline({"session": "s", "source": "mod"})
+        c.gateway.integrations.apply_afk.assert_called_once()  # not again for every report
+        c.mod_check_result = None
+        with mock.patch("account_switcher.mod.installed", return_value=False):
+            c.mod_check()  # uninstalled: wanted again
+        self.assertEqual(c.gateway.manager.meta["modSeenAt"], 0.0)
+        self.assertEqual(c.gateway.integrations.apply_afk.call_count, 2)
 
 
 if __name__ == "__main__":
