@@ -8,6 +8,10 @@ import type { Piece } from '../types'
 // line to show, which this mod draws above the prompt in colour: the person's own status line is
 // never touched.
 const EVERY = 30_000 // an idle session still shows the app's freshest numbers
+const HOLD = 120_000 // the line stays this long when the app has nothing to show (a swap in progress, a moment busy)
+
+let lastGoodAt = 0 // when the app last gave a line
+let lastPollAt = 0 // when the band last asked for one itself
 
 const line = atom({ plugin: 'limit-status', key: 'line' } as const, null)
 
@@ -62,11 +66,21 @@ async function report($: any, statePath: string, rateLimits: readonly Window[], 
     })
     const answer = reply.ok ? JSON.parse(reply.text) : null
     const parts: Piece[] | null = Array.isArray(answer?.parts) && answer.parts.length ? answer.parts : null
-    // nothing to show (the status line is turned off in LimitSwitcher): the band stays away
-    await update($, line, () => (parts ? [...parts, ...contextPieces(context)] : null))
+    const now = Number(await $.clock.now())
+    if (parts) {
+      lastGoodAt = now
+      await update($, line, () => [...parts, ...contextPieces(context)])
+    } else if (now - lastGoodAt > HOLD) {
+      await update($, line, () => null) // nothing for a while: the band goes away
+    }
   } catch {
     // the app is busy: what is shown stays for now
   }
+}
+
+async function poll($: any, statePath: string): Promise<void> {
+  const { rateLimits, context } = await $.session.usage()
+  await report($, statePath, rateLimits, context)
 }
 
 export const register: Register = (on, options) => {
@@ -76,7 +90,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const result = await next(e)
     const key = JSON.stringify([e.rateLimits, e.context.tokens])
-    if (key !== last) {
+    if (key !== last || !(await read($, line))) { // also when nothing is shown (a /clear, a failed ask)
       last = key
       await report($, statePath, e.rateLimits, e.context)
     }
@@ -85,18 +99,23 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    const poll = async () => {
-      const { rateLimits, context } = await $.session.usage()
-      await report($, statePath, rateLimits, context)
-    }
-    void poll() // never holds the session's start
-    $.clock.every(EVERY, poll)
+    void poll($, statePath) // never holds the session's start
+    $.clock.every(EVERY, () => poll($, statePath))
     return result
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const pieces = await read($, line)
-    if (e.props.hasSurvey || !pieces) return next(e)
+    if (!pieces) {
+      // nothing to draw: ask for a line now and then (after a /clear nothing else would)
+      const now = Number(await $.clock.now())
+      if (now - lastPollAt > 10_000) {
+        lastPollAt = now
+        void poll($, statePath)
+      }
+      return next(e)
+    }
+    if (e.props.hasSurvey) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box>

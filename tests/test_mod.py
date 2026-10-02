@@ -94,6 +94,15 @@ class ModStateTests(unittest.TestCase):
         self.assertEqual(c.statusline({"session": "s", "source": "mod"}), "line")  # the mod's own
         self.assertIsNone(c.statusline({"session": "s"}))  # the script keeps reporting but stays quiet
 
+    def test_the_mod_shows_its_line_even_with_the_status_line_switch_off(self):
+        c = self.controller
+        c.live = True
+        c.gateway = mock.Mock()
+        c.gateway.manager.statusline.return_value = "line"
+        c.gateway.manager.meta = {"statuslineShown": False}  # the script's own switch
+        self.assertIsNone(c.statusline({"session": "s"}))
+        self.assertEqual(c.statusline({"session": "s", "source": "mod"}), "line")
+
 
 if __name__ == "__main__":
     unittest.main()

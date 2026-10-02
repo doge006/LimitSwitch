@@ -404,9 +404,11 @@ class Controller:
         line = self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
         # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
         # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
+        if body.get("source") == "mod":
+            return line  # installing the mod is the person's own choice to see the line: no second switch
         if not self.statusline_on():
             return None
-        if body.get("source") != "mod" and time.time() - self.mod_seen < 120:
+        if time.time() - self.mod_seen < 120:
             return None  # the mod shows it in a spot of its own: not twice
         return line
 

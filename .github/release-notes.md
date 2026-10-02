@@ -3,6 +3,7 @@ The app offers it in Settings → **Update to 1.0.9** (or download below).
 ## Fixed
 
 - **The Claude Code Status mod row in Settings is readable:** its state ("Installed · run /reload-plugins in an open session") was cut off with "…". It now wraps onto a second line, and the row is named **Claude Code Status mod**.
+- **The Claude Code Status mod's line shows more reliably:** it no longer depends on the "Claude Code status line" switch (installing the mod is the choice to see it), it stays for up to 2 minutes while the app has nothing to show (a swap in progress, a busy moment), and it asks for a line again by itself when it's empty (after a `/clear`, say), instead of waiting for the next reply.
 - **The status line no longer blinks out:** when the app was busy for a moment, the status line script showed nothing until its next run. It now shows the last line for up to 3 minutes meanwhile (and nothing after the app refuses it, for example with an old token).
 
 ## New
