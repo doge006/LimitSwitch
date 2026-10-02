@@ -6,13 +6,55 @@ Runs in the background (asyncRewake). On a usage limit it asks the running app w
   anything else, or the app not running -> exit 0 and leave the session as it is
 Standard library only; it must not import the app.
 """
+import importlib.util
 import json
+import os
 import sys
 import time
+from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
 
 LIMIT = 6 * 3600 - 120   # stay inside the hook timeout set in settings.json
 NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
+
+
+SHELLS = {"sh", "bash", "zsh", "dash", "fish", "cmd", "powershell", "pwsh", "python", "python3", "pythonw", "py", "env"}
+CHECK = 15   # seconds between looks at whether Claude Code is still there while waiting
+
+
+def owner():
+    """(the process that started this hook, a function: is it still running?). That is Claude Code
+    (the first parent that is not a shell). The hook waits for hours and is not stopped when its
+    session is closed, so without this it would outlive the session and still ask the app to
+    continue it. (None, None) when it can't be told: then it never gives up on its own."""
+    try:
+        path = Path(__file__).with_name("processes.py")
+        spec = importlib.util.spec_from_file_location("_afk_processes", path)
+        processes = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(processes)
+        family = processes.family()
+        pid = os.getpid()
+        while pid in family:
+            pid = family[pid][0]
+            if pid <= 1 or pid not in family:
+                return None, None
+            if family[pid][1] not in SHELLS:
+                break
+        else:
+            return None, None
+        return pid, lambda: pid in (processes.family() or {pid: None})
+    except Exception:
+        return None, None
+
+
+def wait(seconds, running):
+    """Sleep up to `seconds`; False as soon as Claude Code is gone."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if running is not None and not running():
+            return False
+        time.sleep(max(0.0, min(CHECK, end - time.time())))
+    return running is None or running()
 
 
 def main(argv):
@@ -26,7 +68,10 @@ def main(argv):
         return 0
     opener = build_opener(ProxyHandler({}))  # the app is on loopback: never via a proxy
     deadline = time.time() + LIMIT
+    _, running = owner()
     while time.time() < deadline:
+        if running is not None and not running():
+            return 0  # Claude Code was closed: nothing to continue
         try:
             with open(argv[1], encoding="utf-8") as handle:
                 state = json.load(handle)
@@ -44,7 +89,8 @@ def main(argv):
         if action == "wait":
             seconds = answer.get("seconds")
             seconds = seconds if isinstance(seconds, (int, float)) else 600
-            time.sleep(max(30.0, min(float(seconds), deadline - time.time())))
+            if not wait(max(30.0, min(float(seconds), deadline - time.time())), running):
+                return 0
             continue
         return 0
     return 0
