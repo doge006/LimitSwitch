@@ -195,9 +195,9 @@ In the full view, the gear opens Settings:
 
 ## Compact before the limit (optional Claude Code mod)
 
-A new account has none of your session cached, so the first turn after a swap reads all of it. `mods/limit-compact` is a small Claude Code mod (early access) that compacts a large session when the account's 5-hour usage reaches 90%, while that account still has the session cached, so the next account loads a short summary instead. It only acts on sessions of 150k tokens or more, once per 5-hour window, and tells the compaction what to keep. The three values are settings of the mod.
+A new account has none of your session cached, so the first turn after a swap reads all of it. `mods/limit-compact` is a small Claude Code mod (early access) that compacts a large session at the very end of the account's 5-hour or weekly window (97% by default), while that account still has the session cached, so the next account loads a short summary instead. It only acts on sessions that fill at least half the context window, once per window, and tells the compaction what to keep. If a compaction doesn't go through (a turn is still running, or the limit is already up) it tries again at the next measurement, and nothing is lost compared to switching without it. The trigger, the size and what to keep are settings of the mod.
 
-Load it with `claude --plugin-dir <this folder>/mods/limit-compact` (or list the folder in `CLAUDE_CODE_PLUGIN_DIRS`). The compaction is lossy, like `/compact`, and needs some quota to run, which is why it starts well before the limit.
+Load it with `claude --plugin-dir <this folder>/mods/limit-compact` (or list the folder in `CLAUDE_CODE_PLUGIN_DIRS`). The compaction is lossy, like `/compact`, and needs a little quota to run, so a trigger very close to 100% may sometimes be refused.
 
 ## Claude Code status line
 

@@ -1,25 +1,25 @@
 {
   "name": "limit-compact",
   "version": "0.1.0",
-  "description": "Compacts a large session just before the account's 5-hour limit, while its prompt cache is warm, so the next account has little to load.",
+  "description": "Compacts a large session at the very end of the account's 5-hour or weekly limit, while its prompt cache is warm, so the next account has little to load.",
   "userConfig": {
     "triggerPercent": {
       "type": "number",
-      "title": "Compact at 5-hour usage (%)",
-      "description": "Compact when the account's 5-hour window reaches this much.",
-      "default": 90
-    },
-    "minTokens": {
-      "type": "number",
-      "title": "Only sessions of at least (tokens)",
-      "description": "Smaller sessions are cheap to load on another account and are left alone.",
-      "default": 150000
+      "title": "Compact at usage (%)",
+      "description": "Compact when the account's 5-hour or weekly window reaches this much. Compacting needs a little quota, so a value too close to 100 may fail (then nothing is lost: the next account just reads everything).",
+      "default": 97
     },
     "instructions": {
       "type": "string",
       "title": "What the summary must keep",
       "description": "Passed to the compaction: what the summary should keep or stress.",
       "default": "Keep the current task and its status, decisions made and why, open files and exact paths, commands and their results that still matter, and what to do next."
+    },
+    "minContextPercent": {
+      "type": "number",
+      "title": "Only when the context is at least (% of the window)",
+      "description": "Sessions with less than this are cheap to load on another account and are left alone.",
+      "default": 50
     }
   }
 }
