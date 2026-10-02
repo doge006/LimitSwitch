@@ -231,6 +231,16 @@ class CodexServerWatch:
         return False
 
 
+def stamp_of(path):
+    """A change marker for a file: its time and its size (two writes within one clock tick, such as
+    a truncate and the rewrite, share a time but not a size)."""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return info.st_mtime_ns, info.st_size
+
+
 class Integrations:
     SETTINGS_EVERY = 20  # seconds between checks that Claude Code's settings still have our status line
     def __init__(self, gateway, hook_url, hook_token, codex_home=None, claude_root=None, upstream=None):
@@ -307,20 +317,14 @@ class Integrations:
         def loop():
             seen = None
             while not self.settings_stop.wait(self.SETTINGS_EVERY):
-                try:
-                    stamp = os.stat(path).st_mtime_ns
-                except OSError:
-                    stamp = None
+                stamp = stamp_of(path)
                 if stamp == seen:
                     continue
                 seen = stamp
                 if not claude_hooks.statusline_installed(self.claude_root) and self.statusline_wanted():
                     log.warning("Claude Code's status line was not ours any more (settings.json rewritten); restoring it")
                     self.apply_afk()
-                    try:
-                        seen = os.stat(path).st_mtime_ns
-                    except OSError:
-                        pass
+                    seen = stamp_of(path)
 
         threading.Thread(target=loop, daemon=True, name="claude-settings-watch").start()
 
