@@ -312,7 +312,7 @@ class LiveTests(unittest.TestCase):
             controller.action("statusline", {"on": True})
             line = controller.statusline({"rate_limits": limits})
             self.assertIn("LimitSwitcher", line or "")
-            self.assertEqual(line.parts[0], {"t": "⇄", "c": "icon"})  # the coloured pieces ride along
+            self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})  # the coloured pieces ride along
             controller.action("statusline", {"on": False})
             self.assertFalse(controller.snapshot()["statusline"])
             self.assertIsNone(controller.statusline({"rate_limits": limits}))

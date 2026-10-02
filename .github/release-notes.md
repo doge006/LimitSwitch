@@ -1,15 +1,9 @@
-The app offers it in Settings → **Update to 1.0.9** (or download below).
+The app offers it in Settings → **Update to 1.0.10** (or download below).
 
 ## Fixed
 
-- **The Claude Code Status mod row in Settings is readable:** its state ("Installed · run /reload-plugins in an open session") was cut off with "…". It now wraps onto a second line, and the row is named **Claude Code Status mod**.
-- **The Claude Code Status mod's line shows more reliably:** it no longer depends on the "Claude Code status line" switch (installing the mod is the choice to see it), it stays for up to 2 minutes while the app has nothing to show (a swap in progress, a busy moment), and it asks for a line again by itself when it's empty (after a `/clear`, say), instead of waiting for the next reply.
-- **The status line no longer blinks out:** when the app was busy for a moment, the status line script showed nothing until its next run. It now shows the last line for up to 3 minutes meanwhile (and nothing after the app refuses it, for example with an old token).
-
-## New
-
-- **A coloured status line:** the icon is yellow and "LimitSwitcher" grey, **5h** and **1w** are blue, and what's left is green with plenty left, yellow in the middle and red when low (the context's "% left" too). This is the line the app shows in Claude Code, and the mod's line above the prompt.
-- **The Claude Code Status mod draws the line itself,** above the prompt, in those colours (it used a plain pinned line before).
+- **Reinstall now really updates the Claude Code Status mod:** installing it again did nothing when it was already installed, so a newer version of the mod never arrived (you kept drawing the old plain yellow `⚠ limit-status: …` line). **Reinstall** now updates it to the newest version (restart Claude Code, or `/reload-plugins`, to apply).
+- **The status line colours:** the icon is green and "LimitSwitcher" and the account grey, **5h** and **1w** blue, each percentage green with plenty left, yellow in the middle and red when low, with "left" grey. The context is the same: `ctx 348k · 65% left`, the count and the percentage coloured by what's left. This is the line the app shows in Claude Code, and the mod's line above the prompt.
 
 ## Download
 

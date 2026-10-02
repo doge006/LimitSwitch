@@ -33,7 +33,8 @@ class ModCommandTests(unittest.TestCase):
         with mock.patch.object(mod, "_run", side_effect=lambda args, timeout: calls.append(args) or done()):
             self.assertIsNone(mod.install("/data/afk-hook.json"))
         self.assertEqual(calls[0][:2], ["marketplace", "add"])
-        self.assertEqual(calls[-1], ["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"])
+        self.assertIn(["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"], calls)
+        self.assertEqual(calls[-1], ["update", "limit-status@limitswitcher"])  # a newer version, when there is one
 
     def test_install_is_fine_when_already_there_and_says_why_when_not(self):
         with mock.patch.object(mod, "_run", return_value=done(code=1, err="Marketplace already exists")):
