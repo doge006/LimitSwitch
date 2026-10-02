@@ -19,6 +19,19 @@ class FlyoutRenderTests(unittest.TestCase):
         image, hits = fr.render(state, hover, scale)
         return image, [action for _, action in hits]
 
+    def test_degenerate_shapes_do_not_crash_drawing(self):
+        """An animated bar eased to (or just past) zero size once made PIL raise "y1 must be greater
+        than or equal to y0" and the panel stopped redrawing (app.log, 9/26)."""
+        layout = fr.Layout()
+        fill = (255, 255, 255, 200)
+        for h in (0, -0.4, 0.001, 0.3):
+            layout.rect(10, 10, 3, h, 1.5, fill)
+            layout.rect(10, 10, h, 3, 1.5, fill)
+        layout.shapes.append(("ellipse", 5, 5, 4, 4, fill))
+        for scale in (1.0, 1.5, 2.0):
+            fr.paint(layout, 200, 60, scale)
+            fr.paint_clear(layout, 200, 60, scale)
+
     def test_regions_cover_every_control(self):
         image, actions = self.actions(self.state)
         self.assertEqual(image.mode, "RGBA")

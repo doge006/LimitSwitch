@@ -198,7 +198,8 @@ def rr_mask(w, h, r):
 def _rr_mask_4x(w, h, r):
     k = 4
     big = Image.new("L", (max(1, w * k), max(1, h * k)), 0)
-    ImageDraw.Draw(big).rounded_rectangle((0, 0, w * k - 1, h * k - 1), max(0, r * k), fill=255)
+    if w > 0 and h > 0:
+        ImageDraw.Draw(big).rounded_rectangle((0, 0, w * k - 1, h * k - 1), max(0, r * k), fill=255)
     return big.reduce(k) if w and h else big
 
 
