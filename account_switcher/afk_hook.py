@@ -82,6 +82,14 @@ def context_tokens(path):
     return None
 
 
+def stamp(path):
+    """When the session's transcript last changed, or None when it can't be told."""
+    try:
+        return os.stat(path).st_mtime_ns
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def main(argv):
     if len(argv) < 2:
         return 0
@@ -94,7 +102,9 @@ def main(argv):
     opener = build_opener(ProxyHandler({}))  # the app is on loopback: never via a proxy
     deadline = time.time() + LIMIT
     _, running = owner()
-    tokens = context_tokens(event["transcript_path"]) if isinstance(event.get("transcript_path"), str) else None
+    transcript = event.get("transcript_path") if isinstance(event.get("transcript_path"), str) else None
+    tokens = context_tokens(transcript) if transcript else None
+    started = None   # the transcript's state once the wait has begun (see below)
     while time.time() < deadline:
         if running is not None and not running():
             return 0  # Claude Code was closed: nothing to continue
@@ -111,9 +121,14 @@ def main(argv):
             return 0  # the app is not running (or not answering): leave the session alone
         action = answer.get("action") if isinstance(answer, dict) else None
         if action == "continue":
+            if started is not None and stamp(transcript) != started:
+                return 0  # the session went on by itself while waiting (Claude Code's own wait, or you): no second wake
             sys.stderr.write(str(answer.get("message") or NOTE))
             return 2
         if action == "wait":
+            if started is None and transcript:
+                time.sleep(3)  # Claude Code may still be writing the limit's own entries
+                started = stamp(transcript)
             seconds = answer.get("seconds")
             seconds = seconds if isinstance(seconds, (int, float)) else 600
             if not wait(max(5.0, min(float(seconds), deadline - time.time())), running):
