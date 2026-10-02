@@ -806,6 +806,33 @@ class IntegrationTests(unittest.TestCase):
                 integrations.stop()
             self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
 
+    def test_status_line_command_is_not_installed_while_the_mod_is_in_use(self):
+        """The mod feeds the usage and draws the line: a status line command of ours would only
+        show an empty line, and wrap the user's own for nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_root = root / "claude"
+            claude_root.mkdir()
+            (claude_root / "settings.json").write_text('{"statusLine": {"type": "command", "command": "mine.sh"}}')
+            gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
+                                  background=False)
+            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
+            integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
+                                        claude_root=claude_root)
+            with mock.patch("account_switcher.integrations.codex_present", return_value=False):
+                integrations.start()
+            try:
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))  # wrapped around theirs
+                gateway.manager.meta["modSeenAt"] = time.time()
+                integrations.apply_afk()
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))
+                self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
+                gateway.manager.meta["modSeenAt"] = time.time() - 15 * 24 * 3600  # long gone
+                integrations.apply_afk()
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+            finally:
+                integrations.stop()
+
     def test_status_line_comes_back_when_settings_are_rewritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

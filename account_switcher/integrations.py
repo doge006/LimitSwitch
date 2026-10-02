@@ -24,6 +24,8 @@ from . import claude_hooks, codex_config
 from .codex_proxy import DEFAULT_PORT, CodexProxy, ThreadState
 from .vault import atomic_write
 
+MOD_FRESH = 14 * 24 * 3600  # the mod counts as in use this long after it last reported
+
 log = logging.getLogger("account_switcher.integrations")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "LimitSwitcher"
@@ -361,10 +363,18 @@ class Integrations:
         atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
                                                    "statusline": statusline}).encode())
 
+    def mod_in_use(self):
+        """The Claude Code Status mod has reported lately (it feeds the usage and draws the line)."""
+        return time.time() - float(self.manager.meta.get("modSeenAt") or 0) < MOD_FRESH
+
     def statusline_wanted(self):
         """Ours in Claude Code's status line: when it's turned on in Settings, or around the
         user's own one (which stays unchanged). Otherwise Claude Code's status line is left alone:
-        ours would show an empty line there."""
+        ours would show an empty line there. Never while the mod is in use: it feeds the usage and
+        draws the line itself, so a status line command of ours would only add an empty line (and
+        wrap the user's own for nothing)."""
+        if self.mod_in_use():
+            return False
         return bool(self.manager.meta.get("statuslineShown", False)) or \
             claude_hooks.own_statusline(self.state_file, self.claude_root) is not None
 
