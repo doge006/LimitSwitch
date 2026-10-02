@@ -36,6 +36,7 @@ import threading
 import time
 import uuid
 
+from . import processes
 from .core import Account, Router
 from .providers import PROVIDERS, ProviderError, _jwt_payload
 from .vault import Vault, atomic_write
@@ -60,6 +61,7 @@ LIVE_FRESH = 900            # status line data this recent counts as live
 LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
 SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
 MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
+STARTUP_DELAY = 4           # the first usage check waits for the network and the sign-in files to settle at boot
 SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
@@ -849,7 +851,8 @@ class LiveAccounts:
             # The login is picked up from its folder as it lands.
             import shlex
             script = directory / "Sign in.command"
-            script.write_text("#!/bin/sh\n" + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
+            script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(directory / "login.pid")) + "\n"
+                              + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
                               + " ".join(shlex.quote(c) for c in command)
                               + "\necho\necho 'Done. You can close this window.'\n")
             script.chmod(0o700)
@@ -896,8 +899,16 @@ class LiveAccounts:
             else:
                 self.notify("log", f"{name.title()} sign-in closed without a login")
         finally:
-            if watch_process and process.poll() is None:
-                process.terminate()
+            # End the sign-in with everything it started: on Windows `claude` is a .cmd shim, so ending
+            # only that leaves the real Claude Code running (and spending usage) after the window is gone.
+            if watch_process:
+                if process.poll() is None:
+                    processes.end_tree(process.pid)
+            else:  # macOS: Terminal's script wrote its own id; the window stays, the CLI inside must not
+                try:
+                    processes.end_tree(int((directory / "login.pid").read_text().strip()))
+                except (OSError, ValueError):
+                    pass
             self.logins.pop(name, None)
             shutil.rmtree(directory, ignore_errors=True)
             self.notify("accounts", None)
@@ -980,7 +991,7 @@ class LiveGateway:
             threading.Thread(target=self._loop, daemon=True, name="usage-refresh").start()
 
     def _loop(self):
-        delay = 0
+        delay = STARTUP_DELAY  # asking at the very instant of boot fails for some accounts, shown as "Retrying"
         while not self.stopped:
             self.wake.wait(delay)  # sleeps; no work between refreshes
             self.wake.clear()
