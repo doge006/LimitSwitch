@@ -193,6 +193,12 @@ In the full view, the gear opens Settings:
 - **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
 - **Check for updates / Update to …**
 
+## Claude Code mod (optional)
+
+Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The **limit-status** mod in `mods/limit-status` gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, and shows the app's status line in a spot of its own, so your own status line is never touched or wrapped. It works wherever mods run (the terminal, the Desktop app's Code tab, and the VS Code extension for the usage; only the terminal and Desktop draw the line).
+
+Install it from **Settings → Claude Code mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the mod where the app's local address file is. The row then shows **Active** while a session is reporting, **Installed** until one is, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below.
+
 ## Claude Code status line
 
 LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.

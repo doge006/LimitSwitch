@@ -881,6 +881,10 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
 
 
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
+MOD_ROW_H = 58   # the Claude Code mod's line: its name and state, and its button
+
+MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "installed": ("Installed · /reload-plugins in a session", WARN),
+            "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
@@ -894,9 +898,10 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and bool(displays)
+    live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
     h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
-        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52
+        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (MOD_ROW_H if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
     ry = y + 8
@@ -935,6 +940,30 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                        anchor="mm", bg=base)
                 hits.append(((bx, by, bw, 26), action, "hand"))
             ry += SLOT_ROW_H
+    if live_mod:  # the optional Claude Code mod: live usage from Claude Code, shown in a spot of its own
+        ry = y + h - 52 - MOD_ROW_H
+        c.line(x + 14, ry + 2, w - 28, LINE)
+        mod = state.get("mod") or {}
+        status = mod.get("status") or "unknown"
+        text, color = MOD_TEXT.get(status) or (mod.get("text") or "Couldn't install", BAD)
+        c.text(x + 16, ry + 20, "Claude Code mod", 14, TEXT, True, anchor="lm")
+        c.text(x + 16, ry + 40, fit(text, 12, False, w - 150), 12, color, anchor="lm")
+        if status != "installing":
+            label = "Reinstall" if status in ("active", "installed") else "Install"
+            primary = status not in ("active", "installed")
+            bw = text_w(label, 12, primary) + 24
+            bx = x + w - 14 - bw
+            hot = ui.hover == "mod:install"
+            if primary:
+                fill = GOOD if not hot else blend((255, 255, 255), GOOD, .1)
+                c.rect(bx, ry + 15, bw, 28, 7, fill + (255,))
+                c.text(bx + bw / 2, ry + 29, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
+            else:
+                base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
+                c.rect(bx, ry + 15, bw, 28, 7, base + (255,))
+                c.outline(bx, ry + 15, bw, 28, 7, LINE_STRONG)
+                c.text(bx + bw / 2, ry + 29, label, 12, TEXT, anchor="mm", bg=base)
+            hits.append(((bx, ry + 15, bw, 28), "mod:install", "hand"))
     # Version and updates
     ry = y + h - 52
     c.line(x + 14, ry + 2, w - 28, LINE)

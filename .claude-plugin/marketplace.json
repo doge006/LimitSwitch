@@ -1,0 +1,11 @@
+{
+  "name": "limitswitcher",
+  "owner": { "name": "doge006" },
+  "plugins": [
+    {
+      "name": "limit-status",
+      "source": "./mods/limit-status",
+      "description": "Feeds Claude Code's live usage to LimitSwitcher and shows its status line, without touching your own status line."
+    }
+  ]
+}

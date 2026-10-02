@@ -607,6 +607,8 @@ class FullView:
                 self.act("statusline", {"on": not state.get("statusline")})
             elif arg == "launchAtLogin":
                 self.act("startup", {"on": not state.get("launchAtLogin")})
+        elif kind == "mod":  # Settings: install the Claude Code mod
+            self.act("installMod")
         elif kind == "update":  # Settings: check for updates / update now
             self.act("installUpdate" if arg == "install" else "checkUpdate")
         elif kind == "display":

@@ -9,6 +9,7 @@ The app offers it in Settings → **Update to 1.0.8** (or download below).
 
 - **Large sessions ask first:** loading a big session on an account that hasn't cached it can cost a lot of usage. When a session of 400k tokens or more hits a limit, Auto swap still moves to the next account, but the session isn't continued by itself. The panel (macOS) or tray menu (Windows) offers **Continue** or **Don't**. Turn this off with Settings → **Skip large sessions**.
 - **Wait for a near reset:** if Claude's 5-hour limit resets within 15 minutes, the app waits instead of switching accounts. Turn this off with Settings → **Wait for a near reset**.
+- **Claude Code mod (optional):** Settings → **Claude Code mod** installs a small Claude Code mod that gives the app live usage straight from Claude Code (after every turn, also in the VS Code extension) and shows the status line in a spot of its own, so your own status line is left alone. The row shows whether it's installed and active.
 - **Context in the status line:** the app's Claude Code status line shows the session's context (`ctx 183k · 82% left`).
 
 ## Download
