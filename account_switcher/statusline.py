@@ -14,10 +14,26 @@ the user's own command, so their status line never breaks.
 import json
 import subprocess
 import sys
+import time
+from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
+# Bright colours, so they read on dark and light terminals alike.
+ANSI = {"icon": "93", "dim": "90", "label": "94", "good": "92", "warn": "93", "bad": "91"}
+CACHE_FOR = 180  # seconds: the last line stands in while the app is busy (so the line doesn't blink out)
 
-def report(state, data):
+
+def paint(parts):
+    """The coloured pieces ([{"t": text, "c": colour name}]) as one string with ANSI colours."""
+    return "".join(f"\x1b[{ANSI[p['c']]}m{p['t']}\x1b[0m" if p.get("c") in ANSI else p["t"] for p in parts)
+
+
+def left_color(left):
+    return "good" if left > 30 else "warn" if left > 10 else "bad"
+
+
+def report(state, data, cache=None):
     limits = data.get("rate_limits")
     try:
         body = json.dumps({"rate_limits": limits if isinstance(limits, dict) else None,
@@ -29,9 +45,33 @@ def report(state, data):
         if not isinstance(answer, dict):
             return None, None
         limits = answer.get("rate_limits")
-        return answer.get("line"), limits if isinstance(limits, dict) else None
+        line = answer.get("line")
+        parts = answer.get("parts") if isinstance(answer.get("parts"), list) else None
+        shown = (paint(parts) if parts else line) if line else None
+        remember(cache, shown)
+        return shown, limits if isinstance(limits, dict) else None
+    except HTTPError:
+        return None, None  # the app refused (a token from before it restarted): nothing, not an old line
     except (OSError, ValueError, KeyError, TypeError):
-        return None, None
+        return recall(cache), None  # the app is busy or gone: the last line for a moment, not a blank one
+
+
+def remember(cache, line):
+    if cache is None:
+        return
+    try:
+        if line:
+            Path(cache).write_text(json.dumps({"at": time.time(), "line": line}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def recall(cache):
+    try:
+        saved = json.loads(Path(cache).read_text(encoding="utf-8")) if cache else None
+        return saved["line"] if saved and time.time() - saved["at"] < CACHE_FOR else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 MARKER = "\x1b[2m⇄ LimitSwitcher\x1b[0m"  # dim: shown at the end of the user's own line while the app runs
@@ -54,6 +94,15 @@ def context_part(data):
     if isinstance(left, (int, float)) and not isinstance(left, bool):
         text += f" · {max(0, min(100, int(left)))}% left"
     return text
+
+
+def context_painted(data):
+    """The same, coloured: "ctx 183k" plain, its "% left" by how much is left."""
+    text = context_part(data)
+    if text is None or " · " not in text:
+        return text
+    count, left = text.split(" · ", 1)
+    return f"{count} · " + paint([{"t": left, "c": left_color(int(left.split("%")[0]))}])
 
 
 def run_previous(command, raw):
@@ -83,7 +132,8 @@ def main(argv):
             state = json.load(handle)
     except (OSError, ValueError, IndexError):
         state = {}
-    line, limits = report(state, data if isinstance(data, dict) else {}) if state.get("url") else (None, None)
+    cache = str(Path(argv[1]).with_name("statusline-cache.json")) if len(argv) > 1 else None
+    line, limits = report(state, data if isinstance(data, dict) else {}, cache) if state.get("url") else (None, None)
     previous = state.get("statusline")
     if previous:
         if limits and isinstance(data, dict):
@@ -96,7 +146,7 @@ def main(argv):
         output = run_previous(previous, raw)
         write(with_marker(output) if line else output)  # the marker only while the app answers
     elif line:
-        extra = context_part(data) if isinstance(data, dict) else None
+        extra = context_painted(data) if isinstance(data, dict) else None
         write((line + (" · " + extra if extra else "") + "\n").encode("utf-8"))
     return 0
 

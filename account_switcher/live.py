@@ -85,6 +85,26 @@ def login_mark(secret):
              or (((secret.get("auth") or {}).get("tokens") or {}).get("refresh_token")) or "")
     return hashlib.sha256(token.encode()).hexdigest()[:16] if token else ""
 
+def level_color(left):
+    """Green with plenty left, yellow in the middle, red when low (the full view's thresholds)."""
+    return "good" if left > 30 else "warn" if left > 10 else "bad"
+
+
+class StatusLine(str):
+    """The line for Claude Code's status line, as plain text, with its coloured pieces in `parts`:
+    [{"t": text, "c": colour name or None}] (icon, dim, label, good, warn, bad)."""
+
+    def __new__(cls, groups):
+        parts = []
+        for index, group in enumerate(groups):
+            if index:
+                parts.append({"t": " · ", "c": "dim"})
+            parts.extend({"t": text, "c": color} for text, color in group)
+        line = super().__new__(cls, "".join(piece["t"] for piece in parts))
+        line.parts = parts
+        return line
+
+
 class LiveAccounts:
     def __init__(self, notify=lambda *_: None, vault=None, providers=None):
         self.notify = notify
@@ -658,12 +678,13 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        parts = ["⇄ LimitSwitcher", self.shown_name(account_id)]
+        groups = [[("⇄", "icon"), (" ", None), ("LimitSwitcher", "dim")], [(self.shown_name(account_id), None)]]
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"
-                parts.append(f"{label} {max(0, math.floor(100 - window['used'] + 1e-6))}% left")  # rounded down
-        return " · ".join(parts)
+                left = max(0, math.floor(100 - window["used"] + 1e-6))  # rounded down
+                groups.append([(label, "label"), (" ", None), (f"{left}% left", level_color(left))])
+        return StatusLine(groups)
 
     def shown_name(self, account_id):
         """The account as the app shows it: its email, or in name mode its name ("Claude 2" when

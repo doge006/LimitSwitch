@@ -1,16 +1,15 @@
-The app offers it in Settings → **Update to 1.0.8** (or download below).
+The app offers it in Settings → **Update to 1.0.9** (or download below).
 
 ## Fixed
 
-- **Auto resume no longer waits behind Claude Code's usage-limit dialog:** with Claude Code's own "continue automatically" setting off, a limit opened a "What do you want to do?" dialog, and the app's continue only ran after you answered it. Auto resume now turns that setting on while it's on (your own value is put back when it's off or the app quits), so Claude Code shows a one-line wait instead. Claude Code cancels that wait when the account is switched, and the hook skips its own continue if the session already went on by itself.
-- **The usage-limit panel no longer stops redrawing:** a bar animating to zero size could make the panel or taskbar view fail with "y1 must be greater than or equal to y0". Every drawing path now skips shapes with no size.
+- **The Claude Code Status mod row in Settings is readable:** its state ("Installed · run /reload-plugins in an open session") was cut off with "…". It now wraps onto a second line, and the row is named **Claude Code Status mod**.
+- **The Claude Code Status mod's line shows more reliably:** it no longer depends on the "Claude Code status line" switch (installing the mod is the choice to see it), it stays for up to 2 minutes while the app has nothing to show (a swap in progress, a busy moment), and it asks for a line again by itself when it's empty (after a `/clear`, say), instead of waiting for the next reply.
+- **The status line no longer blinks out:** when the app was busy for a moment, the status line script showed nothing until its next run. It now shows the last line for up to 3 minutes meanwhile (and nothing after the app refuses it, for example with an old token).
 
 ## New
 
-- **Large sessions ask first:** loading a big session on an account that hasn't cached it can cost a lot of usage. When a session of 400k tokens or more hits a limit, Auto swap still moves to the next account, but the session isn't continued by itself. The panel (macOS) or tray menu (Windows) offers **Continue** or **Don't**. Turn this off with Settings → **Skip large sessions**.
-- **Wait for a near reset:** if Claude's 5-hour limit resets within 15 minutes, the app waits instead of switching accounts. Turn this off with Settings → **Wait for a near reset**.
-- **Claude Code mod (optional):** Settings → **Claude Code mod** installs a small Claude Code mod that gives the app live usage straight from Claude Code (after every turn, also in the VS Code extension) and shows the status line in a spot of its own, so your own status line is left alone. The row shows whether it's installed and active.
-- **Context in the status line:** the app's Claude Code status line shows the session's context (`ctx 183k · 82% left`).
+- **A coloured status line:** the icon is yellow and "LimitSwitcher" grey, **5h** and **1w** are blue, and what's left is green with plenty left, yellow in the middle and red when low (the context's "% left" too). This is the line the app shows in Claude Code, and the mod's line above the prompt.
+- **The Claude Code Status mod draws the line itself,** above the prompt, in those colours (it used a plain pinned line before).
 
 ## Download
 
