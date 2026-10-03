@@ -286,8 +286,10 @@ describe('notes name what they removed', () => {
     expect(note).toContain('resolve_account')
     expect(note).toContain('limit_retries=17')
     expect(note).toContain('Re-run the tool before relying on its details')
+    expect(note).not.toContain('npm run build') // still shown in the call itself: not named again
     const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
     expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
+    expect(trimText(middle, 900, 400, new Set(), new Set(['SessionLedger']))).not.toContain('It held') // shown elsewhere
   })
 })
 

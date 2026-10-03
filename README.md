@@ -221,12 +221,12 @@ You can also run it by hand in any session: `/compact limitswitcher:jev-compact`
 
 | | conversation smaller | after compaction (Claude Code's count) | facts lost that Claude used later | also |
 |---|---|---|---|---|
-| **this** | 42% | 116k | **6** | nothing deleted; errors, your text, recent messages untouched |
+| **this** | 44% | 116k | **2** | nothing deleted; errors, your text, recent messages untouched |
 | cc-mod-jev | 62% | 104k | 353 | deletes calls, cuts error outputs |
 | HAR5HA jev-compact | 75% | 97k | 379 | cuts error outputs, rewrites your text |
 | fast-jev-compaction | 90% | 33k | 499 | deletes almost every call, touches the newest messages |
 
-Any compaction also drops the old system notices Claude Code repeats through a session, which is why every row ends far below the 512k it started at. Every note this one leaves names what it removed (the names, paths and values it held, within 600 characters), so Claude re-checks instead of guessing; that cut the facts lost from about 30 to 6 for 8k tokens. cc-mod-jev ends 12k tokens smaller for about 60 times the loss. Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
+Any compaction also drops the old system notices Claude Code repeats through a session, which is why every row ends far below the 512k it started at. Every note this one leaves names what it removed and nothing else still shows (the names, paths and values it held), so Claude re-checks instead of guessing; that cut the facts lost from about 30 to 2. cc-mod-jev ends 12k tokens smaller for over 150 times the loss. Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
 
 ## Claude Code status line
 

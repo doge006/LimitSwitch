@@ -31,11 +31,11 @@ export function stubText(call: ToolCall, superseded: boolean, index: readonly st
 }
 
 /** The middle of `text` replaced by a note (naming what it held), or `text` when there is nothing to cut. */
-export function trimText(text: string, head: number, tail: number, known: ReadonlySet<string> = new Set()): string {
+export function trimText(text: string, head: number, tail: number, known: ReadonlySet<string> = new Set(), visible: ReadonlySet<string> = new Set()): string {
   if (text.length <= head + tail) return text
   const middle = text.slice(head, text.length - tail)
   const omitted = middle.length
-  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
+  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, undefined, visible))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
 }
 
 /** A file-writing tool's input with each string longer than `max` cut to its head and tail. */
@@ -62,6 +62,7 @@ export function editsFor(
   calls: readonly ToolCall[],
   decisions: readonly Decision[],
   options: { trimHeadChars: number; trimTailChars: number; maxWriteInputChars: number },
+  visible: ReadonlySet<string> = new Set(),
 ): Map<string, Edit> {
   const byId = new Map(calls.map((call) => [call.id, call] as const))
   const edits = new Map<string, Edit>()
@@ -72,9 +73,9 @@ export function editsFor(
     if (!call || decision.action === 'pinned') continue
     const edit: Edit = {}
     if (decision.action === 'stub' || decision.action === 'superseded') {
-      edit.result = stubText(call, decision.action === 'superseded', factIndex(call.resultText, known))
+      edit.result = stubText(call, decision.action === 'superseded', factIndex(call.resultText, known, undefined, visible))
     } else if (decision.action === 'trim') {
-      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known)
+      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, visible)
       if (text !== call.resultText) edit.result = text
     }
     if (WRITE_TOOLS.has(call.tool) || SCRIPT_TOOLS.has(call.tool)) {

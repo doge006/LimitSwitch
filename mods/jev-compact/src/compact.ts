@@ -4,7 +4,8 @@
 // The flow (state fitting, batching) follows cc-mod-jev (MIT, Jay W); the decisions differ: see
 // DecisionAction in types.ts and THIRD-PARTY-NOTICES.txt.
 
-import { applyEdits, editsFor } from './apply.ts'
+import { applyEdits, editsFor, NOTE_TAG } from './apply.ts'
+import { factsIn } from './facts.ts'
 import { dedupe } from './dedupe.ts'
 import { cheapToRedo } from './kinds.ts'
 import { noulOf, questionFor, questionName } from './questions.ts'
@@ -158,16 +159,26 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
   }
   decisions.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
 
-  const edits = editsFor(calls, decisions, options)
-  if (options.dedupe) {
-    // Lines a newer output shows again fold out of the older one: nothing is lost (see dedupe.ts)
-    const results = new Map(calls.map((call) => [call.tool_use_id, edits.get(call.tool_use_id)?.result ?? call.resultText] as const))
-    for (const id of dedupe(calls, decisions, results)) {
-      const call = calls.find((c) => c.id === id)!
-      edits.set(call.tool_use_id, { ...edits.get(call.tool_use_id), result: results.get(call.tool_use_id)! })
-      stats.folded += 1
+  const build = (visible?: ReadonlySet<string>) => {
+    const edits = editsFor(calls, decisions, options, visible)
+    let folded = 0
+    if (options.dedupe) {
+      // Lines a newer output shows again fold out of the older one: nothing is lost (see dedupe.ts)
+      const results = new Map(calls.map((call) => [call.tool_use_id, edits.get(call.tool_use_id)?.result ?? call.resultText] as const))
+      for (const id of dedupe(calls, decisions, results)) {
+        const call = calls.find((c) => c.id === id)!
+        edits.set(call.tool_use_id, { ...edits.get(call.tool_use_id), result: results.get(call.tool_use_id)! })
+        folded += 1
+      }
     }
+    return { edits, folded }
   }
+  // Twice: the notes name only what the conversation no longer shows anywhere after the compaction
+  const first = applyEdits(messages, build().edits)
+  const shown = factsIn(first.map((m) => [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input)),
+    ...(m.toolResults ?? []).map((r) => r.text.split('\n').filter((line) => !line.includes(NOTE_TAG)).join('\n'))].join('\n')).join('\n'))
+  const { edits, folded } = build(shown)
+  stats.folded = folded
   const output = applyEdits(messages, edits)
   stats.messagesAfter = output.length
   stats.charsAfter = transcriptChars(output)
