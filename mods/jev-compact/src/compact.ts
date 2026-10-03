@@ -13,15 +13,15 @@ import { collectToolCalls, pairChars, supersededCalls } from './transcript.ts'
 import type { CompactOptions, CompactResult, CompactStats, Decision, JevAnswer, JevAsker, JevQuestions, Message, ToolCall } from './types.ts'
 
 export const DEFAULT_OPTIONS: CompactOptions = {
-  keepThreshold: 0.5,
-  stubThreshold: 0.3,
-  cheapKeepThreshold: 0.6,
+  keepThreshold: 0.55,
+  stubThreshold: 0.35,
+  cheapKeepThreshold: 0.62,
   cheapStubThreshold: 0.45,
   preserveRecentMessages: 8,
   minPairChars: 400,
-  trimHeadChars: 1200,
-  trimTailChars: 600,
-  maxWriteInputChars: 1200,
+  trimHeadChars: 900,
+  trimTailChars: 400,
+  maxWriteInputChars: 600,
   maxStateTokens: 20000,
   maxRequestTokens: 28000,
 }

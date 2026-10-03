@@ -9,8 +9,9 @@
 //   --budget 0.15     stop before a request once this many dollars were spent in this run
 //   --decisions       print every asked call's decision and probability (to judge the quality by eye)
 //   --quality         hindsight test: compact the session as it stood at 1/4, 2/4 and 3/4 of the way, then
-//                     count the facts (names, paths, long numbers) the assistant used after that point that
-//                     only a removed output held: what it would have had to get again, or lacked
+//                     count the project facts (names, paths, values; not plain words or standard-library
+//                     names) the assistant used from memory after that point that only a removed output
+//                     held: what it would have had to get again, or lacked
 //
 // Token counts are estimates (3.2 characters per token, the same on both sides); the transcript's
 // own last `usage` is printed beside them so the estimate can be checked against what Claude saw.
@@ -76,7 +77,11 @@ export function messagesOf(jsonl: string): { messages: Message[]; contextTokens?
 }
 
 const FACT = /[A-Za-z_][A-Za-z0-9_./-]{7,}|\b\d{4,}\b/g
-const factsOf = (text: string) => new Set(text.match(FACT) ?? [])
+// Project facts only: identifier-like (a _ . / digit or mixed case), not a standard-library call or a
+// plain word: those the model knows without the conversation
+const STDLIB = /^(time|json|os|sys|re|io|math|random|shutil|subprocess|threading|logging|pathlib|Path|datetime|collections|itertools|functools|typing|unittest|self\.assert|Object|Date|Math|JSON|Promise|Array|String|Number|console|process|fs|path|Buffer|Map|Set|Reflect|Symbol|window|document)\.|\.(json|py|ts|js|md|txt|tsx)$/
+const projectFact = (f: string) => (/[_./\d]|[a-z][A-Z]/.test(f) && !STDLIB.test(f)) || /^[A-Z][A-Z0-9_]{5,}$/.test(f)
+const factsOf = (text: string) => new Set((text.match(FACT) ?? []).filter(projectFact))
 const everything = (messages: readonly Message[]) => messages.map((m) =>
   [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input)), ...(m.toolResults ?? []).map((r) => r.text)].join('\n')).join('\n')
 
@@ -90,8 +95,14 @@ export async function hindsight(messages: readonly Message[], asker: JevAsker): 
     before += result.stats.charsBefore
     saved += result.stats.charsBefore - result.stats.charsAfter
     const kept = factsOf(everything(result.messages))
-    const used = factsOf(messages.slice(k).filter((m) => m.role === 'assistant')
-      .map((m) => [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input))].join('\n')).join('\n'))
+    // used from memory: written by the assistant after the cut before any newer tool output showed it again
+    const used = new Set<string>(), seenAgain = new Set<string>()
+    for (const m of messages.slice(k)) {
+      if (m.role === 'assistant') {
+        for (const f of factsOf([m.text, ...m.toolUses.map((u) => JSON.stringify(u.input))].join('\n'))) if (!seenAgain.has(f)) used.add(f)
+      }
+      for (const r of m.toolResults ?? []) for (const f of factsOf(r.text)) seenAgain.add(f)
+    }
     const now = new Map(result.messages.flatMap((m) => (m.toolResults ?? []).map((r) => [r.tool_use_id, r.text] as const)))
     for (const m of prefix) {
       for (const r of m.toolResults ?? []) {

@@ -96,7 +96,7 @@ describe('compact', () => {
   })
 
   test('an unsure answer keeps the head and tail', async () => {
-    const result = await compact(session(), fakeJev(() => 0.3), { preserveRecentMessages: 7 })
+    const result = await compact(session(), fakeJev(() => 0.4), { preserveRecentMessages: 7 })
     const text = byLabel(result.messages, 'b1').text
     expect(text.startsWith('step ok')).toBe(true)
     expect(text.endsWith('step ok\n')).toBe(true)
@@ -108,7 +108,7 @@ describe('compact', () => {
     const result = await compact(session(), fakeJev(() => 0.9), { preserveRecentMessages: 7 })
     const write = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 'w1')!
     expect(write.input.file_path).toBe('/p/b.ts')
-    expect(String(write.input.content).length).toBeLessThan(2200)
+    expect(String(write.input.content).length).toBeLessThan(800)
     expect(String(write.input.content)).toContain('the file on disk has them')
   })
 
@@ -160,10 +160,10 @@ describe('pieces', () => {
     const options = resolveOptions()
     const [call] = collectToolCalls([user('a'), use('x', 'Bash', {}), out('x', LOG), said('b')], 0)
     expect(decide(call!, 0.6, options).action).toBe('keep')
-    expect(decide(call!, 0.3, options).action).toBe('trim')
+    expect(decide(call!, 0.4, options).action).toBe('trim')
     expect(decide(call!, 0.1, options).action).toBe('stub')
     const [small] = collectToolCalls([user('a'), use('y', 'Bash', {}), out('y', 'z'.repeat(900)), said('b')], 0)
-    expect(decide(small!, 0.3, options).action).toBe('keep')
+    expect(decide(small!, 0.4, options).action).toBe('keep')
   })
 
   test('a partial read never supersedes, nor is superseded', () => {
