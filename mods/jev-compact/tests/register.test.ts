@@ -87,6 +87,13 @@ describe('jev-compact', () => {
     expect(w.requests[0]!.auth).toBe('Bearer sk-or-file')
   })
 
+  test('`/compact limitswitcher:jev-compact` typed by hand prunes too', async ($, on) => {
+    const w = world(on, { env: { OPENROUTER_API_KEY: 'sk-or-env' } })
+    const result = await $.session.compact({ trigger: 'manual', instructions: MARKER, messages: transcript() })
+    expect(w.core).toEqual([])
+    expect(result.messages![2]!.toolResults![0]!.text).toContain('[LimitSwitcher removed')
+  })
+
   test('no key: a final skip, and Claude is never asked', async ($, on) => {
     const w = world(on)
     const result = await $.session.compact({ trigger: 'plugin', instructions: MARKER, messages: transcript() })
