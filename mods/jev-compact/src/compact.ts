@@ -5,6 +5,7 @@
 // DecisionAction in types.ts and THIRD-PARTY-NOTICES.txt.
 
 import { applyEdits, editsFor } from './apply.ts'
+import { dedupe } from './dedupe.ts'
 import { cheapToRedo } from './kinds.ts'
 import { noulOf, questionFor, questionName } from './questions.ts'
 import { fitState, goalOf } from './state.ts'
@@ -24,6 +25,7 @@ export const DEFAULT_OPTIONS: CompactOptions = {
   maxWriteInputChars: 600,
   maxStateTokens: 20000,
   maxRequestTokens: 28000,
+  dedupe: true,
 }
 
 const REQUEST_OVERHEAD_TOKENS = 200
@@ -47,6 +49,7 @@ export function resolveOptions(options: Partial<CompactOptions> = {}): CompactOp
     maxWriteInputChars: Math.floor(finite(options.maxWriteInputChars, d.maxWriteInputChars, 200)),
     maxStateTokens: finite(options.maxStateTokens, d.maxStateTokens, 1),
     maxRequestTokens: finite(options.maxRequestTokens, d.maxRequestTokens, 1),
+    dedupe: options.dedupe ?? d.dedupe,
   }
   if (options.goal) resolved.goal = options.goal
   return resolved
@@ -94,7 +97,7 @@ function newStats(messages: readonly Message[], calls: readonly ToolCall[]): Com
   return {
     messagesBefore: messages.length, messagesAfter: messages.length, charsBefore: chars, charsAfter: chars,
     tokensBefore: tokens, tokensAfter: tokens, calls: calls.length, pinned: 0, small: 0, superseded: 0,
-    asked: 0, kept: 0, trimmed: 0, stubbed: 0, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
+    asked: 0, kept: 0, trimmed: 0, stubbed: 0, folded: 0, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
   }
 }
 
@@ -155,7 +158,17 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
   }
   decisions.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
 
-  const output = applyEdits(messages, editsFor(calls, decisions, options))
+  const edits = editsFor(calls, decisions, options)
+  if (options.dedupe) {
+    // Lines a newer output shows again fold out of the older one: nothing is lost (see dedupe.ts)
+    const results = new Map(calls.map((call) => [call.tool_use_id, edits.get(call.tool_use_id)?.result ?? call.resultText] as const))
+    for (const id of dedupe(calls, decisions, results)) {
+      const call = calls.find((c) => c.id === id)!
+      edits.set(call.tool_use_id, { ...edits.get(call.tool_use_id), result: results.get(call.tool_use_id)! })
+      stats.folded += 1
+    }
+  }
+  const output = applyEdits(messages, edits)
   stats.messagesAfter = output.length
   stats.charsAfter = transcriptChars(output)
   stats.tokensAfter = Math.ceil(stats.charsAfter / 3.2)
@@ -172,6 +185,6 @@ export function reductionRatio(result: CompactResult): number {
 export function summarize(result: CompactResult): string {
   const s = result.stats
   return `${Math.round(reductionRatio(result) * 100)}% smaller (~${Math.round(s.tokensBefore / 1000)}k to ~${Math.round(s.tokensAfter / 1000)}k tokens); ` +
-    `${s.asked} asked: ${s.kept} kept, ${s.trimmed} trimmed, ${s.stubbed} stubbed; ${s.superseded} superseded, ${s.pinned} pinned, ${s.small} small; ` +
+    `${s.asked} asked: ${s.kept} kept, ${s.trimmed} trimmed, ${s.stubbed} stubbed; ${s.folded} folded, ${s.superseded} superseded, ${s.pinned} pinned, ${s.small} small; ` +
     `${s.requests} Jev request(s), $${s.jevCostUsd.toFixed(5)}`
 }

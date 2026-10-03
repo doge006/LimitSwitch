@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { NOTE_TAG, shortenInput, trimText } from '../src/apply.ts'
 import { batchCalls, compact, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
 import { cheapToRedo } from '../src/kinds.ts'
+import { fold, lineKey } from '../src/dedupe.ts'
 import { parseResponse } from '../src/openrouter.ts'
 import { maskSecrets } from '../src/secrets.ts'
 import { goalOf, withoutReminders } from '../src/state.ts'
@@ -271,5 +272,33 @@ describe('cheap to get again', () => {
     expect(decide(run, 0.55, options).action).toBe('keep')
     expect(decide(read, 0.4, options).action).toBe('stub')
     expect(decide(run, 0.4, options).action).toBe('trim')
+  })
+})
+
+describe('dedupe', () => {
+  const code = Array.from({ length: 60 }, (_, i) => `    const value_${i} = compute_${i}(input)`).join('\n')
+  test('lines a newer output shows again fold out of the older one; the newer stays whole', async () => {
+    const view = (from: number, to: number) => code.split('\n').slice(from, to).map((l, i) => `${from + i + 1}\t${l}`).join('\n')
+    const ms = [
+      user('fix it', 'h0'),
+      use('v1', 'Bash', { command: 'sed -n 1,60p a.py' }), out('v1', view(0, 60)),
+      use('v2', 'Read', { file_path: '/a.py', offset: 10, limit: 40 }), out('v2', view(10, 50)),
+      said('ok'), user('go'), said('a'), user('b'), said('c'), user('d'), said('e'), user('f'), said('g'),
+    ]
+    const result = await compact(ms, fakeJev(() => 0.9), { preserveRecentMessages: 8 })
+    const older = byLabel(result.messages, 'v1').text
+    expect(older).toContain('40 lines shown again in a later output')
+    expect(older).toContain('const value_0 = compute_0')   // only shown here: kept
+    expect(older).not.toContain('const value_20 = compute_20') // shown again in v2: folded
+    expect(byLabel(result.messages, 'v2').text).toBe(view(10, 50))
+    expect(result.stats.folded).toBe(1)
+  })
+
+  test('short repeats and outputs that are too small to matter never fold', () => {
+    expect(fold('}\n}\n}\nreturn x', new Set(['}', 'return x']))).toBeNull()
+    expect(fold('a_long_line_that_repeats = 1', new Set(['a_long_line_that_repeats = 1']))).toBeNull() // saves < 300 chars
+    expect(lineKey('  12→const x = 1')).toBe('const x = 1')
+    expect(lineKey('src/a.py:12:def go():')).toBe('def go():')
+    expect(lineKey('12:\tfoo')).toBe('foo')
   })
 })

@@ -110,6 +110,8 @@ export type CompactOptions = {
   maxWriteInputChars: number
   maxStateTokens: number
   maxRequestTokens: number
+  /** Fold the lines an older output shares with a newer one (see dedupe.ts). */
+  dedupe: boolean
 }
 
 export type CompactStats = {
@@ -127,6 +129,8 @@ export type CompactStats = {
   kept: number
   trimmed: number
   stubbed: number
+  /** Outputs whose lines shown again in a newer output were folded into a note. */
+  folded: number
   stateTokens: number
   stateStage: number
   requests: number
