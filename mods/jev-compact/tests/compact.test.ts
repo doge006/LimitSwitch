@@ -275,6 +275,22 @@ describe('cheap to get again', () => {
   })
 })
 
+describe('notes name what they removed', () => {
+  test('a stub lists the names, paths and values it held; a trim lists those of its middle', async () => {
+    const body = 'def resolve_account(user_id):\n    path = "/srv/app/accounts.py"\n    limit_retries=17\n' + 'filler words here\n'.repeat(300)
+    const ms = [user('fix it', 'h0'), use('x', 'Bash', { command: 'npm run build' }), out('x', body), said('ok'),
+      user('a'), said('b'), user('c'), said('d'), user('e'), said('f'), user('g'), said('h')]
+    const stubbed = await compact(ms, fakeJev(() => 0.1), { preserveRecentMessages: 8 })
+    const note = byLabel(stubbed.messages, 'x').text
+    expect(note).toContain('It held:')
+    expect(note).toContain('resolve_account')
+    expect(note).toContain('limit_retries=17')
+    expect(note).toContain('Re-run the tool before relying on its details')
+    const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
+    expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
+  })
+})
+
 describe('dedupe', () => {
   const code = Array.from({ length: 60 }, (_, i) => `    const value_${i} = compute_${i}(input)`).join('\n')
   test('lines a newer output shows again fold out of the older one; the newer stays whole', async () => {

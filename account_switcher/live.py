@@ -75,6 +75,8 @@ NEAR_RESET = 15 * 60     # seconds: a 5-hour limit that resets this soon is wait
 PENDING_TTL = 6 * 3600   # a continue nobody answered is forgotten (the hook gives up after this too)
 LARGE_CONTEXT = 400_000  # tokens (about 6% of a plan's 5-hour usage at ~10% per 700k): costly to load on an account that hasn't cached it
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
+AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
+                 "held. Re-run the tool before relying on exact details from one of them.")
 JEV_WAIT = 240           # seconds a session's Jev compaction may take (3 tries 30 s apart) before it goes on without
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
@@ -789,7 +791,7 @@ class LiveAccounts:
         return bool(spent) and all(w["key"] == "five_hour" and w.get("resetsAt") and 0 < w["resetsAt"] - now <= NEAR_RESET
                                    for w in spent)
 
-    def _after_swap(self, session, tokens, afk, now):
+    def _after_swap(self, session, tokens, afk, now, compacted=False):
         """What the session does once its account was swapped (and compacted, when that was on)."""
         state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
         if afk and self.meta.get("afkSkipLarge", True) and isinstance(tokens, int) and tokens >= LARGE_CONTEXT:
@@ -803,7 +805,7 @@ class LiveAccounts:
         state["continues"].append(now)
         self.afk_continues.append(now)
         state["waiting"] = False
-        return {"action": "continue", "message": AFK_NOTE}
+        return {"action": "continue", "message": AFK_NOTE + (AFK_COMPACTED if compacted else "")}
 
     # ---------- Jev compaction before a swap (mods/limit-status + mods/jev-compact) ----------
     def note_mod_session(self, session):
@@ -903,7 +905,7 @@ class LiveAccounts:
             tokens = job["tokens"]
             if isinstance(tokens, int) and job.get("saved"):
                 tokens = max(0, tokens - job["saved"])
-            return self._after_swap(session, tokens, job["afk"], now)
+            return self._after_swap(session, tokens, job["afk"], now, compacted=job["status"] == "done")
         pending = self.pending_resumes.get(session or "?")
         if pending is not None:  # a large session the user was asked about
             now = pending["seen"] = time.time()

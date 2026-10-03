@@ -208,7 +208,7 @@ Install it from **Settings → Claude Code Status mod → Install**. The app run
 Swapping a long session to another account costs a cold start: the new account has none of the session cached, so its next turn reads the whole context uncached. With **Settings → Jev compaction** on, LimitSwitcher swaps the account as usual, then has the session compacted before it goes on:
 
 1. The session hits its limit; the account is swapped at once.
-2. The session's mod runs the compaction. [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole; a file view or search (cheap to read again) needs a higher score to stay whole than a test run or a web page. A file read again later is replaced by a note without asking, and long old scripts and file contents Claude wrote are shortened (what they did is on disk).
+2. The session's mod runs the compaction (every shortened output keeps a note listing the names, paths and values it held). [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole; a file view or search (cheap to read again) needs a higher score to stay whole than a test run or a web page. A file read again later is replaced by a note without asking, and long old scripts and file contents Claude wrote are shortened (what they did is on disk).
 3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev compacting…`.
 
 What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
@@ -221,12 +221,12 @@ You can also run it by hand in any session: `/compact limitswitcher:jev-compact`
 
 | | conversation smaller | after compaction (Claude Code's count) | facts lost that Claude used later | also |
 |---|---|---|---|---|
-| **this** | 39-42% | 108k | **27-32** | nothing deleted; errors, your text, recent messages untouched |
+| **this** | 42% | 116k | **6** | nothing deleted; errors, your text, recent messages untouched |
 | cc-mod-jev | 62% | 104k | 353 | deletes calls, cuts error outputs |
 | HAR5HA jev-compact | 75% | 97k | 379 | cuts error outputs, rewrites your text |
 | fast-jev-compaction | 90% | 33k | 499 | deletes almost every call, touches the newest messages |
 
-Any compaction also drops the old system notices Claude Code repeats through a session, which is why every row ends far below the 512k it started at. cc-mod-jev ends 4k tokens smaller than this one for 11 times the loss; HAR5HA 11k smaller for 12 times; fast-jev-compaction 75k smaller for 16 times, by deleting almost every call. Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
+Any compaction also drops the old system notices Claude Code repeats through a session, which is why every row ends far below the 512k it started at. Every note this one leaves names what it removed (the names, paths and values it held, within 600 characters), so Claude re-checks instead of guessing; that cut the facts lost from about 30 to 6 for 8k tokens. cc-mod-jev ends 12k tokens smaller for about 60 times the loss. Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
 
 ## Claude Code status line
 

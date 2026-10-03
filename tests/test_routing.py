@@ -713,7 +713,9 @@ class JevCompactionTests(unittest.TestCase):
         self.assertTrue(self.manager.compaction_done("s1", request["id"], "done", 120_000))
         self.assertFalse(self.manager.compacting("s1"))
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "wait", "seconds": 1, "restamp": True})
-        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        answer = self.manager.claude_limit("s1")
+        self.assertEqual(answer["action"], "continue")
+        self.assertIn("Re-run the tool before relying on exact details", answer["message"])  # told once, after a compaction
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # no second swap
 
     def test_off_or_not_ready_continues_at_once(self):
@@ -741,7 +743,9 @@ class JevCompactionTests(unittest.TestCase):
         request = self.manager.compaction_request("s1")
         self.manager.compaction_done("s1", request["id"], "failed", reason="Jev failed: 503")
         self.assertEqual(self.manager.claude_limit("s1")["action"], "wait")  # restamp
-        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        answer = self.manager.claude_limit("s1")
+        self.assertEqual(answer["action"], "continue")
+        self.assertNotIn("shortened", answer["message"])  # nothing was shortened
 
     def test_a_compaction_that_never_reports_is_given_up_on(self):
         self.ready()
