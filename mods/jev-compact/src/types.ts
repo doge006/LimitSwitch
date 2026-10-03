@@ -112,6 +112,8 @@ export type CompactOptions = {
   maxRequestTokens: number
   /** Fold the lines an older output shares with a newer one (see dedupe.ts). */
   dedupe: boolean
+  /** Budget mode (budget.ts): above 0, step outputs down until the conversation is this share of its size; -1 (the default) only on long sessions; 0 never. */
+  targetRatio: number
 }
 
 export type CompactStats = {
@@ -131,6 +133,8 @@ export type CompactStats = {
   stubbed: number
   /** Outputs whose lines shown again in a newer output were folded into a note. */
   folded: number
+  /** Steps budget mode took (an output kept whole trimmed, or a trimmed one turned into a note). */
+  budgetSteps: number
   stateTokens: number
   stateStage: number
   requests: number

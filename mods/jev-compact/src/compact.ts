@@ -6,6 +6,7 @@
 
 import { applyEdits, editsFor, NOTE_TAG } from './apply.ts'
 import { factsIn } from './facts.ts'
+import { LONG_SESSION_TOKENS, LONG_TARGET, tighten } from './budget.ts'
 import { dedupe } from './dedupe.ts'
 import { cheapToRedo } from './kinds.ts'
 import { noulOf, questionFor, questionName } from './questions.ts'
@@ -27,6 +28,7 @@ export const DEFAULT_OPTIONS: CompactOptions = {
   maxStateTokens: 20000,
   maxRequestTokens: 28000,
   dedupe: true,
+  targetRatio: -1,
 }
 
 const REQUEST_OVERHEAD_TOKENS = 200
@@ -51,6 +53,7 @@ export function resolveOptions(options: Partial<CompactOptions> = {}): CompactOp
     maxStateTokens: finite(options.maxStateTokens, d.maxStateTokens, 1),
     maxRequestTokens: finite(options.maxRequestTokens, d.maxRequestTokens, 1),
     dedupe: options.dedupe ?? d.dedupe,
+    targetRatio: Math.min(1, typeof options.targetRatio === 'number' && Number.isFinite(options.targetRatio) ? options.targetRatio : d.targetRatio),
   }
   if (options.goal) resolved.goal = options.goal
   return resolved
@@ -98,7 +101,7 @@ function newStats(messages: readonly Message[], calls: readonly ToolCall[]): Com
   return {
     messagesBefore: messages.length, messagesAfter: messages.length, charsBefore: chars, charsAfter: chars,
     tokensBefore: tokens, tokensAfter: tokens, calls: calls.length, pinned: 0, small: 0, superseded: 0,
-    asked: 0, kept: 0, trimmed: 0, stubbed: 0, folded: 0, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
+    asked: 0, kept: 0, trimmed: 0, stubbed: 0, folded: 0, budgetSteps: 0, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
   }
 }
 
@@ -158,6 +161,16 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
     }
   }
   decisions.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
+  // Budget mode: asked for, or by itself on a long session (the option at -1, the default)
+  const target = options.targetRatio < 0 ? (stats.tokensBefore > LONG_SESSION_TOKENS ? LONG_TARGET : 0) : options.targetRatio
+  if (target > 0 && target < 1) {
+    // Budget mode (long sessions): step the least needed, oldest first, down until the target fits
+    const estimate = transcriptChars(applyEdits(messages, editsFor(calls, decisions, options)))
+    stats.budgetSteps = tighten(calls, decisions, { ...options, targetRatio: target }, stats.charsBefore, estimate)
+    stats.kept = decisions.filter((d) => d.action === 'keep').length
+    stats.trimmed = decisions.filter((d) => d.action === 'trim').length
+    stats.stubbed = decisions.filter((d) => d.action === 'stub').length
+  }
 
   const build = (visible?: ReadonlySet<string>) => {
     const edits = editsFor(calls, decisions, options, visible)
@@ -197,5 +210,5 @@ export function summarize(result: CompactResult): string {
   const s = result.stats
   return `${Math.round(reductionRatio(result) * 100)}% smaller (~${Math.round(s.tokensBefore / 1000)}k to ~${Math.round(s.tokensAfter / 1000)}k tokens); ` +
     `${s.asked} asked: ${s.kept} kept, ${s.trimmed} trimmed, ${s.stubbed} stubbed; ${s.folded} folded, ${s.superseded} superseded, ${s.pinned} pinned, ${s.small} small; ` +
-    `${s.requests} Jev request(s), $${s.jevCostUsd.toFixed(5)}`
+    `${s.budgetSteps ? `budget mode: ${s.budgetSteps} step(s); ` : ''}${s.requests} Jev request(s), $${s.jevCostUsd.toFixed(5)}`
 }

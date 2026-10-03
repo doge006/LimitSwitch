@@ -320,3 +320,26 @@ describe('dedupe', () => {
     expect(lineKey('12:\tfoo')).toBe('foo')
   })
 })
+
+describe('budget mode', () => {
+  const long = (n: number) => {
+    const ms: Message[] = [user('build it', 'h0')]
+    for (let i = 0; i < n; i++) ms.push(use(`c${i}`, 'Bash', { command: `npm run step${i}` }), out(`c${i}`, `step ${i} ok\n`.repeat(400)))
+    for (let i = 0; i < 8; i++) ms.push(i % 2 ? said(`a${i}`) : user(`u${i}`))
+    return ms
+  }
+  test('steps the least needed, oldest first, until the target fits; the newest keep longest', async () => {
+    const plain = await compact(long(6), fakeJev(() => 0.9), { targetRatio: 0 })
+    expect(plain.stats.budgetSteps).toBe(0)
+    const tight = await compact(long(6), fakeJev(() => 0.9), { targetRatio: 0.6 })
+    expect(tight.stats.budgetSteps).toBeGreaterThan(0)
+    expect(tight.stats.charsAfter).toBeLessThan(plain.stats.charsAfter)
+    expect(byLabel(tight.messages, 'c0').text.length).toBeLessThanOrEqual(byLabel(tight.messages, 'c5').text.length)
+    expect(byLabel(tight.messages, 'c5').text).toBe('step 5 ok\n'.repeat(400)) // the newest, all else equal, stays whole
+  })
+
+  test('only long sessions get it by themselves', async () => {
+    const short = await compact(long(6), fakeJev(() => 0.9))
+    expect(short.stats.budgetSteps).toBe(0)
+  })
+})
