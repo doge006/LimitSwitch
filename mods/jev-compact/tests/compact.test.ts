@@ -111,6 +111,20 @@ describe('compact', () => {
     expect(String(write.input.content)).toContain('the file on disk has them')
   })
 
+  test("an old long script's input is shortened; a recent one stays whole", async () => {
+    const script = 'python3 - <<EOF\n' + 'edit()\n'.repeat(1000) + 'EOF'
+    const long = session()
+    long[3] = use('b1', 'Bash', { command: script, description: 'apply the edits' })
+    long[17] = use('t2', 'Bash', { command: script })
+    const result = await compact(long, fakeJev(() => 0.9), { preserveRecentMessages: 7 })
+    const old = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 'b1')!
+    expect(String(old.input.command).length).toBeLessThan(2200)
+    expect(String(old.input.command)).toContain('what the script did is on disk')
+    expect(old.input.description).toBe('apply the edits')
+    const recent = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 't2')!
+    expect(recent.input.command).toBe(script)
+  })
+
   test('the state Jev reads has no system reminders and no full outputs', async () => {
     const jev = fakeJev(() => 0.9)
     await compact(session(), jev, { preserveRecentMessages: 7 })
@@ -203,6 +217,17 @@ describe('pieces', () => {
     expect(text).not.toContain('hunter22')
     expect(text).not.toContain('ghp_abc')
     expect(back.c).toContain('plain text stays')
+  })
+
+  test('each question shows the call and its output, masked', async () => {
+    const jev = fakeJev(() => 0.9)
+    const leaky = session()
+    leaky[4] = out('b1', 'deploying with TOKEN=supersecretvalue123\n' + LOG)
+    await compact(leaky, jev, { preserveRecentMessages: 7 })
+    const questions = JSON.stringify(jev.asked[0]!.questions)
+    expect(questions).toContain('npm run build')
+    expect(questions).toContain('deploying with TOKEN=[masked]')
+    expect(questions).not.toContain('supersecretvalue123')
   })
 
   test('the state Jev reads is masked', async () => {

@@ -1,6 +1,6 @@
 // Rebuilds the transcript from the decisions. Nothing is summarised and nothing is removed whole:
 // an output is kept, trimmed to its head and tail, or replaced by a one-line note, and the long
-// inputs of file-writing tools are shortened (the file on disk has them). Every changed spot
+// inputs of file-writing tools and scripts are shortened (what they did is on disk). Every changed spot
 // says so, so the model re-runs a tool instead of guessing what was there.
 
 import type { Decision, Message, ToolCall, ToolResult, ToolUse } from './types.ts'
@@ -9,6 +9,15 @@ export const NOTE_TAG = '[LimitSwitcher'
 
 /** Tools whose long string inputs are file contents already on disk. */
 export const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+/**
+ * Tools whose long inputs are scripts: an old one's effect is on disk (or in its output, which is
+ * judged on its own). Measured on a real session: 20% of the transcript was such script inputs.
+ */
+export const SCRIPT_TOOLS = new Set(['Bash', 'PowerShell'])
+
+function inputNote(tool: string): string {
+  return WRITE_TOOLS.has(tool) ? 'the file on disk has them' : 'what the script did is on disk'
+}
 
 export function stubText(call: ToolCall, superseded: boolean): string {
   const why = superseded ? 'the same file is read again later in this conversation' : 'it was judged no longer needed'
@@ -22,14 +31,14 @@ export function trimText(text: string, head: number, tail: number): string {
 }
 
 /** A file-writing tool's input with each string longer than `max` cut to its head and tail. */
-export function shortenInput(input: Record<string, unknown>, max: number): Record<string, unknown> | null {
+export function shortenInput(input: Record<string, unknown>, max: number, tool = 'Write'): Record<string, unknown> | null {
   let changed = false
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === 'string' && value.length > max) {
       const head = Math.ceil(max * 0.6)
       const tail = max - head
-      out[key] = `${value.slice(0, head)}\n${NOTE_TAG} removed ${value.length - max} chars of this input before an account swap; the file on disk has them.]\n${value.slice(-tail)}`
+      out[key] = `${value.slice(0, head)}\n${NOTE_TAG} removed ${value.length - max} chars of this input before an account swap; ${inputNote(tool)}.]\n${value.slice(-tail)}`
       changed = true
     } else {
       out[key] = value
@@ -58,8 +67,8 @@ export function editsFor(
       const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars)
       if (text !== call.resultText) edit.result = text
     }
-    if (WRITE_TOOLS.has(call.tool)) {
-      const input = shortenInput(call.input, options.maxWriteInputChars)
+    if (WRITE_TOOLS.has(call.tool) || SCRIPT_TOOLS.has(call.tool)) {
+      const input = shortenInput(call.input, options.maxWriteInputChars, call.tool)
       if (input) edit.input = input
     }
     if (edit.result !== undefined || edit.input !== undefined) edits.set(call.tool_use_id, edit)

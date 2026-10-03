@@ -208,7 +208,7 @@ Install it from **Settings → Claude Code Status mod → Install**. The app run
 Swapping a long session to another account costs a cold start: the new account has none of the session cached, so its next turn reads the whole context uncached. With **Settings → Jev compaction** on, LimitSwitcher swaps the account as usual, then has the session compacted before it goes on:
 
 1. The session hits its limit; the account is swapped at once.
-2. The session's mod runs the compaction. [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole. A file read again later is replaced by a note without asking.
+2. The session's mod runs the compaction. [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole. A file read again later is replaced by a note without asking, and long old scripts and file contents Claude wrote are shortened (what they did is on disk).
 3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev compacting…`.
 
 What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
@@ -217,7 +217,7 @@ It costs no Claude usage (it works on a used-up account) and a fraction of a cen
 
 **Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction**, and give it an [OpenRouter key](https://openrouter.ai/keys): an `OPENROUTER_API_KEY=...` line in the `.env` file in LimitSwitcher's data folder (`%LOCALAPPDATA%\LimitSwitcher\.env`, or `~/Library/Application Support/LimitSwitcher/.env`), the `OPENROUTER_API_KEY` environment variable, or Claude Code's `settings.json` `env` block. The app only checks that a key is there; only the mod reads it.
 
-**How much it saves:** `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision).
+**How much it saves:** measured on a real 380k-token session (the one that built this), with the live Jev: the conversation 22% smaller (~41k tokens less), about 11% of the new account's whole cold start (the system prompt and tools can't be pruned), for half a cent; it errs on keeping things (two thirds of what Jev was asked about stayed whole). Tool-heavy sessions save more, chat-heavy ones less. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision).
 
 ## Claude Code status line
 

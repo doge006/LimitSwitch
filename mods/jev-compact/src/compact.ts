@@ -13,7 +13,7 @@ import type { CompactOptions, CompactResult, CompactStats, Decision, JevAnswer, 
 
 export const DEFAULT_OPTIONS: CompactOptions = {
   keepThreshold: 0.5,
-  stubThreshold: 0.2,
+  stubThreshold: 0.3,
   preserveRecentMessages: 8,
   minPairChars: 400,
   trimHeadChars: 1200,
@@ -110,7 +110,7 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
     } else if (superseded.has(call.id)) {
       stats.superseded += 1
       decisions.push({ id: call.id, tool: call.tool, action: 'superseded', chars })
-    } else if (chars < options.minPairChars) {
+    } else if (call.resultChars < options.minPairChars) { // nothing to gain on the output (a Write's long input is still shortened)
       stats.small += 1
       decisions.push({ id: call.id, tool: call.tool, action: 'small', chars })
     } else {

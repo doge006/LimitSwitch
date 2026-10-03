@@ -2,24 +2,33 @@
 // the call and whether its output should stay); calls are never removed here, so only the output's
 // question matters, which halves the question tokens.
 
+import { maskSecrets } from './secrets.ts'
+import { abridge } from './state.ts'
 import type { JevAnswer, JevQuestions, ToolCall } from './types.ts'
 
 export function questionName(call: ToolCall): string {
   return `need_${call.id}`
 }
 
-/** Phrased as a statement, so a high probability means "keep". */
+/**
+ * Phrased as a statement, so a high probability means "keep". The question carries the call's own
+ * input and the start and end of its output (masked): the conversation state Jev also reads is
+ * squeezed to fit its window in a long session, and without this it would judge each call nearly
+ * blind (measured: answers bunched within 0.11-0.27; with it they spread over 0.15-0.77).
+ */
 export function questionFor(call: ToolCall): JevQuestions {
+  const input = maskSecrets(abridge(JSON.stringify(call.input).replace(/\s+/g, ' '), 300))
+  const output = maskSecrets(abridge(call.resultText.replace(/\s+/g, ' ').trim(), 500))
   return {
     [questionName(call)]: {
       type: 'noul',
       instructions:
-        `The exact output of tool call ${call.id} (${call.tool}, ${call.resultChars} chars) must stay in the history ` +
-        'verbatim for the assistant to finish the goal well: it holds details the assistant will refer back to ' +
-        '(code it is editing, values, paths, errors, decisions) and that it could not cheaply get again.',
+        `Tool call ${call.id}: ${call.tool} ${input}\nIts output (${call.resultChars} chars), abridged: ${output}\n\n` +
+        'This output is still useful for the rest of the task: it is the current view of code or data the assistant ' +
+        'is still working on, or holds facts it will need again.',
       criteria: {
-        true: 'Still needed: later steps depend on its exact contents, or it is the latest view of something still being worked on.',
-        false: 'No longer needed: it was acted on and finished with, a later call superseded it, it is unrelated to the goal, or re-running the tool would give it again.',
+        true: 'It will be needed again: later steps depend on what it says.',
+        false: 'It is done with: acted on already, superseded by a later call, unrelated to the goal, or cheap to get again by re-running the tool.',
       },
     },
   }

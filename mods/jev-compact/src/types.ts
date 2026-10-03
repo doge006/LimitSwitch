@@ -99,11 +99,11 @@ export type CompactOptions = {
   /** Below: stubbed. Between the two: trimmed to head and tail. */
   stubThreshold: number
   preserveRecentMessages: number
-  /** Pairs smaller than this many characters are kept without asking. */
+  /** Outputs shorter than this many characters are kept without asking. */
   minPairChars: number
   trimHeadChars: number
   trimTailChars: number
-  /** A file-writing tool's string inputs longer than this are shortened (the file on disk has them). */
+  /** A file-writing tool's or script's string inputs longer than this are shortened (what they did is on disk). */
   maxWriteInputChars: number
   maxStateTokens: number
   maxRequestTokens: number
