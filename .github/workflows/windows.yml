@@ -43,7 +43,7 @@ jobs:
           # A venv's pythonw.exe starts the real Python as its child: one app, two processes.
           $ids = $all | ForEach-Object { $_.ProcessId }
           $left = @($all | Where-Object { $ids -notcontains $_.ParentProcessId })
-          $log = Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Tail 5
+          $log = Get-Content "$env:LOCALAPPDATA\LimitSwitcher\app.log" -Tail 5
           $log
           if ($left.Count -ne 1) { throw "expected one running copy, found $($left.Count)" }
           if (-not ($log -match 'started, version')) { throw "the new copy did not start" }
@@ -102,15 +102,15 @@ jobs:
             Write-Host ("A window every 2 s, 60 s:       " + (Sample 60 { Churn 2 }))
             Invoke-RestMethod -Method Post -Uri "$base/api/show" -Headers $auth -ContentType 'application/json' -Body '{}' | Out-Null
             Write-Host ("Full view open, 30 s:           " + (Sample 30 { Start-Sleep 1 }))
-            $closed = @(Select-String -Path "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Pattern 'full view: closed').Count
+            $closed = @(Select-String -Path "$env:LOCALAPPDATA\LimitSwitcher\app.log" -Pattern 'full view: closed').Count
             python -c "import ctypes; u = ctypes.windll.user32; h = u.FindWindowW('AccountSwitcherFullView', None); print('full view window', h); print('close posted', bool(h and u.PostMessageW(h, 0x10, 0, 0)))"
             Start-Sleep 8
-            if (@(Select-String -Path "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Pattern 'full view: closed').Count -le $closed) { throw 'the full view did not close' }
+            if (@(Select-String -Path "$env:LOCALAPPDATA\LimitSwitcher\app.log" -Pattern 'full view: closed').Count -le $closed) { throw 'the full view did not close' }
             Write-Host ("Idle again after closing, 30 s: " + (Sample 30 { Start-Sleep 1 }))
             Invoke-RestMethod -Method Post -Uri "$base/api/shutdown" -Headers $auth -ContentType 'application/json' -Body '{}' | Out-Null
             foreach ($i in 1..40) { if (-not (Test-Path .runtime\tray.url)) { break }; Start-Sleep -Milliseconds 250 }
             Start-Sleep 2
           }
           Get-Content profile.txt
-          Get-Content "$env:LOCALAPPDATA\AccountSwitcher\app.log" -ErrorAction SilentlyContinue
-          if (Select-String -Path "$env:LOCALAPPDATA\AccountSwitcher\app.log" -Pattern 'Traceback|ERROR' -Quiet) { throw 'errors in app.log' }
+          Get-Content "$env:LOCALAPPDATA\LimitSwitcher\app.log" -ErrorAction SilentlyContinue
+          if (Select-String -Path "$env:LOCALAPPDATA\LimitSwitcher\app.log" -Pattern 'Traceback|ERROR' -Quiet) { throw 'errors in app.log' }

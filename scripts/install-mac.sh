@@ -3,7 +3,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/install-mac.sh | bash
 # It downloads the Apple silicon DMG, closes a running copy (which puts the
 # Codex and Claude Code settings back), puts LimitSwitcher.app in Applications and opens it.
-# Saved accounts and settings are in ~/Library/Application Support/AccountSwitcher and are kept.
+# Saved accounts and settings are in ~/Library/Application Support/LimitSwitcher and are kept.
 #
 # The app isn't notarized by Apple. macOS checks apps downloaded by a browser, and warns about
 # those that aren't; a download made here (curl) isn't marked as coming from the internet, so

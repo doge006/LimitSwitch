@@ -352,7 +352,7 @@ for _ in range(20):
 check(not gone, "turning the taskbar view off removes the blocks")
 api("/api/shutdown")
 time.sleep(2)
-log = Path.home() / "AppData" / "Local" / "AccountSwitcher" / "app.log"
+log = Path.home() / "AppData" / "Local" / "LimitSwitcher" / "app.log"
 text = log.read_text() if log.exists() else ""
 print("---- app.log ----\n" + (text or "(none)"))
 check("Traceback" not in text and " ERROR " not in text, "no errors in app.log")

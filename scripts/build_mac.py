@@ -115,7 +115,7 @@ def main():
         ROOT / "scripts" / "mac_launcher.c")
     (resources / "launcher.conf").write_text("\n".join([
         f"runtime/lib/libpython{PYTHON}.dylib", "runtime/bin/python3", "app/LimitSwitcher.pyw",
-        "~/Library/Application Support/AccountSwitcher/app.log"]) + "\n")
+        "~/Library/Application Support/LimitSwitcher/app.log"]) + "\n")
     plist = {"CFBundleName": "LimitSwitcher", "CFBundleDisplayName": "LimitSwitcher",
              "CFBundleIdentifier": "com.accountswitcher.app", "CFBundleExecutable": "LimitSwitcher",
              "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",

@@ -27,7 +27,7 @@ Download **`LimitSwitcher-Setup.exe`** from the [latest release](https://github.
 
 Windows may say "Windows protected your PC" the first time, because the installer isn't code-signed: click **More info → Run anyway**.
 
-Your accounts and settings are kept in `%LOCALAPPDATA%\AccountSwitcher` (the app's name before it was renamed), so updating, reinstalling or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
+Your accounts and settings are kept in `%LOCALAPPDATA%\LimitSwitcher` (`AccountSwitcher` before the app was renamed: an old folder is moved over by itself), so updating, reinstalling or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
 
 **Updates:** the app checks GitHub Releases once at launch and tells you when a new version is out. Settings → **Update to …** downloads the new installer, which closes the app, replaces its files and starts it again. **Check for updates** checks now.
 
@@ -43,7 +43,7 @@ It downloads the app (for Apple silicon Macs: M1 or later) from the [latest rele
 
 Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
 
-It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/AccountSwitcher`. **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
+It lives in the menu bar (no Dock icon) and starts there when you log in; turn that off in Settings. Your accounts and settings are kept in `~/Library/Application Support/LimitSwitcher` (`AccountSwitcher` before the rename: an old folder is moved over by itself). **Updates:** Settings → **Update to …** runs the same install for you. See [macOS](#macos) below for how it works there.
 
 ## Performance
 
@@ -109,7 +109,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
   - There's no Dock icon.
 - **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
 - **Codex** works exactly as on Windows (the local router, `~/.codex/auth.json`).
-- **Saved logins** are encrypted with a random key kept in your login Keychain, under `~/Library/Application Support/AccountSwitcher`.
+- **Saved logins** are encrypted with a random key kept in your login Keychain, under `~/Library/Application Support/LimitSwitcher`.
 - **Start at login:** a LaunchAgent (`~/Library/LaunchAgents/com.accountswitcher.app.plist`).
 
 ## Your accounts
@@ -156,7 +156,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
   - When the hook fires, the app switches to an account with room (Auto swap) and Claude Code is told to continue where it left off.
   - If no account has room, it waits for the earliest reset (up to 6 hours) and then continues.
   - Codex needs no hook: its requests are retried on the next account automatically.
-- **Storage:** saved logins are encrypted with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\AccountSwitcher`. Nothing is sent anywhere except the providers' own usage and token endpoints.
+- **Storage:** saved logins are encrypted with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\LimitSwitcher`. Nothing is sent anywhere except the providers' own usage and token endpoints.
 - **Token ownership:** each account should be managed from here only. If the same account is also signed in elsewhere and refreshes its token there, this copy expires and shows "Sign in again". The in-use account's token is never refreshed by this app; that stays with Claude Code / Codex.
 
 Check the providers' terms for using several subscriptions this way; that's your call.

@@ -55,7 +55,7 @@ jobs:
           import json, os, subprocess, time
           # Off by default: turn it on as the Settings switch does (the app installs it at once).
           import urllib.request
-          url = open(os.path.expanduser("~/Library/Application Support/AccountSwitcher/running.url")).read().strip()
+          url = open(os.path.expanduser("~/Library/Application Support/LimitSwitcher/running.url")).read().strip()
           base, token = url.split("/#token=")
           request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
                                            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
@@ -132,9 +132,9 @@ jobs:
           touch /tmp/installed  # ditto keeps the files' times, so anything newer was written by the app
           launchctl setenv LIMITSWITCH_PANEL_TEST 1  # opens, moves and docks the panel (no clicks on a runner)
           bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
-          url="$HOME/Library/Application Support/AccountSwitcher/running.url"
+          url="$HOME/Library/Application Support/LimitSwitcher/running.url"
           for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
-          if [ ! -f "$url" ]; then cat "$HOME/Library/Application Support/AccountSwitcher/app.log"; exit 1; fi
+          if [ ! -f "$url" ]; then cat "$HOME/Library/Application Support/LimitSwitcher/app.log"; exit 1; fi
           ps axww -o pid,rss,comm,args | grep -i limitswitch | grep -v grep
       - name: Claude Code's status line command works (the bundle's own Python)
         run: |
@@ -143,7 +143,7 @@ jobs:
           import json, os, subprocess, time
           # Off by default: turn it on as the Settings switch does (the app installs it at once).
           import urllib.request
-          url = open(os.path.expanduser("~/Library/Application Support/AccountSwitcher/running.url")).read().strip()
+          url = open(os.path.expanduser("~/Library/Application Support/LimitSwitcher/running.url")).read().strip()
           base, token = url.split("/#token=")
           request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
                                            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
@@ -184,7 +184,7 @@ jobs:
           sleep 4
           screencapture -x /tmp/panel.png || true
           mkdir -p shots && cp /tmp/panel.png shots/0-panel.png || true
-          log="$HOME/Library/Application Support/AccountSwitcher/app.log"
+          log="$HOME/Library/Application Support/LimitSwitcher/app.log"
           grep "panel test" "$log"
           python3 - "$log" <<'PY'
           import re, sys
@@ -211,7 +211,7 @@ jobs:
           pid=$(pgrep -fl 'MacOS/LimitSwitcher' | grep -v -- --full-view | head -1 | cut -d' ' -f1)
           echo "== the menu bar app, after the panel test (the full view is open in its own process) =="
           footprint -p $pid | head -22
-          url="$HOME/Library/Application Support/AccountSwitcher/running.url"
+          url="$HOME/Library/Application Support/LimitSwitcher/running.url"
           echo "== the full view's own process =="
           pgrep -fl 'MacOS/LimitSwitcher'
           full=$(pgrep -f 'MacOS/LimitSwitcher --full-view' | head -1)
@@ -243,7 +243,7 @@ jobs:
         run: |
           python3 -m venv /tmp/probe
           /tmp/probe/bin/pip install --quiet pyobjc-framework-Quartz
-          SMOKE_WINDOW_CLOSED=1 LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/AccountSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
+          SMOKE_WINDOW_CLOSED=1 LIMITSWITCH_URL_FILE="$HOME/Library/Application Support/LimitSwitcher/running.url" /tmp/probe/bin/python .github/mac_smoke.py
       - name: The bundle is unchanged after running (its signature still holds)
         run: |
           codesign --verify --deep --strict /Applications/LimitSwitcher.app

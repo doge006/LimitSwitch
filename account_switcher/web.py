@@ -348,7 +348,7 @@ class Controller:
             return {"status": "active"}
         if self.mod_installed:
             return {"status": "installed"}
-        if self.mod_installed is None and time.time() - self.mod_checked > 60:
+        if self.mod_installed is None and time.time() - self.mod_checked > 600:
             threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
         return {"status": "missing" if self.mod_installed is False else "unknown"}
 
@@ -400,6 +400,9 @@ class Controller:
             self.mod_checked = 0.0
             self.mod_installed = mod.installed() if not error else self.mod_installed
             if not error:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["modStatePath"] = str(state_file)
+                    self.gateway.manager.save()
                 self.notify("log", "Claude Code mod installed: open sessions pick it up after /reload-plugins")
             self.notify("changed", None)
         threading.Thread(target=work, daemon=True, name="mod-install").start()

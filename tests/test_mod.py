@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import subprocess
 import tempfile
 import threading
@@ -44,6 +46,59 @@ class ModCommandTests(unittest.TestCase):
             self.assertEqual(mod.install("/s"), "network down")
         with mock.patch.object(mod, "_run", side_effect=FileNotFoundError("Claude Code isn't installed")):
             self.assertIn("isn't installed", mod.install("/s"))
+
+
+class ModProcessTests(unittest.TestCase):
+    def test_a_command_that_hangs_is_ended_with_what_it_started(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "claude"
+            fake.write_text("#!/bin/sh\nsleep 30\n")
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            ended = []
+            with mock.patch.object(mod.shutil, "which", return_value=str(fake)), \
+                    mock.patch.object(mod.processes, "end_tree", side_effect=lambda pid: (ended.append(pid), os.kill(pid, 9))):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    mod._run(["list", "--json"], 0.5)
+            self.assertEqual(len(ended), 1)  # the whole tree, not only the shim
+
+    def test_configure_hands_the_new_path_to_claude_code(self):
+        seen = []
+        with mock.patch.object(mod, "_run", side_effect=lambda args, timeout, stdin_text=None: seen.append((args, stdin_text)) or done()):
+            self.assertIsNone(mod.configure("/data/LimitSwitcher/afk-hook.json"))
+        self.assertEqual(seen[0][0], ["configure", "limit-status@limitswitcher", "--values-stdin"])
+        self.assertEqual(json.loads(seen[0][1]), {"statePath": "/data/LimitSwitcher/afk-hook.json"})
+        with mock.patch.object(mod, "_run", return_value=done(code=1, err="not installed")):
+            self.assertEqual(mod.configure("/x"), "not installed")
+
+
+class ModConfigAtStartTests(unittest.TestCase):
+    def make(self, tmp, seen_at):
+        from account_switcher.integrations import Integrations
+        gateway = mock.Mock()
+        gateway.manager.vault.root = Path(tmp)
+        gateway.manager.meta = {"modSeenAt": seen_at}
+        gateway.manager.lock = threading.RLock()
+        return Integrations(gateway, "http://127.0.0.1:1/api/afk", "t"), gateway.manager
+
+    def test_the_mod_is_told_the_new_data_folder_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            integrations, manager = self.make(tmp, time.time())
+            with mock.patch("account_switcher.mod.configure", return_value=None) as configure:
+                integrations.refresh_mod_config()
+                integrations.refresh_mod_config()
+            configure.assert_called_once_with(integrations.state_file)
+            self.assertEqual(manager.meta["modStatePath"], str(integrations.state_file))
+
+    def test_nothing_is_asked_without_the_mod_or_when_it_failed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            integrations, manager = self.make(tmp, 0)  # never reported: not in use
+            with mock.patch("account_switcher.mod.configure") as configure:
+                integrations.refresh_mod_config()
+            configure.assert_not_called()
+            manager.meta["modSeenAt"] = time.time()
+            with mock.patch("account_switcher.mod.configure", return_value="refused"):
+                integrations.refresh_mod_config()
+            self.assertNotIn("modStatePath", manager.meta)  # tried again at the next start
 
 
 class ModStateTests(unittest.TestCase):

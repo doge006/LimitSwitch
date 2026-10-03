@@ -22,6 +22,7 @@ How it works
   Codex router just before their access token expires).
 """
 import contextlib
+import faulthandler
 import json
 import logging
 import math
@@ -39,7 +40,7 @@ import uuid
 from . import processes
 from .core import Account, Router
 from .providers import PROVIDERS, ProviderError, _jwt_payload
-from .vault import Vault, atomic_write
+from .vault import Vault, atomic_write, data_dir
 
 # Near-live usage for the accounts in use, gently for the rest. Each account also has a pace
 # (1 = normal) that doubles when the provider rate limits it and eases back after successes,
@@ -84,6 +85,41 @@ def login_mark(secret):
     token = (((secret.get("credentials") or {}).get("claudeAiOauth") or {}).get("refreshToken")
              or (((secret.get("auth") or {}).get("tokens") or {}).get("refresh_token")) or "")
     return hashlib.sha256(token.encode()).hexdigest()[:16] if token else ""
+
+SLOW_REFRESH = 180  # seconds: a usage refresh this slow writes where every thread is stuck into app.log
+_trace = []
+
+
+def _trace_file():
+    """app.log, opened once for the stack dump of a stuck refresh (None when it can't be opened)."""
+    if not _trace:
+        try:
+            _trace.append(open(data_dir() / "app.log", "a", encoding="utf-8"))
+        except OSError:
+            _trace.append(None)
+    return _trace[0]
+
+
+@contextlib.contextmanager
+def watched(seconds=SLOW_REFRESH):
+    """Around one usage refresh: if it hasn't finished after `seconds`, every thread's stack goes into
+    app.log (so a refresh that hangs shows where), and a slow one is logged when it ends."""
+    handle = _trace_file()
+    if handle is not None:
+        try:
+            faulthandler.dump_traceback_later(seconds, repeat=False, file=handle)
+        except (OSError, ValueError, RuntimeError):
+            handle = None
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        if handle is not None:
+            faulthandler.cancel_dump_traceback_later()
+        took = time.monotonic() - started
+        if took > 60:
+            logging.getLogger("account_switcher").warning("usage refresh took %d s", took)
+
 
 def level_color(left):
     """Green with plenty left, yellow in the middle, red when low (the full view's thresholds)."""
@@ -1080,10 +1116,11 @@ class LiveGateway:
             force, self.force = self.force, False
             poke_age, self.poke_age = self.poke_age, None
             try:
-                self.manager.refresh(force=force, max_age=None if force else poke_age)
-                if not force and poke_age is not None:
-                    self.manager.refresh()  # anything simply due as well
-                self.manager.auto_swap()
+                with watched():
+                    self.manager.refresh(force=force, max_age=None if force else poke_age)
+                    if not force and poke_age is not None:
+                        self.manager.refresh()  # anything simply due as well
+                    self.manager.auto_swap()
             except Exception as error:
                 self.notify("log", f"Usage refresh failed: {error}")
             delay = self.manager.next_delay()
