@@ -400,6 +400,29 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(len(self.api.calls), before)
         self.assertGreaterEqual(m.next_delay(), 20)
 
+    def test_a_login_the_client_never_replaces_reads_signed_out(self):
+        """Claude Code renews within seconds; minutes later with the same refused login, it was
+        signed out (the login was revoked), and waiting for it would only puzzle."""
+        m = self.manager()
+        m.sync_live()
+        self.api.claude_usage.pop("at-a")
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        self.assertIn("Waiting for Claude", a.status)
+        m.meta["accounts"][a.id]["waitingSince"] -= 400
+        m.meta["accounts"][a.id]["attemptedAt"] = 0.0
+        before = len(self.api.calls)
+        m.refresh()
+        a = self.by_email(m, "a@example.com")
+        self.assertEqual(a.status, "Signed out · sign in to Claude Code again")
+        self.assertEqual(len(self.api.calls), before)  # still no API call for it
+        self.api.claude_usage["at-a2"] = claude_usage(30, 40)  # signed in again in Claude Code
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a2", "rt-a2")
+        m.refresh()
+        a = self.by_email(m, "a@example.com")
+        self.assertEqual(a.status, "")
+        self.assertTrue(a.usage)
+
     def test_a_login_the_client_renewed_is_checked_at_once_not_minutes_later(self):
         m = self.manager()
         m.sync_live()

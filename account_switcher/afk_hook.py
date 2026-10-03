@@ -126,6 +126,8 @@ def main(argv):
             sys.stderr.write(str(answer.get("message") or NOTE))
             return 2
         if action == "wait":
+            if answer.get("restamp"):
+                started = None  # the app rewrote the transcript (a Jev compaction): look at it afresh
             if started is None and transcript:
                 time.sleep(3)  # Claude Code may still be writing the limit's own entries
                 started = stamp(transcript)

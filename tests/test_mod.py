@@ -19,9 +19,13 @@ def done(code=0, out="", err=""):
 
 class ModCommandTests(unittest.TestCase):
     def test_installed_reads_claude_codes_own_list(self):
-        listing = json.dumps([{"id": "other@x"}, {"id": "limit-status@limitswitcher", "enabled": True}])
+        listing = json.dumps([{"id": "other@x"}, {"id": "limit-status@limitswitcher", "enabled": True},
+                              {"id": "jev-compact@limitswitcher"}])
         with mock.patch.object(mod, "_run", return_value=done(out=listing)):
             self.assertTrue(mod.installed())
+        older = json.dumps([{"id": "limit-status@limitswitcher"}])  # from before the Jev compaction: install again
+        with mock.patch.object(mod, "_run", return_value=done(out=older)):
+            self.assertFalse(mod.installed())
         with mock.patch.object(mod, "_run", return_value=done(out="[]")):
             self.assertFalse(mod.installed())
 
@@ -31,13 +35,15 @@ class ModCommandTests(unittest.TestCase):
         with mock.patch.object(mod, "_run", return_value=done(code=1)):
             self.assertIsNone(mod.installed())
 
-    def test_install_adds_the_marketplace_then_the_plugin_with_the_state_file(self):
+    def test_install_adds_the_marketplace_then_both_plugins_with_their_files(self):
         calls = []
         with mock.patch.object(mod, "_run", side_effect=lambda args, timeout: calls.append(args) or done()):
             self.assertIsNone(mod.install("/data/afk-hook.json"))
         self.assertEqual(calls[0][:2], ["marketplace", "add"])
         self.assertIn(["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"], calls)
-        self.assertEqual(calls[-1], ["update", "limit-status@limitswitcher"])  # a newer version, when there is one
+        self.assertIn(["install", "jev-compact@limitswitcher", "--config", f"envFile={Path('/data/.env')}"], calls)
+        self.assertIn(["update", "limit-status@limitswitcher"], calls)  # a newer version, when there is one
+        self.assertEqual(calls[-1], ["update", "jev-compact@limitswitcher"])
 
     def test_install_is_fine_when_already_there_and_says_why_when_not(self):
         with mock.patch.object(mod, "_run", return_value=done(code=1, err="Marketplace already exists")):
@@ -67,6 +73,8 @@ class ModProcessTests(unittest.TestCase):
             self.assertIsNone(mod.configure("/data/LimitSwitcher/afk-hook.json"))
         self.assertEqual(seen[0][0], ["configure", "limit-status@limitswitcher", "--values-stdin"])
         self.assertEqual(json.loads(seen[0][1]), {"statePath": "/data/LimitSwitcher/afk-hook.json"})
+        self.assertEqual(seen[1][0], ["configure", "jev-compact@limitswitcher", "--values-stdin"])
+        self.assertEqual(json.loads(seen[1][1]), {"envFile": str(Path("/data/LimitSwitcher/.env"))})
         with mock.patch.object(mod, "_run", return_value=done(code=1, err="not installed")):
             self.assertEqual(mod.configure("/x"), "not installed")
 
@@ -142,19 +150,18 @@ class ModStateTests(unittest.TestCase):
         self.assertGreater(c.mod_seen, 0.0)
         self.assertTrue(c.mod_installed)
 
-    def test_the_line_is_shown_once_by_the_mod_when_it_is_active(self):
+    def test_the_mod_feeds_the_usage_and_the_status_line_shows_the_line(self):
         c = self.controller
         c.live = True
         c.gateway = mock.Mock()
         c.gateway.manager.statusline.return_value = "line"
         c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.meta = {"statuslineShown": True}
-        self.assertEqual(c.statusline({"session": "s"}), "line")  # no mod yet: the status line script shows it
-        c.statusline({"session": "s", "source": "mod"})
-        self.assertEqual(c.statusline({"session": "s", "source": "mod"}), "line")  # the mod's own
-        self.assertIsNone(c.statusline({"session": "s"}))  # the script keeps reporting but stays quiet
+        self.assertIsNone(c.statusline({"session": "s", "source": "mod"}))  # the mod draws nothing
+        c.gateway.manager.note_mod_session.assert_called_with("s")
+        self.assertEqual(c.statusline({"session": "s"}), "line")  # the status line shows it
 
-    def test_the_mod_shows_its_line_even_with_the_status_line_switch_off(self):
+    def test_with_the_mod_the_status_line_shows_the_line_even_with_the_switch_off(self):
         c = self.controller
         c.live = True
         c.gateway = mock.Mock()
@@ -162,9 +169,27 @@ class ModStateTests(unittest.TestCase):
         c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.meta = {"statuslineShown": False}  # the script's own switch
         self.assertIsNone(c.statusline({"session": "s"}))
-        self.assertEqual(c.statusline({"session": "s", "source": "mod"}), "line")
+        c.statusline({"session": "s", "source": "mod"})
+        self.assertEqual(c.statusline({"session": "s"}), "line")
 
-    def test_the_first_report_of_the_mod_takes_the_status_line_command_away(self):
+    def test_model_and_effort_reach_the_line(self):
+        c = self.controller
+        c.live = True
+        c.gateway = mock.Mock()
+        c.gateway.manager.lock = threading.RLock()
+        c.gateway.manager.meta = {"statuslineShown": True}
+        c.statusline({"session": "s", "model": "Opus 5.5", "effort": "high"})
+        c.gateway.manager.statusline.assert_called_with(None, "s", model="Opus 5.5", effort="high")
+
+    def test_an_older_mod_alone_asks_for_the_update(self):
+        c = self.controller
+        c.live = True
+        c.mod_checked = time.time()
+        c.mod_seen = time.time()
+        c.mod_installed = False  # limit-status reports, jev-compact isn't there
+        self.assertEqual(c.mod_state()["status"], "update")
+
+    def test_the_first_report_of_the_mod_puts_the_status_line_command_in(self):
         c = self.controller
         c.live = True
         c.gateway = mock.Mock()
@@ -173,7 +198,7 @@ class ModStateTests(unittest.TestCase):
         c.gateway.manager.statusline.return_value = "line"
         c.statusline({"session": "s", "source": "mod"})
         self.assertGreater(c.gateway.manager.meta["modSeenAt"], 0)
-        c.gateway.integrations.apply_afk.assert_called_once()  # its command would only add an empty line
+        c.gateway.integrations.apply_afk.assert_called_once()  # the line is shown from now on
         c.statusline({"session": "s", "source": "mod"})
         c.gateway.integrations.apply_afk.assert_called_once()  # not again for every report
         c.mod_check_result = None

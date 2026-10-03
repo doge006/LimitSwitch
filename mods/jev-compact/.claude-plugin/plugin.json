@@ -1,0 +1,18 @@
+{
+  "name": "jev-compact",
+  "version": "0.1.0",
+  "description": "Before LimitSwitcher swaps a Claude Code session to another account, shrinks the tool outputs it no longer needs with TypeSafe's Jev (through OpenRouter), so the new account loads less. Everything else stays verbatim; no Claude usage.",
+  "author": {
+    "name": "doge006",
+    "url": "https://github.com/doge006/LimitSwitcher"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "envFile": {
+      "type": "string",
+      "title": "LimitSwitcher .env file",
+      "description": "A file with an OPENROUTER_API_KEY=... line (set when LimitSwitcher installs this mod). The OPENROUTER_API_KEY environment variable, or Claude Code's settings.json env block, also works.",
+      "default": ""
+    }
+  }
+}

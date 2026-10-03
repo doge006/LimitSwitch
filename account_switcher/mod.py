@@ -1,14 +1,20 @@
-"""The optional Claude Code mod (mods/limit-status): installing it and checking on it.
+"""The optional Claude Code mod: installing it and checking on it.
 
-The mod feeds Claude Code's live usage to this app after every turn and shows the app's line in
-a spot of its own, so the app never has to wrap the person's status line. It is installed with
-Claude Code's own plugin commands, from this repository as a marketplace; nothing but those
-commands and the mod's one setting (where this app's local address file is) is written.
+It is two plugins from this repository's marketplace, installed and checked together:
+  mods/limit-status  feeds Claude Code's live usage to this app after every turn, and runs the
+                     Jev compaction the app asks for right before it swaps a session's account
+  mods/jev-compact   the compaction itself (Claude Code skips a plugin's own compaction hook when
+                     that plugin starts the compaction, so it can't live in limit-status)
+They are installed with Claude Code's own plugin commands; nothing but those commands and their
+one setting each (where this app's files are) is written.
 """
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from . import processes
 from .version import REPO
@@ -16,6 +22,8 @@ from .version import REPO
 MARKETPLACE = "limitswitcher"
 PLUGIN = "limit-status"
 PLUGIN_ID = f"{PLUGIN}@{MARKETPLACE}"
+JEV_ID = f"jev-compact@{MARKETPLACE}"
+ENV_FILE = ".env"     # in the data folder: OPENROUTER_API_KEY=... for the Jev compaction
 TIMEOUT = 90          # installing fetches the repository
 QUIET = 20            # listing what is installed
 
@@ -43,29 +51,44 @@ def _run(args, timeout, stdin_text=None):
 
 
 def installed():
-    """True or False; None when it can't be told (no `claude` command, or an old one)."""
+    """True when both plugins are there, False when either is missing (an install from before the
+    Jev compaction has only limit-status: Settings then offers the install again); None when it
+    can't be told (no `claude` command, or an old one)."""
     try:
         done = _run(["list", "--json"], QUIET)
         if done.returncode != 0:
             return None
-        return any(isinstance(p, dict) and p.get("id") == PLUGIN_ID for p in json.loads(done.stdout or "[]"))
+        ids = {p.get("id") for p in json.loads(done.stdout or "[]") if isinstance(p, dict)}
+        return PLUGIN_ID in ids and JEV_ID in ids
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
 
+def env_file(state_file):
+    """The .env file the Jev compaction reads its key from: beside the state file, in the data folder."""
+    return Path(state_file).with_name(ENV_FILE)
+
+
+def settings(state_file):
+    """Each plugin's settings: where the app's local address file is, where the key file is."""
+    return {PLUGIN_ID: {"statePath": str(state_file)}, JEV_ID: {"envFile": str(env_file(state_file))}}
+
+
 def install(state_file, source=REPO):
-    """Install (or update) the mod. Returns None when done, else a short reason it didn't work."""
+    """Install (or update) both plugins. Returns None when done, else a short reason it didn't work."""
     try:
         added = _run(["marketplace", "add", source], TIMEOUT)
         if added.returncode != 0 and "already" not in (added.stdout + added.stderr).lower():
             return _why(added)
         _run(["marketplace", "update", MARKETPLACE], TIMEOUT)  # the catalog as it is now
-        done = _run(["install", PLUGIN_ID, "--config", f"statePath={state_file}"], TIMEOUT)
-        there = done.returncode == 0 or "already" in (done.stdout + done.stderr).lower()
-        # Installing again changes nothing once it is there: an update is what brings in a newer version.
-        updated = _run(["update", PLUGIN_ID], TIMEOUT)
-        if not there and updated.returncode != 0:
-            return _why(done)
+        for plugin, values in settings(state_file).items():
+            key, value = next(iter(values.items()))
+            done = _run(["install", plugin, "--config", f"{key}={value}"], TIMEOUT)
+            there = done.returncode == 0 or "already" in (done.stdout + done.stderr).lower()
+            # Installing again changes nothing once it is there: an update is what brings in a newer version.
+            updated = _run(["update", plugin], TIMEOUT)
+            if not there and updated.returncode != 0:
+                return _why(done)
         return None
     except FileNotFoundError as error:
         return str(error)
@@ -74,15 +97,41 @@ def install(state_file, source=REPO):
 
 
 def configure(state_file):
-    """Tell the installed mod where this app's local address file is (it moves when the data folder does).
+    """Tell the installed plugins where this app's files are (they move when the data folder does).
     Returns None when done, else a short reason."""
     try:
-        done = _run(["configure", PLUGIN_ID, "--values-stdin"], QUIET, json.dumps({"statePath": str(state_file)}))
-        return None if done.returncode == 0 else _why(done)
+        for plugin, values in settings(state_file).items():
+            done = _run(["configure", plugin, "--values-stdin"], QUIET, json.dumps(values))
+            if done.returncode != 0:
+                return _why(done)
+        return None
     except FileNotFoundError as error:
         return str(error)
     except (OSError, subprocess.SubprocessError) as error:
         return f"Couldn't run Claude Code ({type(error).__name__})"
+
+
+KEY_LINE = re.compile(r"^\s*(?:export\s+)?OPENROUTER_API_KEY\s*=\s*(['\"]?)(\S+?)\1\s*$", re.M)
+
+
+def jev_key_present(state_file, claude_root=None):
+    """An OpenRouter key is set where the Jev compaction looks for one (the same order): the
+    environment, Claude Code's settings.json env block, the .env file in the data folder.
+    Only whether it's there; the app never reads or keeps the key itself."""
+    if os.environ.get("OPENROUTER_API_KEY", "").strip():
+        return True
+    from . import claude_hooks
+    try:
+        path = (Path(claude_root) if claude_root else claude_hooks.settings_path()) / "settings.json"
+        block = json.loads(path.read_text(encoding="utf-8")).get("env")
+        if isinstance(block, dict) and str(block.get("OPENROUTER_API_KEY") or "").strip():
+            return True
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        return KEY_LINE.search(env_file(state_file).read_text(encoding="utf-8")) is not None
+    except (OSError, ValueError):
+        return False
 
 
 def _why(done):

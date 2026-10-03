@@ -5,3 +5,6 @@ __pycache__/
 .env
 .env.local
 .runtime/
+
+# laid by Claude Code when it loads a mod from its folder (types are generated, not ours)
+mods/*/tsconfig.json
