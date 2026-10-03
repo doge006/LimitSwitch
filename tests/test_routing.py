@@ -612,6 +612,15 @@ class AfkTests(unittest.TestCase):
             import re
             self.assertIn("a@example.com · 5h 60% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # coloured
             self.assertIn("\x1b[94m5h\x1b[0m \x1b[92m60%\x1b[0m\x1b[90m left\x1b[0m", out.getvalue())  # 5h blue, plenty left green
+            with_model = dict(event, model={"id": "claude-opus-5-5", "display_name": "Opus 5.5"}, effort={"level": "high"},
+                              context_window={"total_input_tokens": 183_000, "remaining_percentage": 82})
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(with_model).encode()))), \
+                    mock.patch.object(sys, "stdout", out):
+                statusline.main(["statusline", str(state)])
+            self.assertIn("⇄ LimitSwitcher · a@example.com · Opus 5.5 (high) · 5h 60% left",
+                          re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # name · model (effort) · usage
+            self.assertIn("ctx 183k · 82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))
             five = next(w for w in self.manager.accounts() if w.email == "a@example.com").windows()[0]
             self.assertEqual(five["used"], 40.0)
             state.write_text(json.dumps({"url": server.hook_url, "token": "wrong", "statusline": None}))
@@ -675,6 +684,170 @@ class ClaudeFullUseTests(AfkTests):
         self.manager.meta["autoSwap"] = False
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
         self.assertEqual(self.claude.read_live().email, "a@example.com")
+
+
+class JevCompactionTests(unittest.TestCase):
+    """After a limit the account is swapped at once; with Jev compaction on, the session goes on
+    only once its mod has compacted it (or given up), so the new account loads less."""
+    setUp = AfkTests.setUp
+    tearDown = AfkTests.tearDown
+
+    def ready(self, afk=True):
+        self.gateway.set_afk(afk)
+        self.manager.meta.update(jevCompact=True, jevModInstalled=True)
+        self.manager.note_mod_session("s1")
+        key = mock.patch("account_switcher.mod.jev_key_present", return_value=True)
+        key.start()
+        self.addCleanup(key.stop)
+
+    def test_swaps_at_once_then_waits_for_the_compaction_then_continues(self):
+        self.ready()
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "wait", "seconds": 3})
+        self.assertEqual(self.claude.read_live().email, "b@example.com")  # swapped already
+        request = self.manager.compaction_request("s1")
+        self.assertIsNotNone(request)
+        self.assertIsNone(self.manager.compaction_request("other"))
+        self.assertTrue(self.manager.compacting("s1"))
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "wait", "seconds": 3})  # still compacting
+        self.assertFalse(self.manager.compaction_done("s1", "wrong-id", "done", 1000))
+        self.assertTrue(self.manager.compaction_done("s1", request["id"], "done", 120_000))
+        self.assertFalse(self.manager.compacting("s1"))
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "wait", "seconds": 1, "restamp": True})
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.claude.read_live().email, "b@example.com")  # no second swap
+
+    def test_off_or_not_ready_continues_at_once(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")  # the setting is off
+
+    def test_an_old_session_without_the_mod_is_not_waited_for(self):
+        self.ready()
+        self.manager.mod_sessions["s1"] -= 600
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+
+    def test_no_key_is_not_waited_for(self):
+        self.ready()
+        with mock.patch("account_switcher.mod.jev_key_present", return_value=False):
+            self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+
+    def test_the_mod_missing_is_not_waited_for(self):
+        self.ready()
+        self.manager.meta["jevModInstalled"] = False
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+
+    def test_a_failed_compaction_still_continues(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        request = self.manager.compaction_request("s1")
+        self.manager.compaction_done("s1", request["id"], "failed", reason="Jev failed: 503")
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "wait")  # restamp
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+
+    def test_a_compaction_that_never_reports_is_given_up_on(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        self.manager.compactions["s1"]["at"] -= 300
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "wait", "seconds": 1, "restamp": True})
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.manager.compactions["s1"]["status"], "failed")
+
+    def test_compacted_below_the_large_size_needs_no_question(self):
+        self.ready()
+        self.manager.claude_limit("s1", 600_000)
+        request = self.manager.compaction_request("s1")
+        self.manager.compaction_done("s1", request["id"], "done", 300_000)
+        self.manager.claude_limit("s1", 600_000)  # restamp
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
+        self.assertEqual(self.manager.pending_list(), [])
+
+    def test_still_large_after_compacting_asks_as_before(self):
+        self.ready()
+        self.manager.claude_limit("s1", 900_000)
+        request = self.manager.compaction_request("s1")
+        self.manager.compaction_done("s1", request["id"], "done", 100_000)
+        self.manager.claude_limit("s1", 900_000)  # restamp
+        self.assertEqual(self.manager.claude_limit("s1", 900_000), {"action": "wait", "seconds": 5})
+        self.assertEqual([p["session"] for p in self.manager.pending_list()], ["s1"])
+
+    def test_auto_swap_alone_compacts_then_leaves_the_next_message_to_the_user(self):
+        self.ready(afk=False)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "wait")
+        request = self.manager.compaction_request("s1")
+        self.manager.compaction_done("s1", request["id"], "done", 50_000)
+        self.manager.claude_limit("s1")  # restamp
+        self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
+
+    def test_not_compacted_again_right_away(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        request = self.manager.compaction_request("s1")
+        self.manager.compaction_done("s1", request["id"], "done", 50_000)
+        self.manager.claude_limit("s1")
+        self.manager.claude_limit("s1")
+        self.assertFalse(self.manager.jev_wanted("s1", time.time()))
+
+    def test_the_status_line_says_it_is_compacting_and_shows_model_and_effort(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        line = self.manager.statusline(None, "s1", model="Opus 5.5", effort="high")
+        self.assertIn("b@example.com · Opus 5.5 (high) · ", line)
+        self.assertIn("Jev compacting…", line)
+        self.assertNotIn("Jev compacting", self.manager.statusline(None, "s2"))
+
+    def test_end_to_end_through_the_local_api_and_the_hook(self):
+        """The hook asks, the mod picks the compaction up from its status line report and reports
+        back, the transcript changes, and the hook still wakes the session (restamp)."""
+        self.ready()
+        controller = Controller(gateway=lambda notify: self.gateway)
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        state = Path(self.tmp.name) / "state.json"
+        state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
+        transcript = Path(self.tmp.name) / "t.jsonl"
+        transcript.write_text('{"message": {"usage": {"input_tokens": 1000}}}\n')
+        base = server.hook_url[: -len("/api/afk")]
+
+        def post(path, body):
+            from urllib.request import ProxyHandler, Request, build_opener
+            request = Request(base + path, data=json.dumps(body).encode(), method="POST",
+                              headers={"Authorization": "Bearer " + server.hook_token, "Content-Type": "application/json",
+                                       "Host": server.expected_host})
+            with build_opener(ProxyHandler({})).open(request, timeout=5) as response:
+                return json.load(response)
+
+        compacted = threading.Event()
+
+        def mod():  # what limit-status and jev-compact do in the session
+            for _ in range(200):
+                answer = post("/api/statusline", {"session": "s1", "source": "mod", "rate_limits": None})
+                if answer.get("compact"):
+                    transcript.write_text('{"compacted": true}\n')  # the compaction rewrote it
+                    post("/api/compaction", {"session": "s1", "id": answer["compact"]["id"], "outcome": "done", "saved": 40_000})
+                    compacted.set()
+                    return
+                time.sleep(0.02)
+
+        sleeps = []
+
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            if not compacted.is_set() and len(sleeps) == 2:
+                mod()
+
+        try:
+            stderr = io.StringIO()
+            event = {"error": "rate_limit", "session_id": "s1", "transcript_path": str(transcript)}
+            with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(event))), \
+                    mock.patch.object(sys, "stderr", stderr), mock.patch.object(afk_hook.time, "sleep", side_effect=fake_sleep), \
+                    mock.patch.object(afk_hook, "owner", return_value=(None, None)):
+                self.assertEqual(afk_hook.main(["hook", str(state)]), 2)  # woken despite the rewrite
+            self.assertTrue(compacted.is_set())
+            self.assertIn("Continue exactly where you left off", stderr.getvalue())
+            self.assertEqual(self.claude.read_live().email, "b@example.com")
+        finally:
+            server.shutdown()
+            server.server_close()
+            controller.close()
 
 
 @unittest.skipIf(sys.platform == "win32", "stand-in CLI is a POSIX shell script")
@@ -806,30 +979,28 @@ class IntegrationTests(unittest.TestCase):
                 integrations.stop()
             self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
 
-    def test_status_line_command_is_not_installed_while_the_mod_is_in_use(self):
-        """The mod feeds the usage and draws the line: a status line command of ours would only
-        show an empty line, and wrap the user's own for nothing."""
+    def test_status_line_command_is_installed_while_the_mod_is_in_use(self):
+        """The mod feeds the usage; the line is the status line's (a spot nobody can dismiss), also
+        with the Settings switch off: installing the mod is the choice to see it."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             claude_root = root / "claude"
             claude_root.mkdir()
-            (claude_root / "settings.json").write_text('{"statusLine": {"type": "command", "command": "mine.sh"}}')
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
-            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
+            gateway.manager.meta.update(startWithWindows=False, statuslineShown=False)
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             with mock.patch("account_switcher.integrations.codex_present", return_value=False):
                 integrations.start()
             try:
-                self.assertTrue(claude_hooks.statusline_installed(claude_root))  # wrapped around theirs
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))  # switched off, no mod
                 gateway.manager.meta["modSeenAt"] = time.time()
                 integrations.apply_afk()
-                self.assertFalse(claude_hooks.statusline_installed(claude_root))
-                self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
+                self.assertTrue(claude_hooks.statusline_installed(claude_root))
                 gateway.manager.meta["modSeenAt"] = time.time() - 15 * 24 * 3600  # long gone
                 integrations.apply_afk()
-                self.assertTrue(claude_hooks.statusline_installed(claude_root))
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))
             finally:
                 integrations.stop()
 

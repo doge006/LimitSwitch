@@ -1,7 +1,7 @@
 {
   "name": "limit-status",
-  "version": "0.2.0",
-  "description": "Feeds Claude Code's live usage to LimitSwitcher and shows its colored status line above the prompt, without touching your own status line.",
+  "version": "0.3.0",
+  "description": "Feeds Claude Code's live usage to LimitSwitcher after every turn, and runs the Jev compaction LimitSwitcher asks for before a swapped session goes on (with the jev-compact plugin).",
   "userConfig": {
     "statePath": {
       "type": "string",
@@ -9,6 +9,5 @@
       "description": "The file LimitSwitcher keeps its local address and token in (set when it installs this mod).",
       "default": ""
     }
-  },
-  "types": "./types/index.d.ts"
+  }
 }

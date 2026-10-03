@@ -36,8 +36,12 @@ def left_color(left):
 def report(state, data, cache=None):
     limits = data.get("rate_limits")
     try:
+        model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        effort = data.get("effort") if isinstance(data.get("effort"), dict) else {}
         body = json.dumps({"rate_limits": limits if isinstance(limits, dict) else None,
-                           "session": str(data.get("session_id") or "")[:100]}).encode()
+                           "session": str(data.get("session_id") or "")[:100],
+                           "model": model.get("display_name") or model.get("id"),
+                           "effort": effort.get("level")}).encode()
         request = Request(state["url"].rsplit("/", 1)[0] + "/statusline", data=body, method="POST",
                           headers={"Authorization": "Bearer " + state["token"], "Content-Type": "application/json"})
         with build_opener(ProxyHandler({})).open(request, timeout=0.6) as response:
@@ -152,7 +156,7 @@ def main(argv):
         write(with_marker(output) if line else output)  # the marker only while the app answers
     elif line:
         extra = context_painted(data) if isinstance(data, dict) else None
-        write((line + (" · " + extra if extra else "") + "\n").encode("utf-8"))
+        write((line + (paint([{"t": " · ", "c": "dim"}]) + extra if extra else "") + "\n").encode("utf-8"))
     return 0
 
 

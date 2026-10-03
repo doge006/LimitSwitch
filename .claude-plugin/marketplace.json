@@ -1,11 +1,18 @@
 {
   "name": "limitswitcher",
-  "owner": { "name": "doge006" },
+  "owner": {
+    "name": "doge006"
+  },
   "plugins": [
     {
       "name": "limit-status",
       "source": "./mods/limit-status",
-      "description": "Feeds Claude Code's live usage to LimitSwitcher and shows its status line, without touching your own status line."
+      "description": "Feeds Claude Code's live usage to LimitSwitcher, and runs the Jev compaction it asks for before a swapped session goes on."
+    },
+    {
+      "name": "jev-compact",
+      "source": "./mods/jev-compact",
+      "description": "Shrinks the tool outputs a session no longer needs with TypeSafe's Jev (OpenRouter) before LimitSwitcher swaps its account, so the new account loads less. No Claude usage."
     }
   ]
 }

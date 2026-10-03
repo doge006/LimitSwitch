@@ -37,6 +37,7 @@ class Controller:
         self.mod_busy = None     # "installing" while that runs, else an error to show
         self.mod_checked = 0.0
         self.wait_near_reset = True
+        self.jev_compact = False  # compact a session with Jev before it goes on after a swap
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
@@ -146,6 +147,7 @@ class Controller:
                 "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
+                "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -155,7 +157,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge", "jevCompact"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -187,6 +189,18 @@ class Controller:
                     self.gateway.manager.meta["waitNearReset"] = on
                     self.gateway.manager.save()
             self.wait_near_reset = on
+            self.notify("changed", None)
+            return
+        if action == "jevCompact":  # compact with Jev before a swapped session goes on; instant
+            on = bool(body.get("on"))
+            if self.live:
+                manager = self.gateway.manager
+                with manager.lock:
+                    manager.meta["jevCompact"] = on
+                    manager.save()
+                if on:
+                    self.jev_compact_notes()
+            self.jev_compact = on
             self.notify("changed", None)
             return
         if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
@@ -344,6 +358,8 @@ class Controller:
             return {"status": "installing"}
         if self.mod_busy:
             return {"status": "error", "text": self.mod_busy}
+        if self.mod_installed is False and time.time() - self.mod_seen < 120:
+            return {"status": "update"}  # limit-status alone, from before the Jev compaction
         if time.time() - self.mod_seen < 120:
             return {"status": "active"}
         if self.mod_installed:
@@ -352,19 +368,41 @@ class Controller:
             threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
         return {"status": "missing" if self.mod_installed is False else "unknown"}
 
+    def jev_compact_notes(self):
+        """What Jev compaction still needs, as notes in the log: the mod, and a key."""
+        from . import mod
+        integrations = getattr(self.gateway, "integrations", None)
+        if integrations is None:
+            return
+        if self.mod_installed is False or not self.gateway.manager.meta.get("jevModInstalled"):
+            self.notify("log", "Jev compaction needs the Claude Code mod: Settings → Install (or update) it")
+        if not mod.jev_key_present(integrations.state_file):
+            self.notify("log", f"Jev compaction needs an OpenRouter key: add OPENROUTER_API_KEY=... to {mod.env_file(integrations.state_file)}")
+
+    def note_mod_installed(self, installed):
+        """Both plugins are there (or not): the Jev compaction is only asked for when they are."""
+        self.mod_installed = installed
+        manager = getattr(self.gateway, "manager", None)
+        if manager is None or installed is None or bool(manager.meta.get("jevModInstalled")) == installed:
+            return
+        with manager.lock:
+            manager.meta["jevModInstalled"] = installed
+            manager.save()
+
     def mod_check(self):
         from . import mod
         self.mod_checked = time.time()
-        self.mod_installed = mod.installed()
+        self.note_mod_installed(mod.installed())
         if self.mod_installed is False:  # uninstalled: the status line command is wanted again
             self.set_mod_seen(0.0)
         self.notify("changed", None)
 
     def note_mod(self):
-        """The mod reported: remember it (the status line command is then not needed)."""
+        """The mod reported: remember it (it feeds the usage live after every turn)."""
         now = time.time()
         self.mod_seen = now
-        self.mod_installed = True
+        if self.mod_installed is None:
+            self.mod_installed = True  # at least limit-status is; a look-up says whether jev-compact is too
         manager = getattr(self.gateway, "manager", None)
         if manager is not None and now - float(manager.meta.get("modSeenAt") or 0) > 60:
             self.set_mod_seen(now)
@@ -398,7 +436,8 @@ class Controller:
             if error:
                 self.notify("log", "Claude Code mod: " + error)
             self.mod_checked = 0.0
-            self.mod_installed = mod.installed() if not error else self.mod_installed
+            if not error:
+                self.note_mod_installed(mod.installed())
             if not error:
                 with self.gateway.manager.lock:
                     self.gateway.manager.meta["modStatePath"] = str(state_file)
@@ -423,17 +462,37 @@ class Controller:
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
         if not self.live:
             return None
-        line = self.gateway.manager.statusline(body.get("rate_limits"), str(body.get("session") or "") or None)
+        session = str(body.get("session") or "")[:100] or None
+        model = body.get("model") if isinstance(body.get("model"), str) else None
+        effort = body.get("effort") if isinstance(body.get("effort"), str) else None
+        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort)
+        if body.get("source") == "mod":  # the mod feeds the usage; the line itself is the status line's
+            self.note_mod()
+            self.gateway.manager.note_mod_session(session)
+            return None
         # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
         # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
-        if body.get("source") == "mod":
-            self.note_mod()
-            return line  # installing the mod is the person's own choice to see the line: no second switch
-        if not self.statusline_on():
+        # Installing the mod is the person's own choice to see it too: no second switch.
+        if not self.statusline_on() and time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
             return None
-        if time.time() - self.mod_seen < 120:
-            return None  # the mod shows it in a spot of its own: not twice
         return line
+
+    def compaction_request(self, body):
+        """For a session's mod: the Jev compaction to run before it goes on, if one is due."""
+        if not self.live or body.get("source") != "mod":
+            return None
+        return self.gateway.manager.compaction_request(str(body.get("session") or "")[:100])
+
+    def compaction_done(self, body):
+        """A session's mod finished (or gave up on) the compaction it was asked for."""
+        if not self.live:
+            return False
+        saved = body.get("saved") if type(body.get("saved")) is int else None
+        done = self.gateway.manager.compaction_done(str(body.get("session") or "")[:100], str(body.get("id") or ""),
+                                                    str(body.get("outcome") or ""), saved, body.get("reason"))
+        if done:
+            self.notify("changed", None)
+        return done
 
     def afk_limit(self, body):
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
@@ -536,11 +595,25 @@ def make_server(controller, port=0):
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 8192 else {}
-                    line = controller.statusline(body if isinstance(body, dict) else {})
+                    body = body if isinstance(body, dict) else {}
+                    line = controller.statusline(body)
                     self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
-                                       "rate_limits": controller.statusline_limits()})
+                                       "rate_limits": controller.statusline_limits(),
+                                       "compact": controller.compaction_request(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
+                return
+            if self.path == "/api/compaction":  # the mod: a Jev compaction it was asked for is done
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, {"ok": controller.compaction_done(body if isinstance(body, dict) else {})})
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"ok": False, "error": str(error)})
                 return
             if self.path == "/api/afk":  # the Claude Code AFK hook, with its own narrow token
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

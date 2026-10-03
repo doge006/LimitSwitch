@@ -186,6 +186,7 @@ In the full view, the gear opens Settings:
 
 - **Auto swap:** move to the account with the most room when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
+- **Jev compaction:** before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
 - **Claude Code status line:** show LimitSwitcher and the account in use there (see below).
@@ -195,16 +196,35 @@ In the full view, the gear opens Settings:
 
 ## Claude Code Status mod (optional)
 
-Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The **limit-status** mod in `mods/limit-status` gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, and shows the app's status line in a spot of its own, so your own status line is never touched or wrapped. It works wherever mods run (the terminal, the Desktop app's Code tab, and the VS Code extension for the usage; only the terminal and Desktop draw the line).
+Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The mod is two plugins from this repository, installed together:
 
-Install it from **Settings → Claude Code Status mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the mod where the app's local address file is. The row then shows **Active** while a session is reporting, **Installed** until one is, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below.
+- **limit-status** (`mods/limit-status`) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, and runs the Jev compaction below. LimitSwitcher's line itself is in Claude Code's status line (see below), where it can't be dismissed; installing the mod turns that on.
+- **jev-compact** (`mods/jev-compact`) is the compaction. It is a plugin of its own because Claude Code skips a plugin's own compaction hook when that plugin starts the compaction.
+
+Install it from **Settings → Claude Code Status mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the plugins where the app's files are. The row then shows **Active** while a session is reporting, **Installed** until one is, **Update** when only an older limit-status is there, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below (without Jev compaction).
+
+## Jev compaction (optional)
+
+Swapping a long session to another account costs a cold start: the new account has none of the session cached, so its next turn reads the whole context uncached. With **Settings → Jev compaction** on, LimitSwitcher swaps the account as usual, then has the session compacted before it goes on:
+
+1. The session hits its limit; the account is swapped at once.
+2. The session's mod runs the compaction. [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole. A file read again later is replaced by a note without asking.
+3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev compacting…`.
+
+What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
+
+It costs no Claude usage (it works on a used-up account) and a fraction of a cent of OpenRouter credit per swap. If Jev fails, the mod waits 30 seconds and tries again, three tries in all; then (or after 4 minutes at most) the session goes on without it. `/compact` and auto-compaction stay Claude Code's own.
+
+**Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction**, and give it an [OpenRouter key](https://openrouter.ai/keys): an `OPENROUTER_API_KEY=...` line in the `.env` file in LimitSwitcher's data folder (`%LOCALAPPDATA%\LimitSwitcher\.env`, or `~/Library/Application Support/LimitSwitcher/.env`), the `OPENROUTER_API_KEY` environment variable, or Claude Code's `settings.json` `env` block. The app only checks that a key is there; only the mod reads it.
+
+**How much it saves:** `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision).
 
 ## Claude Code status line
 
 LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
 
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
-- **Turned on, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
+- **Turned on (or the mod installed), without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
 - **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
 - **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.

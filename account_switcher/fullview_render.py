@@ -885,6 +885,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
             ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone: loading one on another account can use a lot of usage"),
             ("waitNearReset", "Wait for a near reset", "Don't switch accounts when the 5-hour limit resets within 15 minutes"),
+            ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less (needs the mod and an OpenRouter key)"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"),
             ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
@@ -893,7 +894,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
 MOD_NAME = "Claude Code Status mod"
 MOD_TEXT_W = 190  # beside the button
-MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "installed": ("Installed · run /reload-plugins in an open session", WARN),
+MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "update": ("Update to add Jev compaction", WARN), "installed": ("Installed · run /reload-plugins in an open session", WARN),
             "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
 
 
@@ -968,7 +969,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         for i, line in enumerate(lines):
             c.text(x + 16, ry + 40 + 16 * i, line, 12, color, anchor="lm")
         if status != "installing":
-            label = "Reinstall" if status in ("active", "installed") else "Install"
+            label = "Reinstall" if status in ("active", "installed") else "Update" if status == "update" else "Install"
             primary = status not in ("active", "installed")
             bw = text_w(label, 12, primary) + 24
             bx = x + w - 14 - bw
