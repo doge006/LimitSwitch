@@ -34,7 +34,7 @@ for _ in range(20):
         break
     time.sleep(0.5)
 check(link.exists(), "the Start menu shortcut is there")
-log = Path(os.environ["LOCALAPPDATA"]) / "AccountSwitcher" / "app.log"
+log = Path(os.environ["LOCALAPPDATA"]) / "LimitSwitcher" / "app.log"
 text = log.read_text(encoding="utf-8") if log.exists() else ""
 print("---- app.log ----\n" + text)
 check("started, version" in text, "app.log says it started")

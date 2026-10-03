@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 
+from . import processes
 from .version import REPO
 
 MARKETPLACE = "limitswitcher"
@@ -19,13 +20,26 @@ TIMEOUT = 90          # installing fetches the repository
 QUIET = 20            # listing what is installed
 
 
-def _run(args, timeout):
+def _run(args, timeout, stdin_text=None):
+    """Runs `claude plugin <args>`. A command that outlives `timeout` is ended with everything it started
+    (on Windows `claude` is a shim: ending only it would leave the real process running, and a few of
+    those add up)."""
     cli = shutil.which("claude")
     if cli is None:
         raise FileNotFoundError("Claude Code isn't installed (no `claude` command found)")
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    return subprocess.run([cli, "plugin", *args], capture_output=True, text=True, timeout=timeout,
-                          stdin=subprocess.DEVNULL, creationflags=flags)
+    process = subprocess.Popen([cli, "plugin", *args], stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=flags)
+    try:
+        out, err = process.communicate(stdin_text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        processes.end_tree(process.pid)
+        try:
+            process.communicate(timeout=5)
+        except (subprocess.SubprocessError, OSError):
+            pass
+        raise
+    return subprocess.CompletedProcess(process.args, process.returncode, out, err)
 
 
 def installed():
@@ -53,6 +67,18 @@ def install(state_file, source=REPO):
         if not there and updated.returncode != 0:
             return _why(done)
         return None
+    except FileNotFoundError as error:
+        return str(error)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"Couldn't run Claude Code ({type(error).__name__})"
+
+
+def configure(state_file):
+    """Tell the installed mod where this app's local address file is (it moves when the data folder does).
+    Returns None when done, else a short reason."""
+    try:
+        done = _run(["configure", PLUGIN_ID, "--values-stdin"], QUIET, json.dumps({"statePath": str(state_file)}))
+        return None if done.returncode == 0 else _why(done)
     except FileNotFoundError as error:
         return str(error)
     except (OSError, subprocess.SubprocessError) as error:

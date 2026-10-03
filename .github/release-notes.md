@@ -1,10 +1,11 @@
-The app offers it in Settings → **Update to 1.0.10** (or download below).
+The app offers it in Settings → **Update to 1.0.11** (or download below).
 
 ## Fixed
 
-- **Reinstall now really updates the Claude Code Status mod:** installing it again did nothing when it was already installed, so a newer version of the mod never arrived (you kept drawing the old plain yellow `⚠ limit-status: …` line). **Reinstall** now updates it to the newest version (restart Claude Code, or `/reload-plugins`, to apply).
-- **No more empty line under the prompt with the Claude Code Status mod:** the app's status line command stayed in Claude Code's settings even though the mod draws the line, so Claude Code showed an empty row for it (and wrapped your own status line for nothing). Once the mod has reported, the app now takes its command out and puts your own status line back; it returns by itself if you uninstall the mod.
-- **The status line colours:** the icon is green and "LimitSwitcher" and the account grey, **5h** and **1w** blue, each percentage green with plenty left, yellow in the middle and red when low, with "left" grey. The context is the same: `ctx 348k · 65% left`, the count and the percentage coloured by what's left. This is the line the app shows in Claude Code, and the mod's line above the prompt.
+- **The data folder is called LimitSwitcher now:** your accounts and settings were still kept under `AccountSwitcher` (the app's old name). The first start after updating moves that folder to `LimitSwitcher` by itself (`~/Library/Application Support/LimitSwitcher` on macOS, `account-switcher` to `limitswitcher` under `~/.local/share` on Linux). Nothing is lost: if the folder can't be moved, the old one keeps being used. If you renamed it yourself, yours is used. The Claude Code Status mod is pointed at the new place automatically.
+- **Account cards no longer cut off their status text:** "Numbers from 1h 20m ago · che…" on an account you aren't using now shortens to what fits ("1h 20m ago · checking") instead of ending mid-word.
+- **Claude Code commands the app runs can't pile up:** a `claude plugin …` command that hangs (to look up or install the Claude Code Status mod) is now ended with everything it started, and an unknown mod state is looked up every 10 minutes, not every minute.
+- **A stuck usage refresh leaves a trace:** if a refresh takes more than 3 minutes, `app.log` gets every thread's stack, so a stall (numbers stuck at "1h ago · checking") can be traced.
 
 ## Download
 

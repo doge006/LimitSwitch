@@ -350,8 +350,8 @@ def stop_leftovers():
 
 def log_path():
     if MAC:
-        return Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
-    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AccountSwitcher" / "app.log"
+        return Path.home() / "Library" / "Application Support" / "LimitSwitcher" / "app.log"
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "LimitSwitcher" / "app.log"
 
 
 def started(seconds=20):

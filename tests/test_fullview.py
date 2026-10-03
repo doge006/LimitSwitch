@@ -101,6 +101,17 @@ class FullViewTests(unittest.TestCase):
         self.click("set:nameMode")
         self.assertIn(("names", {"on": True}), self.controller.calls)
 
+    def test_card_hints_are_shortened_not_cut_off(self):
+        ago = "1h 20m"
+        options = [f"Numbers from {ago} ago · checking", f"{ago} ago · checking", f"{ago} old"]
+        wide = vr.text_w(options[0], 12) + 1
+        self.assertEqual(vr.best_fit(options, 12, wide), options[0])
+        # a card with Swap and Remove beside it has less room: the second, shorter one, whole
+        room = vr.text_w(options[1], 12) + 1
+        self.assertEqual(vr.best_fit(options, 12, room), options[1])
+        self.assertEqual(vr.best_fit(options, 12, vr.text_w(options[2], 12) + 1), options[2])
+        self.assertTrue(vr.best_fit(options, 12, 20).endswith("…"))  # only when nothing fits
+
     def test_mod_row_shows_its_whole_state(self):
         for status in ("installed", "active", "missing", "installing"):
             lines, _, height = vr.mod_row({"mod": {"status": status}})

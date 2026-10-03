@@ -258,9 +258,27 @@ class Integrations:
         return self.root / "afk-hook.json"
 
     # ---------- start / stop ----------
+    def refresh_mod_config(self):
+        """The mod finds this app through a path saved in its settings: when the data folder moved (the
+        AccountSwitcher to LimitSwitcher rename), tell it the new one."""
+        if not self.mod_in_use():
+            return
+        path = str(self.state_file)
+        if self.manager.meta.get("modStatePath") == path:
+            return
+        from . import mod
+        error = mod.configure(self.state_file)
+        if error is None:
+            with self.manager.lock:
+                self.manager.meta["modStatePath"] = path
+                self.manager.save()
+        else:
+            log.warning("could not point the Claude Code Status mod at %s: %s", path, error)
+
     def start(self):
         self.apply_afk()
         self.keep_claude_settings()
+        threading.Thread(target=self.refresh_mod_config, daemon=True, name="mod-config").start()
         if codex_present(self.codex_home):
             self.start_codex()
         meta = self.manager.meta

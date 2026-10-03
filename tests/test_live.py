@@ -807,5 +807,33 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(datetime.fromtimestamp(next_monthly(start, now), timezone.utc).date().isoformat(), "2026-02-28")
 
 
+
+class WatchedRefreshTests(unittest.TestCase):
+    def test_a_refresh_that_hangs_writes_every_threads_stack_into_the_log(self):
+        from account_switcher import live
+        with tempfile.TemporaryDirectory() as tmp:
+            log = open(Path(tmp) / "app.log", "a+", encoding="utf-8")
+            with mock.patch.object(live, "_trace_file", return_value=log):
+                with live.watched(0.3):
+                    time.sleep(1.0)
+            log.flush()
+            text = (Path(tmp) / "app.log").read_text()
+            log.close()
+        self.assertIn("most recent call first", text)  # faulthandler's dump of the stuck threads
+        self.assertIn("test_a_refresh_that_hangs", text)
+
+    def test_a_refresh_that_finishes_writes_nothing(self):
+        from account_switcher import live
+        with tempfile.TemporaryDirectory() as tmp:
+            log = open(Path(tmp) / "app.log", "a+", encoding="utf-8")
+            with mock.patch.object(live, "_trace_file", return_value=log):
+                with live.watched(5):
+                    pass
+                time.sleep(0.2)
+            log.flush()
+            self.assertEqual((Path(tmp) / "app.log").read_text(), "")
+            log.close()
+
+
 if __name__ == "__main__":
     unittest.main()

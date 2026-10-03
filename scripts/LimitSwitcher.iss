@@ -3,7 +3,7 @@
 ; Per user, no admin rights. It asks where to install, has boxes for a Start menu entry (on)
 ; and a desktop shortcut (off); starting at sign-in is the app's own setting (on at first run). The app's in-app updater runs it with
 ; /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<this folder>: it closes the app, replaces the
-; files and starts the app again. Saved accounts and settings live in %LOCALAPPDATA%\AccountSwitcher
+; files and starts the app again. Saved accounts and settings live in %LOCALAPPDATA%\LimitSwitcher
 ; and are kept, also by the uninstaller.
 
 #define AppName "LimitSwitcher"

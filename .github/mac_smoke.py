@@ -76,7 +76,7 @@ check(pid is not None, "app process is running")
 if pid is None:
     print(subprocess.run("ps axww -o pid,comm,args | grep -i -e account -e python | grep -v grep", shell=True,
                          capture_output=True, text=True).stdout)
-    log = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+    log = Path.home() / "Library" / "Application Support" / "LimitSwitcher" / "app.log"
     print("---- app.log ----\n" + (log.read_text() if log.exists() else "(none)"))
     sys.exit(1)
 time.sleep(3)
@@ -85,7 +85,7 @@ found = windows(pid)
 print(json.dumps(found, indent=1))
 status = [w for w in found if w["layer"] == Quartz.kCGStatusWindowLevel and w["onscreen"] and (w["w"] or 0) > 0]
 print("status item in the window list:", bool(status), "(macOS 26 draws status items elsewhere)")
-LOG = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+LOG = Path.home() / "Library" / "Application Support" / "LimitSwitcher" / "app.log"
 import re
 line = next((l for l in (LOG.read_text().splitlines() if LOG.exists() else []) if "status item:" in l), "")
 print(line)
@@ -132,7 +132,7 @@ for _ in range(40):
 check(app_pid() is None, "quit ends the process")
 check(not config.exists() or "account-switcher" not in config.read_text(), "quit restores the Codex config")
 check(not URL_FILE.exists(), "quit removes the runtime URL")
-log = Path.home() / "Library" / "Application Support" / "AccountSwitcher" / "app.log"
+log = Path.home() / "Library" / "Application Support" / "LimitSwitcher" / "app.log"
 print("---- app.log ----")
 print(log.read_text() if log.exists() else "(none)")
 sys.exit(1 if failures else 0)

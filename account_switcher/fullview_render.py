@@ -164,6 +164,14 @@ def fit(value, size, bold, width):
     return value + "…"
 
 
+def best_fit(options, size, width):
+    """The first of `options` (longest first) that fits `width`; the last one, cut, when none does."""
+    for text in options:
+        if text_w(text, size, False) <= width:
+            return text
+    return fit(options[-1], size, False, width)
+
+
 STALE_AFTER = 1800  # numbers older than this show their age (they're kept, not guessed)
 
 
@@ -644,14 +652,16 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
             age = time.time() - (account.get("updated_at") or 0)
             old = live and account.get("updated_at") and age > STALE_AFTER
             if status or old:
-                hint = status or f"Numbers from {ago(age)} ago · checking"
+                # the whole sentence when there is room, else shorter ones: never cut off mid-word
+                hints = [status] if status else [f"Numbers from {ago(age)} ago · checking", f"{ago(age)} ago · checking", f"{ago(age)} old"]
             else:  # what the account is doing, and how old its numbers are
                 parts = ["Used by all sessions"] if active else [] if eligible else ["Waiting for reset"]
-                if live and account.get("updated_at"):
-                    parts.append(f"Updated {ago(age)} ago" if age >= 60 else "Updated now")
-                hint = " · ".join(parts)
+                updated = (f"Updated {ago(age)} ago" if age >= 60 else "Updated now") if live and account.get("updated_at") else None
+                hints = [" · ".join(parts + [updated] if updated else parts)]
+                if updated:
+                    hints += [" · ".join(parts + [updated.replace("Updated ", "")]), updated]
             room = w - 36 - 124 - (0 if active else 96)  # the in-use card has no Remove button to leave room for
-            c.text(18, fy + 21, fit(hint, 12, False, room), 12, WARN if status else FAINT)
+            c.text(18, fy + 21, best_fit(hints, 12, room), 12, WARN if status else FAINT)
         bw, bx = 124, w - 18 - 124
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")

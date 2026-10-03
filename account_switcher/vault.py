@@ -20,15 +20,35 @@ import tempfile
 ENTROPY = b"AccountSwitcher.v1"
 
 
+_moved = {}
+
+
 def data_dir():
+    """Where the accounts and settings live: LimitSwitcher's own folder. Before the app was renamed it
+    was AccountSwitcher (account-switcher on Linux): that folder is moved over, once, so saved logins and
+    settings carry on; if it can't be moved (something holds a file in it), it keeps being used."""
     override = os.environ.get("ACCOUNT_SWITCHER_HOME")
     if override:
         return Path(override)
     if sys.platform == "win32":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "AccountSwitcher"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "AccountSwitcher"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "account-switcher"
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        new, old = base / "LimitSwitcher", base / "AccountSwitcher"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+        new, old = base / "LimitSwitcher", base / "AccountSwitcher"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        new, old = base / "limitswitcher", base / "account-switcher"
+    if new not in _moved:
+        _moved[new] = new
+        try:
+            if not new.exists() and old.is_dir():
+                new.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(old, new)
+        except OSError:
+            if old.is_dir() and not new.exists():
+                _moved[new] = old  # the old folder stays in use: nothing is lost
+    return _moved[new]
 
 
 if sys.platform == "win32":
