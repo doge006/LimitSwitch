@@ -217,7 +217,16 @@ You can also run it by hand in any session: `/compact limitswitcher:jev-compact`
 
 **Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction**, and give it an [OpenRouter key](https://openrouter.ai/keys): an `OPENROUTER_API_KEY=...` line in the `.env` file in LimitSwitcher's data folder (`%LOCALAPPDATA%\LimitSwitcher\.env`, or `~/Library/Application Support/LimitSwitcher/.env`), the `OPENROUTER_API_KEY` environment variable, or Claude Code's `settings.json` `env` block. The app only checks that a key is there; only the mod reads it.
 
-**How much it saves, and what it costs in quality:** tuned on a real 380k-token session (the one that built this) with the live Jev, quality first. A hindsight test compacts the session as it stood at three points and counts the facts (names, paths, values) Claude used *after* that point that only a removed output held. Result: the conversation about 29% smaller for under a cent, losing 73 such facts; for comparison on the same session, cc-mod-jev 62% smaller / 846 facts lost, HAR5HA's jev-compact 75% / 998, fast-jev-compaction 90% / 1568 (they also delete calls, cut error outputs, or rewrite your text; this one does none of that). Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. Tool-heavy sessions save more, chat-heavy ones less. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
+**How much it saves, and what it costs in quality:** benchmarked on a real 512k-token session (the one that built this) with the live Jev, against the other Jev compaction tools on the same session. *Quality* is a hindsight test: compact the session as it stood at three earlier points, then count the project facts (names, paths, values; not words or standard-library names the model knows anyway) Claude went on to use from memory that only a removed output held.
+
+| | conversation smaller | after compaction (Claude Code's count) | facts lost that Claude used later | also |
+|---|---|---|---|---|
+| **this** | 28% | 126k | **18** | nothing deleted; errors, your text, recent messages untouched |
+| cc-mod-jev | 62% | 104k | 353 | deletes calls, cuts error outputs |
+| HAR5HA jev-compact | 75% | 97k | 379 | cuts error outputs, rewrites your text |
+| fast-jev-compaction | 90% | 33k | 499 | deletes almost every call, touches the newest messages |
+
+Any compaction also drops the old system notices Claude Code repeats through a session, which is why every row ends far below the 512k it started at. The others save 22k to 93k tokens more than this one, for 20 to 28 times the loss. Outputs cheap to get again (file views, listings, searches) need a higher score to stay whole than test runs, web pages or anything that changed state. To measure your own: `bun mods/jev-compact/bench/bench.ts <transcript.jsonl>` runs it on a saved Claude Code transcript (`~/.claude/projects/...`) and prints how much smaller the session gets and what Jev cost (`--fake 0.5` for a dry run without a key; `--decisions` lists every decision; `--quality` runs the hindsight test).
 
 ## Claude Code status line
 
