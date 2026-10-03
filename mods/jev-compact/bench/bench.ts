@@ -8,6 +8,9 @@
 //   --fake 0.5        no network: every answer is this probability (checks the plumbing, costs nothing)
 //   --budget 0.15     stop before a request once this many dollars were spent in this run
 //   --decisions       print every asked call's decision and probability (to judge the quality by eye)
+//   --quality         hindsight test: compact the session as it stood at 1/4, 2/4 and 3/4 of the way, then
+//                     count the facts (names, paths, long numbers) the assistant used after that point that
+//                     only a removed output held: what it would have had to get again, or lacked
 //
 // Token counts are estimates (3.2 characters per token, the same on both sides); the transcript's
 // own last `usage` is printed beside them so the estimate can be checked against what Claude saw.
@@ -72,6 +75,36 @@ export function messagesOf(jsonl: string): { messages: Message[]; contextTokens?
   return contextTokens === undefined ? { messages } : { messages, contextTokens }
 }
 
+const FACT = /[A-Za-z_][A-Za-z0-9_./-]{7,}|\b\d{4,}\b/g
+const factsOf = (text: string) => new Set(text.match(FACT) ?? [])
+const everything = (messages: readonly Message[]) => messages.map((m) =>
+  [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input)), ...(m.toolResults ?? []).map((r) => r.text)].join('\n')).join('\n')
+
+/** The hindsight quality test (see --quality above): one line of totals over three cut points. */
+export async function hindsight(messages: readonly Message[], asker: JevAsker): Promise<string> {
+  let before = 0, saved = 0, cut = 0, needed = 0, lost = 0
+  for (const at of [0.25, 0.5, 0.75]) {
+    const k = Math.round(messages.length * at)
+    const prefix = messages.slice(0, k)
+    const result = await compact(prefix, asker)
+    before += result.stats.charsBefore
+    saved += result.stats.charsBefore - result.stats.charsAfter
+    const kept = factsOf(everything(result.messages))
+    const used = factsOf(messages.slice(k).filter((m) => m.role === 'assistant')
+      .map((m) => [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input))].join('\n')).join('\n'))
+    const now = new Map(result.messages.flatMap((m) => (m.toolResults ?? []).map((r) => [r.tool_use_id, r.text] as const)))
+    for (const m of prefix) {
+      for (const r of m.toolResults ?? []) {
+        if (now.get(r.tool_use_id) === r.text) continue
+        cut += 1
+        const missing = [...factsOf(r.text)].filter((f) => !kept.has(f) && used.has(f))
+        if (missing.length >= 2) { needed += 1; lost += missing.length }
+      }
+    }
+  }
+  return `${before ? Math.round((saved / before) * 100) : 0}% smaller | outputs cut ${cut}, later needed ${needed} | facts lost that the assistant used later: ${lost}`
+}
+
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name)
   return i >= 0 ? process.argv[i + 1] : undefined
@@ -81,7 +114,7 @@ async function main(): Promise<void> {
   const flags = new Set(['--cuts', '--fake', '--budget'])
   const files = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && !flags.has(all[i - 1] ?? ''))
   if (files.length === 0) {
-    console.error('usage: bun bench.ts <transcript.jsonl> [...] [--cuts N] [--fake P] [--budget USD] [--decisions]')
+    console.error('usage: bun bench.ts <transcript.jsonl> [...] [--cuts N] [--fake P] [--budget USD] [--decisions] [--quality]')
     process.exit(2)
   }
   const cuts = Math.max(1, Number(arg('--cuts') ?? 1))
@@ -106,6 +139,12 @@ async function main(): Promise<void> {
         spent += response.usage?.cost ?? 0
         return response
       } }
+
+  if (process.argv.includes('--quality')) {
+    for (const file of files) console.log(`${basename(file).slice(0, 8)} ${await hindsight(messagesOf(readFileSync(file, 'utf8')).messages, asker)}`)
+    console.log(`Jev spent $${spent.toFixed(5)}`)
+    return
+  }
 
   const rows: string[] = []
   let totalBefore = 0

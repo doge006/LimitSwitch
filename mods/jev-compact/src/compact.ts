@@ -15,7 +15,7 @@ import type { CompactOptions, CompactResult, CompactStats, Decision, JevAnswer, 
 export const DEFAULT_OPTIONS: CompactOptions = {
   keepThreshold: 0.5,
   stubThreshold: 0.3,
-  cheapKeepThreshold: 0.65,
+  cheapKeepThreshold: 0.6,
   cheapStubThreshold: 0.45,
   preserveRecentMessages: 8,
   minPairChars: 400,
