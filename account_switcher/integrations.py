@@ -342,7 +342,8 @@ class Integrations:
                 if not claude_hooks.statusline_installed(self.claude_root) and self.statusline_wanted():
                     log.warning("Claude Code's status line was not ours any more (settings.json rewritten); restoring it")
                     self.apply_afk()
-                    seen = stamp_of(path)
+                    # caught mid-write (invalid for a moment), it couldn't be put back: look again next time
+                    seen = stamp_of(path) if claude_hooks.statusline_installed(self.claude_root) else None
 
         threading.Thread(target=loop, daemon=True, name="claude-settings-watch").start()
 
