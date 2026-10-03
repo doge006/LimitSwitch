@@ -27,7 +27,9 @@ mods/jev-compact is adapted from cc-mod-jev (https://github.com/JayDoubleu/cc-mo
 the Jev state fitting (src/state.ts), the OpenRouter client (src/openrouter.ts), the
 tool call pairing and the batching follow it. Its decisions (no call removed, errors
 and superseded reads handled locally, one question per call, head-and-tail trims,
-masked credentials) are LimitSwitcher's own.
+masked credentials) are LimitSwitcher's own. The idea of pruning exploration output
+(file views, searches) first comes from HAR5HA-7663/jev-compact; src/kinds.ts is a separate
+implementation of it (no code taken).
 
 MIT License
 

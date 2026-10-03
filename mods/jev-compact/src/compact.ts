@@ -5,6 +5,7 @@
 // DecisionAction in types.ts and THIRD-PARTY-NOTICES.txt.
 
 import { applyEdits, editsFor } from './apply.ts'
+import { cheapToRedo } from './kinds.ts'
 import { noulOf, questionFor, questionName } from './questions.ts'
 import { fitState, goalOf } from './state.ts'
 import { estimateTokens, transcriptChars } from './tokens.ts'
@@ -14,11 +15,13 @@ import type { CompactOptions, CompactResult, CompactStats, Decision, JevAnswer, 
 export const DEFAULT_OPTIONS: CompactOptions = {
   keepThreshold: 0.5,
   stubThreshold: 0.3,
+  cheapKeepThreshold: 0.65,
+  cheapStubThreshold: 0.45,
   preserveRecentMessages: 8,
   minPairChars: 400,
   trimHeadChars: 1200,
   trimTailChars: 600,
-  maxWriteInputChars: 2000,
+  maxWriteInputChars: 1200,
   maxStateTokens: 20000,
   maxRequestTokens: 28000,
 }
@@ -35,6 +38,8 @@ export function resolveOptions(options: Partial<CompactOptions> = {}): CompactOp
   const resolved: CompactOptions = {
     keepThreshold,
     stubThreshold: Math.min(keepThreshold, finite(options.stubThreshold, d.stubThreshold)),
+    cheapKeepThreshold: Math.min(1, finite(options.cheapKeepThreshold, d.cheapKeepThreshold)),
+    cheapStubThreshold: Math.min(1, finite(options.cheapStubThreshold, d.cheapStubThreshold)),
     preserveRecentMessages: Math.floor(finite(options.preserveRecentMessages, d.preserveRecentMessages)),
     minPairChars: finite(options.minPairChars, d.minPairChars),
     trimHeadChars: Math.floor(finite(options.trimHeadChars, d.trimHeadChars)),
@@ -68,11 +73,15 @@ export function batchCalls(calls: readonly ToolCall[], stateTokens: number, maxR
   return batches
 }
 
-/** The action for one asked call from Jev's probability. A trim that would cut nothing keeps the output whole. */
+/**
+ * The action for one asked call from Jev's probability. Outputs cheap to get again (file reads and
+ * searches) need a higher one to stay whole. A trim that would cut nothing keeps the output whole.
+ */
 export function decide(call: ToolCall, need: number, options: CompactOptions): Decision {
   const base = { id: call.id, tool: call.tool, need, chars: pairChars(call) }
-  if (need >= options.keepThreshold) return { ...base, action: 'keep' }
-  if (need >= options.stubThreshold) {
+  const cheap = cheapToRedo(call) // a file read or search: one tool call gets it back
+  if (need >= (cheap ? options.cheapKeepThreshold : options.keepThreshold)) return { ...base, action: 'keep' }
+  if (need >= (cheap ? options.cheapStubThreshold : options.stubThreshold)) {
     const fits = call.resultChars <= options.trimHeadChars + options.trimTailChars
     return { ...base, action: fits ? 'keep' : 'trim' }
   }

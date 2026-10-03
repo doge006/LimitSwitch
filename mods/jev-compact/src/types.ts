@@ -98,6 +98,9 @@ export type CompactOptions = {
   keepThreshold: number
   /** Below: stubbed. Between the two: trimmed to head and tail. */
   stubThreshold: number
+  /** The same two for outputs cheap to get again (file reads and searches: see kinds.ts). */
+  cheapKeepThreshold: number
+  cheapStubThreshold: number
   preserveRecentMessages: number
   /** Outputs shorter than this many characters are kept without asking. */
   minPairChars: number

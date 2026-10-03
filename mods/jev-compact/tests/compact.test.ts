@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { NOTE_TAG, shortenInput, trimText } from '../src/apply.ts'
 import { batchCalls, compact, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
+import { cheapToRedo } from '../src/kinds.ts'
 import { parseResponse } from '../src/openrouter.ts'
 import { maskSecrets } from '../src/secrets.ts'
 import { goalOf, withoutReminders } from '../src/state.ts'
@@ -243,5 +244,32 @@ describe('pieces', () => {
     expect(keyInEnvFile('export OPENROUTER_API_KEY="sk-or-2"')).toBe('sk-or-2')
     expect(keyInEnvFile("OPENROUTER_API_KEY = 'sk-or-3' ")).toBe('sk-or-3')
     expect(keyInEnvFile('# OPENROUTER_API_KEY=x\nOPENROUTER_API_KEY=')).toBeUndefined()
+  })
+})
+
+describe('cheap to get again', () => {
+  const call = (tool: string, input: Record<string, unknown>) =>
+    collectToolCalls([user('a'), use('x', tool, input), out('x', 'y'), said('b')], 0)[0]!
+  test('reads, listings and searches are; anything that runs, writes or reaches out is not', () => {
+    for (const command of ['cat a.txt | head -5', 'sed -n 1,20p x.py; grep -n "a\\|b" y.py', 'cd /tmp/claude-0 && ls -la',
+      'git log --oneline -3', 'T=/x; grep -rn "x > y" $T', 'rg foo 2>/dev/null']) {
+      expect([command, cheapToRedo(call('Bash', { command }))]).toEqual([command, true])
+    }
+    for (const command of ['echo x > a.txt', 'python3 - <<EOF\nprint(1)\nEOF', 'sed -i s/a/b/ f', 'npm test', 'git commit -m x',
+      'curl https://x', 'rm -rf build', 'claude plugin test .', 'find . -delete', 'ls $(pwd)', 'env | grep KEY']) {
+      expect([command, cheapToRedo(call('Bash', { command }))]).toEqual([command, false])
+    }
+    expect(cheapToRedo(call('Read', { file_path: '/a' }))).toBe(true)
+    expect(cheapToRedo(call('WebFetch', { url: 'https://x' }))).toBe(false)
+  })
+
+  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole', () => {
+    const options = resolveOptions()
+    const read = collectToolCalls([user('a'), use('r', 'Bash', { command: 'cat big.py' }), out('r', LOG), said('b')], 0)[0]!
+    const run = collectToolCalls([user('a'), use('t', 'Bash', { command: 'npm test' }), out('t', LOG), said('b')], 0)[0]!
+    expect(decide(read, 0.55, options).action).toBe('trim')
+    expect(decide(run, 0.55, options).action).toBe('keep')
+    expect(decide(read, 0.4, options).action).toBe('stub')
+    expect(decide(run, 0.4, options).action).toBe('trim')
   })
 })
