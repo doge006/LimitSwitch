@@ -74,12 +74,6 @@ describe('jev-compact', () => {
     expect(w.core).toEqual(['manual', 'auto', 'plugin'])
   })
 
-  test('with the manual option, /compact prunes too', { options: { manual: true } }, async ($, on) => {
-    const w = world(on, { env: { OPENROUTER_API_KEY: 'sk-or-env' } })
-    const result = await $.session.compact({ trigger: 'manual', messages: transcript() })
-    expect(w.core).toEqual([])
-    expect(result.messages![2]!.toolResults![0]!.text).toContain('[LimitSwitcher removed')
-  })
 
   test('the key comes from settings.json, then the .env file', { options: { envFile: '/data/.env' } }, async ($, on) => {
     const w = world(on, { settingsKey: 'sk-or-settings', file: 'OPENROUTER_API_KEY=sk-or-file\n' })

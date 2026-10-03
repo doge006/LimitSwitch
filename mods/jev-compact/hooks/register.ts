@@ -1,8 +1,7 @@
-import type { EngineInterface, PluginOptions, Register, SessionMessage } from 'claude-code'
+import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 import { compact, reductionRatio, summarize } from '../src/compact.ts'
 import { askerOver, type Transport } from '../src/openrouter.ts'
-import type { CompactOptions } from '../src/types.ts'
 
 // Shrinks the tool outputs a session no longer needs, scored by Jev, when LimitSwitcher asks for
 // it right before it swaps the session to another account: the new account has none of the
@@ -10,9 +9,9 @@ import type { CompactOptions } from '../src/types.ts'
 // compaction itself, so Claude Code makes no model request (it works on an account at 0%).
 //
 // It acts only on LimitSwitcher's own request (`$.session.compact` from the limit-status mod with
-// MARKER as its instructions); /compact and auto-compaction stay Claude Code's own unless the
-// `manual` option is on. LimitSwitcher's request is never handed to Claude Code's summary: when
-// this can't prune, it skips, and limit-status retries or swaps without it.
+// MARKER as its instructions); /compact and auto-compaction stay Claude Code's own. The request is
+// never handed to Claude Code's summary: when this can't prune, it skips, and limit-status retries
+// or lets the session go on without it.
 
 export const MARKER = 'limitswitcher:jev-compact'
 // A skip LimitSwitcher should retry starts with this (Jev or the network failed); any other skip
@@ -57,28 +56,19 @@ function transportOf($: EngineInterface): Transport {
   }
 }
 
-function optionsOf(options: PluginOptions): Partial<CompactOptions> {
-  const out: Partial<CompactOptions> = {}
-  for (const key of ['keepThreshold', 'stubThreshold', 'preserveRecentMessages'] as const) {
-    if (typeof options[key] === 'number') out[key] = options[key] as number
-  }
-  return out
-}
 
 export const register: Register = (on, options) => {
   const envFile = String(options.envFile ?? '')
-  const manual = options.manual === true
 
   on('session.compact', async ($, e, next) => {
-    const ours = e.trigger === 'plugin' && e.instructions === MARKER
-    if (e.agentId !== undefined || !(ours || (manual && e.trigger === 'manual'))) return next(e)
+    if (e.trigger !== 'plugin' || e.instructions !== MARKER || e.agentId !== undefined) return next(e)
     let reason: string
     const key = await apiKeyOf($, envFile)
     if (!key) {
       reason = 'no OpenRouter key (OPENROUTER_API_KEY)'
     } else {
       try {
-        const result = await compact(e.messages, askerOver(transportOf($), { apiKey: key }), optionsOf(options))
+        const result = await compact(e.messages, askerOver(transportOf($), { apiKey: key }))
         const ratio = reductionRatio(result)
         const summary = summarize(result)
         if (ratio >= MIN_REDUCTION) {
@@ -95,6 +85,6 @@ export const register: Register = (on, options) => {
       }
     }
     await $.ui.log(`Jev compaction skipped: ${reason}`, { to: 'debug' })
-    return ours ? { skip: reason } : next(e) // /compact (manual option): Claude Code's own summary instead
+    return { skip: reason }
   })
 }

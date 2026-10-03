@@ -2,7 +2,10 @@
   "name": "jev-compact",
   "version": "0.1.0",
   "description": "Before LimitSwitcher swaps a Claude Code session to another account, shrinks the tool outputs it no longer needs with TypeSafe's Jev (through OpenRouter), so the new account loads less. Everything else stays verbatim; no Claude usage.",
-  "author": { "name": "doge006", "url": "https://github.com/doge006/LimitSwitcher" },
+  "author": {
+    "name": "doge006",
+    "url": "https://github.com/doge006/LimitSwitcher"
+  },
   "license": "MIT",
   "userConfig": {
     "envFile": {
@@ -10,30 +13,6 @@
       "title": "LimitSwitcher .env file",
       "description": "A file with an OPENROUTER_API_KEY=... line (set when LimitSwitcher installs this mod). The OPENROUTER_API_KEY environment variable, or Claude Code's settings.json env block, also works.",
       "default": ""
-    },
-    "manual": {
-      "type": "boolean",
-      "title": "Also prune on /compact",
-      "description": "Off: only LimitSwitcher's compaction before a swap uses Jev, and /compact and auto-compaction stay Claude Code's own. On: /compact prunes with Jev too (and falls back to Claude Code's summary when Jev can't).",
-      "default": false
-    },
-    "keepThreshold": {
-      "type": "number",
-      "title": "Keep threshold",
-      "description": "At or above this Jev probability (0 to 1) that an output is still needed, it stays whole.",
-      "default": 0.5
-    },
-    "stubThreshold": {
-      "type": "number",
-      "title": "Stub threshold",
-      "description": "Below this probability an output becomes a one-line note; between the two thresholds it keeps its head and tail.",
-      "default": 0.2
-    },
-    "preserveRecentMessages": {
-      "type": "number",
-      "title": "Recent messages to preserve",
-      "description": "The newest messages are never touched (nor the first one).",
-      "default": 8
     }
   }
 }
